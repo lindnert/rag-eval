@@ -1,12 +1,13 @@
 import re
 
 def extract_numbers(text):
+    if isinstance(text, list):
+        text = " ".join(text)
     return [int(x) for x in re.findall(r"\d+", text)]
 
 def numerical_correctness(sample):
     numbers = extract_numbers(sample["answer"])
 
-    # Example guideline: protein should be 50–100g
     if not numbers:
         return 0.0
 
