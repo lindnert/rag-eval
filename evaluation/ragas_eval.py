@@ -10,12 +10,12 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_ollama import OllamaLLM
 from ragas.llms import LangchainLLMWrapper
 
-ollama_llm = OllamaLLM(model="gemma3:4b")
+ollama_llm = OllamaLLM(model="gemma3:1b")
 ragas_llm = LangchainLLMWrapper(ollama_llm)
 
 
 def _build_embeddings():
-    embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "gemma3:4b")
+    embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "gemma3:1b")
     return OllamaEmbeddings(model=embedding_model)
 
 
