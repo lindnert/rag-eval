@@ -1,3 +1,4 @@
+from deepeval.models import OllamaModel
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 
@@ -8,8 +9,9 @@ def run_deepeval(sample):
         retrieval_context=sample["contexts"]
     )
 
-    faithfulness = FaithfulnessMetric()
-    relevance = AnswerRelevancyMetric()
+    ollama_model = OllamaModel(model="gemma3:1b")
+    faithfulness = FaithfulnessMetric(model=ollama_model)
+    relevance = AnswerRelevancyMetric(model=ollama_model)
 
     faithfulness.measure(test_case)
     relevance.measure(test_case)
