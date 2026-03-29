@@ -23,7 +23,7 @@ def evaluate_query(query):
 
 
 if __name__ == "__main__":
-    query = "How much protein should I eat daily?"
+    query = "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?"
 
     result = evaluate_query(query)
 
