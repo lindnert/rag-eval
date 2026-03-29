@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from rag_pipeline import run_rag_pipeline
 from evaluation.ragas_eval import run_ragas
 from evaluation.deepeval_eval import run_deepeval
