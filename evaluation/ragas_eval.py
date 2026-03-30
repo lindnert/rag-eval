@@ -14,7 +14,7 @@ OLLAMA_MODEL = "phi3"
 OLLAMA_EMBEDDINGS_MODEL = "nomic-embed-text"
 
 ollama_llm = ChatOllama(
-    model="OLLAMA_MODEL",
+    model=OLLAMA_MODEL,
     base_url="http://localhost:11434"
 )
 ragas_llm = LangchainLLMWrapper(ollama_llm)
