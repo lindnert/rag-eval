@@ -1,8 +1,11 @@
 from deepeval.models import OllamaModel
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
+import os
 
 def run_deepeval(sample):
+    print("Using timeout: ", os.getenv("DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE"))
+    print("Using max retries: ", os.getenv("DEEPEVAL_MAX_RETRIES_OVERRIDE"))
     test_case = LLMTestCase(
         input=sample["query"],
         actual_output=sample["answer"],
