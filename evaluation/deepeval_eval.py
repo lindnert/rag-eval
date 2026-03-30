@@ -1,7 +1,26 @@
-from deepeval.models import OllamaModel
+from langchain_ollama import ChatOllama
+from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 import os
+
+OLLAMA_MODEL = "phi3"
+
+class OllamaWrapper(DeepEvalBaseLLM):
+    def __init__(self, llm):
+        self.llm = llm
+
+    def load_model(self):
+        return self.llm
+
+    def generate(self, prompt: str, **kwargs):
+        return self.llm.invoke(prompt).content
+
+    async def a_generate(self, prompt: str, **kwargs):
+        return self.generate(prompt)
+
+    def get_model_name(self):
+        return "ollama-local"
 
 def run_deepeval(sample):
     print("Using timeout: ", os.getenv("DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE"))
@@ -12,7 +31,11 @@ def run_deepeval(sample):
         retrieval_context=sample["contexts"]
     )
 
-    ollama_model = OllamaModel(model="gemma3:1b")
+    llm = ChatOllama(
+        model=OLLAMA_MODEL,
+        base_url="http://localhost:11434"
+    )
+    ollama_model = OllamaWrapper(llm)
     faithfulness = FaithfulnessMetric(model=ollama_model)
     relevance = AnswerRelevancyMetric(model=ollama_model)
 

@@ -3,7 +3,7 @@ import urllib.request
 import urllib.error
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "gemma3:1b"
+OLLAMA_MODEL = "phi3"
 
 
 def build_prompt(query, contexts):

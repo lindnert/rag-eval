@@ -7,16 +7,23 @@ from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from datasets import Dataset
 from langchain_ollama import OllamaEmbeddings
-from langchain_ollama import OllamaLLM
+from langchain_ollama import ChatOllama
 from ragas.llms import LangchainLLMWrapper
 
-ollama_llm = OllamaLLM(model="gemma3:1b")
+OLLAMA_MODEL = "phi3"
+OLLAMA_EMBEDDINGS_MODEL = "nomic-embed-text"
+
+ollama_llm = ChatOllama(
+    model="OLLAMA_MODEL",
+    base_url="http://localhost:11434"
+)
 ragas_llm = LangchainLLMWrapper(ollama_llm)
 
 
-def _build_embeddings():
-    embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "gemma3:1b")
-    return OllamaEmbeddings(model=embedding_model)
+embeddings = OllamaEmbeddings(
+    model="OLLAMA_EMBEDDINGS_MODEL",
+    base_url="http://localhost:11434"
+)
 
 
 def run_ragas(sample):
@@ -31,7 +38,7 @@ def run_ragas(sample):
         evaluate(
             dataset,
             llm=ragas_llm,
-            embeddings=_build_embeddings(),
+            embeddings=embeddings,
             metrics=[Faithfulness(), AnswerRelevancy()],
             return_executor=False,
         ),
