@@ -7,6 +7,7 @@ from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from datasets import Dataset
 from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_core.outputs import LLMResult, Generation
 from ragas.llms import LangchainLLMWrapper
 
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
@@ -42,10 +43,14 @@ No explanation. No text outside JSON.
         return self.generate(prompt, **kwargs)
 
     def generate_prompt(self, prompts, **kwargs):
-        return [self.generate(p, **kwargs) for p in prompts]
+        outputs = []
+        for p in prompts:
+            text = self.generate(p, **kwargs)
+            outputs.append([Generation(text=text)])
+        return LLMResult(generations=outputs)
 
     async def agenerate_prompt(self, prompts, **kwargs):
-        return [self.generate(p, **kwargs) for p in prompts]
+        return self.generate_prompt(prompts, **kwargs)
 
 
 wrapped_llm = RagasJSONWrapper(base_llm)
