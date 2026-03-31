@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
+import os
 
 from rag_pipeline import run_rag_pipeline
 from evaluation.ragas_eval import run_ragas
@@ -23,6 +24,9 @@ def evaluate_query(query):
 
 
 if __name__ == "__main__":
+    os.environ["DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE"] = "120"
+    os.environ["DEEPEVAL_MAX_RETRIES_OVERRIDE"] = "3"
+    
     query = "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?"
 
     result = evaluate_query(query)
