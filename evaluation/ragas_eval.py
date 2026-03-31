@@ -25,20 +25,30 @@ class RagasJSONWrapper:
     def __init__(self, llm):
         self.llm = llm
 
-    def generate(self, prompt, **kwargs):
-        prompt = f"""
+    def _inject_json_instruction(self, prompt):
+        return f"""
 You MUST return valid JSON only.
 No explanation. No text outside JSON.
 
 {prompt}
 """
+
+    # sync
+    def generate(self, prompt, **kwargs):
+        prompt = self._inject_json_instruction(prompt)
         response = self.llm.invoke(prompt).content
+        return response or "{}"
 
-        # fallback if model returns empty / garbage
-        if not response or response.strip() == "":
-            return "{}"
+    # async (required!)
+    async def agenerate(self, prompt, **kwargs):
+        return self.generate(prompt, **kwargs)
 
-        return response
+    # required by LangChain wrapper
+    def generate_prompt(self, prompt, **kwargs):
+        return self.generate(prompt, **kwargs)
+
+    async def agenerate_prompt(self, prompt, **kwargs):
+        return self.agenerate(prompt, **kwargs)
 
 
 wrapped_llm = RagasJSONWrapper(base_llm)

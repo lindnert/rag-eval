@@ -16,17 +16,26 @@ class OllamaWrapper(DeepEvalBaseLLM):
 
     def generate(self, prompt: str, **kwargs):
         prompt = f"""
-        Respond ONLY with valid JSON. No explanation.
+            You MUST return valid JSON.
+
+            IMPORTANT:
+            - Always include the field "claims" as a list of strings.
+            - If unsure, return: {{"claims": []}}
+
+            NO explanation. ONLY JSON.
 
         {prompt}
         """
         try:
             response = self.llm.invoke(prompt).content
+
             if not response or response.strip() == "":
-                return "{}"
+                return '{"claims": []}'
+
             return response
+
         except Exception:
-            return "{}"
+            return '{"claims": []}'
 
     async def a_generate(self, prompt: str, **kwargs):
         return self.generate(prompt)
@@ -51,10 +60,18 @@ def run_deepeval(sample):
     faithfulness = FaithfulnessMetric(model=ollama_model)
     relevance = AnswerRelevancyMetric(model=ollama_model)
 
-    faithfulness.measure(test_case)
-    relevance.measure(test_case)
+    try:
+        faithfulness.measure(test_case)
+        relevance.measure(test_case)
 
-    return {
-        "deepeval_faithfulness": faithfulness.score,
-        "deepeval_relevance": relevance.score,
-    }
+        return {
+            "deepeval_faithfulness": faithfulness.score,
+            "deepeval_relevance": relevance.score,
+        }
+
+    except Exception as e:
+        return {
+            "deepeval_faithfulness": None,
+            "deepeval_relevance": None,
+            "deepeval_error": str(e),
+        }
