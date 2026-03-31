@@ -30,27 +30,7 @@ def build_prompt(query, contexts):
 
 
 def parse_ollama_response(response_json):
-    if isinstance(response_json, dict):
-        if "output" in response_json:
-            output = response_json["output"]
-            if isinstance(output, list) and output:
-                first = output[0]
-                if isinstance(first, dict):
-                    return first.get("content") or first.get("text") or str(first)
-                return str(first)
-
-        if "choices" in response_json:
-            choices = response_json["choices"]
-            if isinstance(choices, list) and choices:
-                first = choices[0]
-                if isinstance(first, dict):
-                    return first.get("text") or first.get("message") or str(first)
-                return str(first)
-
-        if "text" in response_json:
-            return response_json["text"]
-
-    return json.dumps(response_json, ensure_ascii=False)
+    return response_json["response"]
 
 
 def generate_llm_answer(query, contexts):
