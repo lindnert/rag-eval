@@ -1,3 +1,4 @@
+from deepeval import prompt
 from langchain_ollama import ChatOllama
 from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
@@ -14,7 +15,18 @@ class OllamaWrapper(DeepEvalBaseLLM):
         return self.llm
 
     def generate(self, prompt: str, **kwargs):
-        return self.llm.invoke(prompt).content
+        prompt = f"""
+        Respond ONLY with valid JSON. No explanation.
+
+        {prompt}
+        """
+        try:
+            response = self.llm.invoke(prompt).content
+            if not response or response.strip() == "":
+                return "{}"
+            return response
+        except Exception:
+            return "{}"
 
     async def a_generate(self, prompt: str, **kwargs):
         return self.generate(prompt)
