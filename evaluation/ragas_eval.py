@@ -25,7 +25,7 @@ class RagasJSONWrapper:
     def __init__(self, llm):
         self.llm = llm
 
-    def _inject_json_instruction(self, prompt):
+    def _inject(self, prompt):
         return f"""
 You MUST return valid JSON only.
 No explanation. No text outside JSON.
@@ -33,22 +33,19 @@ No explanation. No text outside JSON.
 {prompt}
 """
 
-    # sync
     def generate(self, prompt, **kwargs):
-        prompt = self._inject_json_instruction(prompt)
+        prompt = self._inject(prompt)
         response = self.llm.invoke(prompt).content
         return response or "{}"
 
-    # async (required!)
     async def agenerate(self, prompt, **kwargs):
         return self.generate(prompt, **kwargs)
 
-    # required by LangChain wrapper
-    def generate_prompt(self, prompt, **kwargs):
-        return self.generate(prompt, **kwargs)
+    def generate_prompt(self, prompts, **kwargs):
+        return [self.generate(p, **kwargs) for p in prompts]
 
-    async def agenerate_prompt(self, prompt, **kwargs):
-        return self.agenerate(prompt, **kwargs)
+    async def agenerate_prompt(self, prompts, **kwargs):
+        return [self.generate(p, **kwargs) for p in prompts]
 
 
 wrapped_llm = RagasJSONWrapper(base_llm)
@@ -81,8 +78,8 @@ def run_ragas(sample):
         )
 
         return {
-            "ragas_faithfulness": result["faithfulness"][0],
-            "ragas_answer_relevancy": result["answer_relevancy"][0],
+            "ragas_faithfulness": result["faithfulness"][0] if result["faithfulness"][0] == result["faithfulness"][0] else None,
+            "ragas_answer_relevancy": result["answer_relevancy"][0] if result["answer_relevancy"][0] == result["answer_relevancy"][0] else None,
         }
 
     except Exception as e:
