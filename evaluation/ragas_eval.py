@@ -21,7 +21,7 @@ ragas_llm = LangchainLLMWrapper(ollama_llm)
 
 
 embeddings = OllamaEmbeddings(
-    model="OLLAMA_EMBEDDINGS_MODEL",
+    model=OLLAMA_EMBEDDINGS_MODEL,
     base_url="http://localhost:11434"
 )
 
