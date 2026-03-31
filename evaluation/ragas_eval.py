@@ -10,8 +10,8 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_ollama import ChatOllama
 from ragas.llms import LangchainLLMWrapper
 
-OLLAMA_MODEL = "phi3"
-OLLAMA_EMBEDDINGS_MODEL = "nomic-embed-text"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "nomic-embed-text")
 
 ollama_llm = ChatOllama(
     model=OLLAMA_MODEL,

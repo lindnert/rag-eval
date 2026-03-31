@@ -1,9 +1,11 @@
 import json
+import os
 import urllib.request
 import urllib.error
+from retrieval.docs import DEFAULT_DOCUMENTS
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "phi3"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 
 
 def build_prompt(query, contexts):

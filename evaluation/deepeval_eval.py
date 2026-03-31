@@ -5,7 +5,7 @@ from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 import os
 
-OLLAMA_MODEL = "phi3"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 
 class OllamaWrapper(DeepEvalBaseLLM):
     def __init__(self, llm):
