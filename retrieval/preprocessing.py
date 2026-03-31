@@ -66,6 +66,7 @@ def run_preprocessing_pipeline():
 
             # ---- ADD DOC TYPE TO METADATA ----
             metadata["doc_type"] = doc_type
+            metadata["source"] = file
 
             # ---- CHUNKING ----
             nodes = utils.chunk_text(text, metadata)

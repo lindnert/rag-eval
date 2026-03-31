@@ -84,7 +84,7 @@ def extract_table_texts(pdf_path: str) -> List[str]:
 
 def build_metadata(doc_path, doc_type):
     return {
-        "source": os.path.basename(doc_path),
+        "folder": os.path.basename(doc_path),
         "doc_type": doc_type,
     }
 
