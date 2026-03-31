@@ -13,12 +13,13 @@ click==8.3.1
 colorama==0.4.6
 dataclasses-json==0.6.7
 datasets==4.8.4
-deepeval==3.9.3
+deepeval==3.9.4
 dill==0.4.1
 diskcache==5.6.3
 distro==1.9.0
 docstring_parser==0.17.0
 execnet==2.1.2
+faiss-cpu==1.13.2
 filelock==3.25.2
 frozenlist==1.8.0
 fsspec==2026.2.0

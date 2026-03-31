@@ -2,10 +2,14 @@ import json
 import os
 import urllib.request
 import urllib.error
+from langchain_text_splitters import CharacterTextSplitter   
+from langchain_ollama import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS   
 from retrieval.docs import DEFAULT_DOCUMENTS
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 
 
 def build_prompt(query, contexts):
@@ -77,10 +81,25 @@ def generate_llm_answer(query, contexts):
         return f"[OLLAMA ERROR] {exc}"
 
 
+def build_retriever(documents, k=3):
+    splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    texts = []
+    metadatas = []
+
+    for i, doc in enumerate(documents):
+        for chunk in splitter.split_text(doc):
+            texts.append(chunk)
+            metadatas.append({"source": f"doc_{i}"})
+
+    embeddings = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
+    vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
+    return vectorstore.as_retriever(search_kwargs={"k": k})
+
+
 def run_rag_pipeline(query):
-    retrieved_docs = [
-        "Adults should consume around 0.8g protein per kg body weight."
-    ]
+    documents = DEFAULT_DOCUMENTS
+    retriever = build_retriever(documents)
+    retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
 
     answer = generate_llm_answer(query, retrieved_docs)
 
