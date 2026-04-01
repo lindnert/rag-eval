@@ -2,7 +2,6 @@ import os
 from typing import List, cast
 
 import fitz
-from camelot.io import read_pdf
 import trafilatura
 from bs4 import BeautifulSoup
 
@@ -26,6 +25,8 @@ def clean_webfile(html):
         article = soup.find("article")
         if article:
             text = article.get_text(" ", strip=True)
+
+    return text or ""
 
 
 ## ---------------------- For PDFs ------------------------
@@ -58,6 +59,8 @@ def basic_clean(text):
 
 
 def extract_table_texts(pdf_path: str) -> List[str]:
+    from camelot.io import read_pdf
+
     tables = read_pdf(pdf_path, pages="all", flavor="lattice")
     table_texts: List[str] = []
 
