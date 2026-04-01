@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import List, cast
 
 import fitz
@@ -86,8 +87,11 @@ def extract_table_texts(pdf_path: str) -> List[str]:
 ## ---------------------- For all ------------------------
 
 def build_metadata(doc_path, doc_type):
+    root_dir = Path(__file__).resolve().parent.parent
+    folder_path = Path(doc_path).resolve().parent.relative_to(root_dir)
+
     return {
-        "folder": os.path.basename(doc_path),
+        "folder": str(folder_path).replace("\\", "/"),
         "doc_type": doc_type,
     }
 
