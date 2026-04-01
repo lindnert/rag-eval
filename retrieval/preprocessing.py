@@ -28,6 +28,7 @@ def process_normal_pdf(pdf_path):
 def process_table_pdf(pdf_path):
     table_texts = utils.extract_table_texts(pdf_path)
     text = "\n\n".join(table_texts)
+    text = utils.basic_clean(text)
 
     metadata = utils.build_metadata(pdf_path, "table")
     return text, metadata
@@ -77,8 +78,8 @@ def run_preprocessing_pipeline():
         for n in all_nodes
     ]
 
-    with open(f"{OUTPUT_DIR}/all_chunks.json", "w") as f:
-        json.dump(serialized, f, indent=2)
+    with open(f"{OUTPUT_DIR}/all_chunks.json", "w", encoding="utf-8") as f:
+        json.dump(serialized, f, indent=2, ensure_ascii=False)
 
     print(f"Processed {len(all_nodes)} chunks.")
 
