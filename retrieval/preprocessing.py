@@ -1,8 +1,9 @@
 import os
 import json
 import utils
+from pathlib import Path
 
-DATA_DIR = "../richtlinien"
+DATA_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien")
 OUTPUT_DIR = "."
 
 def process_html(html_path):
@@ -38,9 +39,9 @@ def run_preprocessing_pipeline():
     all_nodes = []
 
     folder_map = {
-        "PDF": f"{DATA_DIR}/normal_pdfs",
-        "HTML": f"{DATA_DIR}/web_HTML",
-        "PDF_table": f"{DATA_DIR}/table_pdfs",
+        "PDF": f"{DATA_DIR}/PDF",
+        "HTML": f"{DATA_DIR}/HTML",
+        "PDF_table": f"{DATA_DIR}/PDF_table",
     }
 
     for doc_type, folder in folder_map.items():
