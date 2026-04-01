@@ -19,15 +19,41 @@ CHUNK_OVERLAP = 100
 ## ---------------------- For HTML ------------------------
 
 def clean_webfile(html):
-    text = trafilatura.extract(html)
+    text = trafilatura.extract(html, include_comments=False, include_tables=False)
 
-    if not text or len(text) < 100:
-        soup = BeautifulSoup(html, "html.parser")
-        article = soup.find("article")
-        if article:
-            text = article.get_text(" ", strip=True)
+    if text and len(text.strip()) >= 100:
+        return text.strip()
 
-    return text or ""
+    soup = BeautifulSoup(html, "html.parser")
+
+    # If the file is a browser "view-source" capture, the real page HTML may be inside a <pre>/<xmp> block.
+    for pre_tag in soup.find_all(["pre", "xmp", "textarea"]):
+        source = pre_tag.get_text()
+        if source and "<!doctype" in source.lower() and "<html" in source.lower():
+            nested = BeautifulSoup(source, "html.parser")
+            for tag_name in ["script", "style", "noscript", "iframe", "header", "footer", "nav", "form", "button", "svg", "meta", "link", "input"]:
+                for tag in nested.find_all(tag_name):
+                    tag.decompose()
+            content = nested.get_text(" ", strip=True)
+            if content and len(content) >= 100:
+                return content.strip()
+
+    for tag_name in ["script", "style", "noscript", "iframe", "header", "footer", "nav", "form", "button", "svg", "meta", "link", "input"]:
+        for tag in soup.find_all(tag_name):
+            tag.decompose()
+
+    content = None
+    for candidate in ["article", "main", "body"]:
+        node = soup.find(candidate)
+        if node:
+            content = node.get_text(" ", strip=True)
+            if content and len(content) >= 100:
+                break
+
+    if not content:
+        content = soup.get_text(" ", strip=True)
+
+    return content or ""
 
 
 ## ---------------------- For PDFs ------------------------
@@ -39,22 +65,36 @@ def extract_base_text(pdf_path: str) -> List[str]:
 
 
 def remove_repeated_lines(pages: List[str]) -> List[str]:
+    import re
     from collections import Counter
 
-    lines = [line for p in pages for line in p.split("\n")]
-    freq = Counter(lines)
-
-    cleaned_pages = []
+    normalized_pages = []
     for p in pages:
-        cleaned_lines = [l for l in p.split("\n") if freq[l] < 3]
+        lines = []
+        for line in p.splitlines():
+            clean_line = line.strip()
+            if not clean_line:
+                continue
+            clean_line = re.sub(r'\s+', ' ', clean_line)
+            lines.append(clean_line)
+        normalized_pages.append(lines)
+
+    freq = Counter(line for page in normalized_pages for line in page)
+    cleaned_pages = []
+    for page_lines in normalized_pages:
+        cleaned_lines = [line for line in page_lines if freq[line] < 3]
         cleaned_pages.append("\n".join(cleaned_lines))
 
     return cleaned_pages
 
 
 def basic_clean(text):
+    import html as _html
     import re
+
     text = re.sub(r'http\S+', '', text)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = _html.unescape(text)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 

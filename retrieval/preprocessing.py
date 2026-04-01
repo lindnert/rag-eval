@@ -7,10 +7,8 @@ DATA_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien")
 OUTPUT_DIR = "richtlinien"
 
 def process_html(html_path):
-    pages = utils.extract_base_text(html_path)
-
-    text = "\n".join(pages)
-    text = utils.clean_webfile(text)
+    html = Path(html_path).read_text(encoding="utf-8", errors="ignore")
+    text = utils.clean_webfile(html)
     text = utils.basic_clean(text)
 
     metadata = utils.build_metadata(html_path, "web")
