@@ -4,7 +4,7 @@ import utils
 from pathlib import Path
 
 DATA_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien")
-OUTPUT_DIR = "."
+OUTPUT_DIR = "richtlinien"
 
 def process_html(html_path):
     pages = utils.extract_base_text(html_path)
@@ -65,16 +65,11 @@ def run_preprocessing_pipeline():
                     continue
                 text, metadata = process_table_pdf(path)
 
-            # ---- ADD DOC TYPE TO METADATA ----
             metadata["doc_type"] = doc_type
             metadata["source"] = file
 
-            # ---- CHUNKING ----
             nodes = utils.chunk_text(text, metadata)
             all_nodes.extend(nodes)
-
-    # ---- SAVE ----
-    os.makedirs(f"{OUTPUT_DIR}/chunks", exist_ok=True)
 
     serialized = [
         {
@@ -84,7 +79,7 @@ def run_preprocessing_pipeline():
         for n in all_nodes
     ]
 
-    with open(f"{OUTPUT_DIR}/chunks/all_chunks.json", "w") as f:
+    with open(f"{OUTPUT_DIR}/all_chunks.json", "w") as f:
         json.dump(serialized, f, indent=2)
 
     print(f"Processed {len(all_nodes)} chunks.")
