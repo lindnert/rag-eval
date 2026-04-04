@@ -2,14 +2,14 @@ import json
 import os
 import urllib.request
 import urllib.error
-from langchain_text_splitters import CharacterTextSplitter   
+from pathlib import Path
 from langchain_ollama import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS   
-from retrieval.docs import DEFAULT_DOCUMENTS
+from langchain_community.vectorstores import FAISS
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+CHUNKS_PATH = str(Path(__file__).resolve().parent / "richtlinien" / "all_chunks.json")
 
 
 def build_prompt(query, contexts):
@@ -61,15 +61,12 @@ def generate_llm_answer(query, contexts):
         return f"[OLLAMA ERROR] {exc}"
 
 
-def build_retriever(documents, k=3):
-    splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-    texts = []
-    metadatas = []
+def build_retriever(chunks_path=CHUNKS_PATH, k=3):
+    with open(chunks_path, "r", encoding="utf-8") as f:
+        chunks = json.load(f)
 
-    for i, doc in enumerate(documents):
-        for chunk in splitter.split_text(doc):
-            texts.append(chunk)
-            metadatas.append({"source": f"doc_{i}"})
+    texts = [c["text"] for c in chunks]
+    metadatas = [c["metadata"] for c in chunks]
 
     embeddings = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
     vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
@@ -77,8 +74,7 @@ def build_retriever(documents, k=3):
 
 
 def run_rag_pipeline(query):
-    documents = DEFAULT_DOCUMENTS
-    retriever = build_retriever(documents)
+    retriever = build_retriever()
     retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
 
     answer = generate_llm_answer(query, retrieved_docs)
