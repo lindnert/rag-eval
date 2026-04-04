@@ -64,6 +64,18 @@ def extract_base_text(pdf_path: str) -> List[str]:
     return pages
 
 
+def filter_low_content_pages(pages: List[str], min_alpha_ratio=0.5) -> List[str]:
+    filtered = []
+    for page in pages:
+        text = page.strip()
+        if not text:
+            continue
+        alpha_chars = sum(c.isalpha() for c in text)
+        if alpha_chars / len(text) >= min_alpha_ratio:
+            filtered.append(page)
+    return filtered
+
+
 def remove_repeated_lines(pages: List[str]) -> List[str]:
     import re
     from collections import Counter
@@ -91,10 +103,16 @@ def remove_repeated_lines(pages: List[str]) -> List[str]:
 def basic_clean(text):
     import html as _html
     import re
+    import unicodedata
 
     text = re.sub(r'http\S+', '', text)
     text = re.sub(r'<[^>]+>', ' ', text)
     text = _html.unescape(text)
+
+    text = unicodedata.normalize("NFKC", text)
+
+    text = re.sub(r'(\w)-\s+(\w)', r'\1\2', text)
+
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
@@ -107,19 +125,24 @@ def extract_table_texts(pdf_path: str) -> List[str]:
 
     for table in tables:
         df = table.df
-        headers = df.iloc[0]  # assume first row = header
+        if df.empty:
+            continue
+
+        # Convert each table to markdown format
         lines = []
+        # Header row
+        headers = [str(cell).strip() for cell in df.iloc[0]]
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("| " + " | ".join("---" for _ in headers) + " |")
 
+        # Data rows
         for i in range(1, len(df)):
-            row = df.iloc[i]
-            parts = [
-                f"{headers[j]}: {row[j]}"
-                for j in range(len(headers))
-                if row[j]
-            ]
-            lines.append(", ".join(parts))
+            row = [str(cell).strip() for cell in df.iloc[i]]
+            lines.append("| " + " | ".join(row) + " |")
 
-        table_texts.append("\n".join(lines))
+        md_table = "\n".join(lines)
+        if md_table.strip():
+            table_texts.append(md_table)
 
     return table_texts
 

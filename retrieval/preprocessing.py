@@ -17,6 +17,7 @@ def process_html(html_path):
 def process_normal_pdf(pdf_path):
     pages = utils.extract_base_text(pdf_path)
     pages = utils.remove_repeated_lines(pages)
+    pages = utils.filter_low_content_pages(pages)
 
     text = "\n".join(pages)
     text = utils.basic_clean(text)
@@ -27,8 +28,11 @@ def process_normal_pdf(pdf_path):
 
 def process_table_pdf(pdf_path):
     table_texts = utils.extract_table_texts(pdf_path)
+    if not table_texts:
+        print(f"  Warning: no tables extracted from {pdf_path}")
+        return "", utils.build_metadata(pdf_path, "table")
+
     text = "\n\n".join(table_texts)
-    text = utils.basic_clean(text)
 
     metadata = utils.build_metadata(pdf_path, "table")
     return text, metadata
