@@ -208,3 +208,9 @@ __marimo__/
 
 # DeepEval
 .deepeval/
+
+# Richtlinien
+richtlinien/CSV/
+richtlinien/HTML/
+richtlinien/PDF/
+richtlinien/PDF_table/
