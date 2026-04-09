@@ -10,13 +10,13 @@ from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.outputs import LLMResult, Generation
 from ragas.llms import LangchainLLMWrapper
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
 OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "nomic-embed-text")
 
 
 # --- Base LLM ---
 base_llm = ChatOllama(
-    model=OLLAMA_MODEL,
+    model=OLLAMA_EVAL_MODEL,
     base_url="http://localhost:11434"
 )
 

@@ -7,8 +7,10 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_RAG_MODEL = os.getenv("OLLAMA_RAG_MODEL", "gemma4:e2b")
+OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "110000"))
 CHUNKS_PATH = str(Path(__file__).resolve().parent / "richtlinien" / "all_chunks.json")
 
 
@@ -36,9 +38,12 @@ def parse_ollama_response(response_json):
 def generate_llm_answer(query, contexts):
     prompt = build_prompt(query, contexts)
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": OLLAMA_RAG_MODEL,
         "prompt": prompt,
         "stream": False,
+        "options": {
+        "num_ctx": OLLAMA_CONTEXT_LENGTH
+    }
     }
     data = json.dumps(payload).encode("utf-8")
 

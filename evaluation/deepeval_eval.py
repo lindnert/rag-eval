@@ -5,7 +5,7 @@ from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 import os
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
 
 class OllamaWrapper(DeepEvalBaseLLM):
     def __init__(self, llm):
@@ -53,7 +53,7 @@ def run_deepeval(sample):
     )
 
     llm = ChatOllama(
-        model=OLLAMA_MODEL,
+        model=OLLAMA_EVAL_MODEL,
         base_url="http://localhost:11434"
     )
     ollama_model = OllamaWrapper(llm)
