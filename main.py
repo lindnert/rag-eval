@@ -2,7 +2,8 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 
-from rag_pipeline import run_rag_pipeline, build_retriever
+from rag_pipeline import run_rag_pipeline
+from retrieval.utils import build_retriever
 from evaluation.ragas_eval import run_ragas
 from evaluation.deepeval_eval import run_deepeval
 from evaluation.custom_eval import run_custom

@@ -2,17 +2,11 @@ import json
 import os
 import urllib.request
 import urllib.error
-from pathlib import Path
-from langchain_ollama import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 OLLAMA_RAG_MODEL = os.getenv("OLLAMA_RAG_MODEL", "gemma4:e2b")
 OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
-OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "110000"))
-CHUNKS_PATH = str(Path(__file__).resolve().parent / "richtlinien" / "all_chunks.json")
-FAISS_INDEX_DIR = str(Path(__file__).resolve().parent / "richtlinien" / "faiss_index")
 
 
 def build_prompt(query, contexts):
@@ -65,24 +59,6 @@ def generate_llm_answer(query, contexts):
         return f"[OLLAMA HTTP ERROR] {exc.code}: {error_body}"
     except Exception as exc:
         return f"[OLLAMA ERROR] {exc}"
-
-
-def build_retriever(chunks_path=CHUNKS_PATH, index_dir=FAISS_INDEX_DIR, k=3):
-    embeddings = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
-
-    if os.path.exists(index_dir):
-        vectorstore = FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
-    else:
-        with open(chunks_path, "r", encoding="utf-8") as f:
-            chunks = json.load(f)
-
-        texts = [c["text"] for c in chunks]
-        metadatas = [c["metadata"] for c in chunks]
-
-        vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
-        vectorstore.save_local(index_dir)
-
-    return vectorstore.as_retriever(search_kwargs={"k": k})
 
 
 def run_rag_pipeline(query, retriever):

@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import List, cast
+import json
 
 import fitz
 import trafilatura
@@ -9,11 +10,18 @@ from bs4 import BeautifulSoup
 from llama_index.core import Document
 from llama_index.core.node_parser import SentenceSplitter
 
+from langchain_ollama import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS
+
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
+
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+CHUNKS_PATH = str(Path(__file__).resolve().parent / "richtlinien" / "all_chunks.json")
+FAISS_INDEX_DIR = str(Path(__file__).resolve().parent / "richtlinien" / "faiss_index")
 
 
 ## ---------------------- For HTML ------------------------
@@ -169,3 +177,20 @@ def chunk_text(text, metadata):
     nodes = splitter.get_nodes_from_documents([doc])
 
     return nodes
+
+def build_retriever(chunks_path=CHUNKS_PATH, index_dir=FAISS_INDEX_DIR, k=3):
+    embeddings = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
+
+    if os.path.exists(index_dir):
+        vectorstore = FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
+    else:
+        with open(chunks_path, "r", encoding="utf-8") as f:
+            chunks = json.load(f)
+
+        texts = [c["text"] for c in chunks]
+        metadatas = [c["metadata"] for c in chunks]
+
+        vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
+        vectorstore.save_local(index_dir)
+
+    return vectorstore.as_retriever(search_kwargs={"k": k})
