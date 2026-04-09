@@ -38,7 +38,7 @@ def process_table_pdf(pdf_path):
     return text, metadata
 
 
-def run_preprocessing_pipeline():
+def generate_chunks():
     all_nodes = []
 
     folder_map = {
@@ -89,4 +89,5 @@ def run_preprocessing_pipeline():
 
 
 if __name__ == "__main__":
-    run_preprocessing_pipeline()
+    generate_chunks()
+    utils.build_retriever()

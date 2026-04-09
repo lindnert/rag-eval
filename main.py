@@ -3,14 +3,13 @@ load_dotenv()
 import os
 
 from rag_pipeline import run_rag_pipeline
-from retrieval.utils import build_retriever
 from evaluation.ragas_eval import run_ragas
 from evaluation.deepeval_eval import run_deepeval
 from evaluation.custom_eval import run_custom
 
 
-def evaluate_query(query, retriever):
-    sample = run_rag_pipeline(query, retriever)
+def evaluate_query(query):
+    sample = run_rag_pipeline(query)
 
     ragas_scores = run_ragas(sample)
     deepeval_scores = run_deepeval(sample)
@@ -29,8 +28,8 @@ if __name__ == "__main__":
     os.environ["DEEPEVAL_MAX_RETRIES_OVERRIDE"] = "3"
     
     query = "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?"
-    retriever = build_retriever()
-    result = evaluate_query(query, retriever)
+
+    result = evaluate_query(query)
 
     for k, v in result.items():
         print(f"{k}: {v}")

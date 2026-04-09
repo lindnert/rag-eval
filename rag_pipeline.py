@@ -3,10 +3,26 @@ import os
 import urllib.request
 import urllib.error
 
+from langchain_ollama import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS
+
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 OLLAMA_RAG_MODEL = os.getenv("OLLAMA_RAG_MODEL", "gemma4:e2b")
 OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "110000"))
+FAISS_INDEX_DIR = os.path.join(os.path.dirname(__file__), "retrieval", "richtlinien", "faiss_index")
+
+_retriever = None
+
+
+def _get_retriever(index_dir=FAISS_INDEX_DIR, k=3):
+    global _retriever
+    if _retriever is None:
+        embeddings = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
+        vectorstore = FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
+        _retriever = vectorstore.as_retriever(search_kwargs={"k": k})
+    return _retriever
 
 
 def build_prompt(query, contexts):
@@ -61,7 +77,8 @@ def generate_llm_answer(query, contexts):
         return f"[OLLAMA ERROR] {exc}"
 
 
-def run_rag_pipeline(query, retriever):
+def run_rag_pipeline(query):
+    retriever = _get_retriever()
     retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
 
     answer = generate_llm_answer(query, retrieved_docs)
