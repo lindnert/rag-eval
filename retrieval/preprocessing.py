@@ -4,7 +4,7 @@ import utils
 from pathlib import Path
 
 DATA_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien")
-OUTPUT_DIR = "richtlinien"
+OUTPUT_DIR = DATA_DIR
 
 def process_html(html_path):
     html = Path(html_path).read_text(encoding="utf-8", errors="ignore")

@@ -20,8 +20,8 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
 
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
-CHUNKS_PATH = str(Path(__file__).resolve().parent / "richtlinien" / "all_chunks.json")
-FAISS_INDEX_DIR = str(Path(__file__).resolve().parent / "richtlinien" / "faiss_index")
+CHUNKS_PATH = str(Path(__file__).resolve().parent.parent / "richtlinien" / "all_chunks.json")
+FAISS_INDEX_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien" / "faiss_index")
 
 
 ## ---------------------- For HTML ------------------------
