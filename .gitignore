@@ -209,6 +209,9 @@ __marimo__/
 # DeepEval
 .deepeval/
 
+# Claude
+.Claude/
+
 # Richtlinien
 richtlinien/CSV/
 richtlinien/HTML/
