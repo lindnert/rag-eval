@@ -73,8 +73,7 @@ def build_retriever(chunks_path=CHUNKS_PATH, k=3):
     return vectorstore.as_retriever(search_kwargs={"k": k})
 
 
-def run_rag_pipeline(query):
-    retriever = build_retriever()
+def run_rag_pipeline(query, retriever):
     retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
 
     answer = generate_llm_answer(query, retrieved_docs)
