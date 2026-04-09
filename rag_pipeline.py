@@ -2,6 +2,8 @@ import json
 import os
 import urllib.request
 import urllib.error
+import aiohttp
+import asyncio
 
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -77,6 +79,27 @@ def generate_llm_answer(query, contexts):
         return f"[OLLAMA ERROR] {exc}"
 
 
+async def generate_llm_answer_async(session, query, contexts):
+    prompt = build_prompt(query, contexts)
+    payload = {
+        "model": OLLAMA_RAG_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "num_ctx": OLLAMA_CONTEXT_LENGTH
+        }
+    }
+
+    try:
+        async with session.post(OLLAMA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=600)) as response:
+            parsed = await response.json()
+            return parse_ollama_response(parsed)
+    except aiohttp.ClientError as exc:
+        return f"[OLLAMA HTTP ERROR] {exc}"
+    except Exception as exc:
+        return f"[OLLAMA ERROR] {exc}"
+
+
 def run_rag_pipeline(query):
     retriever = _get_retriever()
     retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
@@ -88,3 +111,39 @@ def run_rag_pipeline(query):
         "answer": answer,
         "contexts": retrieved_docs,
     }
+
+
+async def run_rag_pipeline_batch_async(queries, batch_size=3):
+    """
+    Process multiple queries asynchronously in batches.
+
+    Args:
+        queries: List of query strings
+        batch_size: Number of concurrent requests (3 recommended for T4 GPU)
+
+    Returns:
+        List of results, one per query
+    """
+    retriever = _get_retriever()
+    results = []
+
+    async with aiohttp.ClientSession() as session:
+        for i in range(0, len(queries), batch_size):
+            batch = queries[i:i + batch_size]
+            tasks = []
+
+            for query in batch:
+                retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
+                task = generate_llm_answer_async(session, query, retrieved_docs)
+                tasks.append((query, retrieved_docs, task))
+
+            answers = await asyncio.gather(*[t[2] for t in tasks])
+
+            for (query, contexts, _), answer in zip(tasks, answers):
+                results.append({
+                    "query": query,
+                    "answer": answer,
+                    "contexts": contexts,
+                })
+
+    return results
