@@ -1,17 +1,14 @@
 from dotenv import load_dotenv
 load_dotenv()
-import os
+import json
 import asyncio
 import time
 from datetime import datetime
 
-from rag_pipeline import run_rag_pipeline, run_rag_pipeline_batch_async
-from evaluation.ragas_eval import run_ragas
-from evaluation.deepeval_eval import run_deepeval
-from evaluation.custom_eval import run_custom
+from rag.utils import run_rag_pipeline, run_rag_pipeline_batch_async
 
 
-def evaluate_query(query):
+""" def evaluate_query(query):
     sample = run_rag_pipeline(query)
 
     ragas_scores = run_ragas(sample)
@@ -23,20 +20,14 @@ def evaluate_query(query):
         **ragas_scores,
         **deepeval_scores,
         **custom_scores
-    }
+    } """
 
 
-def evaluate_queries_batch_async(queries):
+def run_queries_batch_async(queries):
     return asyncio.run(run_rag_pipeline_batch_async(queries, batch_size=10))
 
 
 if __name__ == "__main__":
-    os.environ["DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE"] = "120"
-    os.environ["DEEPEVAL_MAX_RETRIES_OVERRIDE"] = "3"
-
-    #query = "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?"
-
-    #result = evaluate_query(query)
 
     queries = [
     "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?",
@@ -87,7 +78,7 @@ if __name__ == "__main__":
     print(f"{'='*80}\n", flush=True)
 
     pipeline_start = time.time()
-    results = evaluate_queries_batch_async(queries)
+    results = run_queries_batch_async(queries)
     pipeline_time = time.time() - pipeline_start
 
     print(f"\n{'='*80}")
@@ -100,8 +91,14 @@ if __name__ == "__main__":
             print(f"{k}: {v}")
         print(f"-" * 80, flush=True)
 
+    output_file = "rag_results.json"
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n✓ Results saved to {output_file}")
+
     print(f"\n{'='*80}")
-    print(f"Evaluation complete!")
+    print(f"Generation complete!")
     print(f"Pipeline time: {pipeline_time:.1f}s ({pipeline_time/60:.1f}m)")
     print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}\n", flush=True)

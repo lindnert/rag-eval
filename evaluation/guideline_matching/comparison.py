@@ -1,4 +1,4 @@
-from model import RecommendationType, Compatibility, COMPATIBILITY_MATRIX
+from evaluation.guideline_matching.model import RecommendationType, Compatibility, COMPATIBILITY_MATRIX
 
 def get_compatibility(a: RecommendationType, b: RecommendationType) -> Compatibility:
     return COMPATIBILITY_MATRIX.get(

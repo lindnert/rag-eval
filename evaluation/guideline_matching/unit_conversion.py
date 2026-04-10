@@ -1,6 +1,6 @@
 import pint
 from enum import Enum
-from model import Timeframe, TIMEFRAME_TO_DAYS, Nutrient
+from evaluation.guideline_matching.model import Timeframe, TIMEFRAME_TO_DAYS, Nutrient
 
 ureg = pint.UnitRegistry()
 
