@@ -32,7 +32,7 @@ def _get_retriever(index_dir=FAISS_INDEX_DIR, k=3):
 def build_prompt(query, contexts):
     prompt_lines = [
         "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt.",
-        "Nutze die folgenden Dokumente als Kontext, falls sie relevant sind.",
+        "Antworte kurz und prägnant (max 3-4 Absätze). Verwende nur Informationen aus dem Kontext.",
         "",
         f"Frage: {query}",
     ]
@@ -42,6 +42,12 @@ def build_prompt(query, contexts):
         prompt_lines.append("Kontextinformationen:")
         for index, context in enumerate(contexts, start=1):
             prompt_lines.append(f"{index}. {context}")
+    else:
+        prompt_lines.append("")
+        prompt_lines.append("Hinweis: Kein Kontext verfügbar.")
+        
+    prompt_lines.append("")
+    prompt_lines.append("Antwort:")
 
     return "\n".join(prompt_lines)
 
