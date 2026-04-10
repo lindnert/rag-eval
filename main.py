@@ -2,6 +2,8 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 import asyncio
+import time
+from datetime import datetime
 
 from rag_pipeline import run_rag_pipeline, run_rag_pipeline_batch_async
 from evaluation.ragas_eval import run_ragas
@@ -31,7 +33,7 @@ def evaluate_queries_batch_async(queries):
 if __name__ == "__main__":
     os.environ["DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE"] = "120"
     os.environ["DEEPEVAL_MAX_RETRIES_OVERRIDE"] = "3"
-    
+
     #query = "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?"
 
     #result = evaluate_query(query)
@@ -47,9 +49,30 @@ if __name__ == "__main__":
     "Ich bin 45 Jahre alt, habe ADHS und Schlafprobleme. Kann die richtige Ernährung meine Symptome verbessern?",
     "Welche Lebensmittel helfen am besten gegen Migräne? Gibt es Trigger, die ich vermeiden sollte?"
     ]
-    results = evaluate_queries_batch_async(queries)
 
-    for result in results:
+    print(f"\n{'='*80}")
+    print(f"Starting RAG evaluation pipeline")
+    print(f"Total queries: {len(queries)}")
+    print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*80}\n", flush=True)
+
+    pipeline_start = time.time()
+    results = evaluate_queries_batch_async(queries)
+    pipeline_time = time.time() - pipeline_start
+
+    print(f"\n{'='*80}")
+    print(f"Printing results...")
+    print(f"{'='*80}\n", flush=True)
+
+    for idx, result in enumerate(results, 1):
+        print(f"\n[Result {idx}/{len(results)}]")
         for k, v in result.items():
             print(f"{k}: {v}")
+        print(f"-" * 80, flush=True)
+
+    print(f"\n{'='*80}")
+    print(f"Evaluation complete!")
+    print(f"Pipeline time: {pipeline_time:.1f}s ({pipeline_time/60:.1f}m)")
+    print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*80}\n", flush=True)
 
