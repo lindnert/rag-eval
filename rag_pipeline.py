@@ -115,7 +115,7 @@ def run_rag_pipeline(query):
     }
 
 
-async def run_rag_pipeline_batch_async(queries, batch_size=3):
+async def run_rag_pipeline_batch_async(queries, batch_size=10):
     """
     Process multiple queries asynchronously in batches.
 

@@ -27,7 +27,7 @@ def evaluate_query(query):
 
 
 def evaluate_queries_batch_async(queries):
-    return asyncio.run(run_rag_pipeline_batch_async(queries, batch_size=3))
+    return asyncio.run(run_rag_pipeline_batch_async(queries, batch_size=10))
 
 
 if __name__ == "__main__":
@@ -47,7 +47,37 @@ if __name__ == "__main__":
     "Ich bin Veganer und trainiere intensiv 6x pro Woche. Wie stelle ich sicher, dass ich genug Protein und alle essentiellen Aminosäuren bekomme?",
     "Nach meiner Gallenblasenoperation kann ich viele Lebensmittel nicht mehr essen. Welche Ernährungsstrategie hilft mir, wieder normal zu essen?",
     "Ich bin 45 Jahre alt, habe ADHS und Schlafprobleme. Kann die richtige Ernährung meine Symptome verbessern?",
-    "Welche Lebensmittel helfen am besten gegen Migräne? Gibt es Trigger, die ich vermeiden sollte?"
+    "Welche Lebensmittel helfen am besten gegen Migräne? Gibt es Trigger, die ich vermeiden sollte?",
+    "Mit 22 Jahren und 60 kg fällt es mir schwer zuzunehmen. Welche Ernährungsstrategie hilft mir beim gesunden Gewichtaufbau?",
+    "Als 35-jähriger Büroangestellter mit wenig Bewegung frage ich mich, wie ich meine Ernährung langfristig optimieren kann.",
+    "Regelmäßiges Marathontraining gehört zu meinem Alltag (28 Jahre). Welche Lebensmittel verbessern gezielt meine Ausdauerleistung?",
+    "Aufgrund von Bluthochdruck (50 Jahre) möchte ich meine Ernährung umstellen – worauf sollte ich besonders achten?",
+    "Ich wiege 95 kg bei 40 Jahren und möchte nachhaltig abnehmen. Welche Rolle spielen Makronährstoffe dabei konkret?",
+    "Seit einigen Jahren ernähre ich mich vegetarisch (19 Jahre). Wie kann ich mögliche Nährstoffdefizite vermeiden?",
+    "Häufige Verdauungsprobleme beeinträchtigen meinen Alltag (33 Jahre). Welche Ernährungsweise könnte helfen?",
+    "Mit 70 Jahren habe ich oft wenig Appetit. Wie kann ich dennoch eine ausreichende Nährstoffversorgung sicherstellen?",
+    "Trotz Pflege habe ich mit Akne zu kämpfen (26 Jahre). Welche Ernährungsfaktoren könnten mein Hautbild beeinflussen?",
+    "Ich trainiere regelmäßig im Fitnessstudio (31 Jahre, 80 kg). Wie bestimme ich meinen optimalen Proteinbedarf?",
+    "Nach der Diagnose Diabetes Typ 2 (45 Jahre) möchte ich meine Ernährung anpassen – insbesondere bei Kohlenhydraten. Was ist sinnvoll?",
+    "Schichtarbeit (38 Jahre) bringt meinen Essrhythmus durcheinander. Wie kann ich meine Mahlzeiten besser strukturieren?",
+    "Während des Studiums fällt es mir schwer, konzentriert zu bleiben (24 Jahre). Welche Rolle spielt Ernährung dabei?",
+    "Erhöhte Cholesterinwerte (55 Jahre) machen mir Sorgen. Welche Fette sollte ich bevorzugen oder vermeiden?",
+    "Dauerhafter Stress (30 Jahre) wirkt sich auf mein Wohlbefinden aus. Gibt es Lebensmittel, die mich unterstützen können?",
+    "Aufgrund einer Laktoseintoleranz (27 Jahre) suche ich nach Alternativen, um meinen Kalziumbedarf zu decken.",
+    "Mit einer Schilddrüsenerkrankung (42 Jahre) frage ich mich, welche Ernährung förderlich ist.",
+    "Ich praktiziere intermittierendes Fasten (36 Jahre). Wie sollte ich meine Mahlzeiten innerhalb des Essfensters gestalten?",
+    "Heißhungerattacken treten bei mir regelmäßig auf (48 Jahre). Welche Ernährungsstrategien helfen dagegen?",
+    "Als leistungsorientierter Fußballspieler (21 Jahre) interessiert mich, wie ich meine Regeneration durch Ernährung verbessern kann.",
+    "Osteoporose wurde bei mir diagnostiziert (60 Jahre). Welche Nährstoffe sind jetzt besonders wichtig?",
+    "Mit einer Glutenunverträglichkeit (34 Jahre) suche ich nach Möglichkeiten für eine ausgewogene Ernährung.",
+    "Mein Ziel ist es, den Körperfettanteil zu reduzieren (29 Jahre). Welche Ernährungsansätze sind dafür effektiv?",
+    "Wiederkehrende Migräneanfälle (41 Jahre) belasten mich. Welche Rolle spielen Ernährung und mögliche Trigger?",
+    "Ich möchte gezielt meine Darmflora verbessern (37 Jahre). Welche Lebensmittel sind dafür besonders geeignet?",
+    "Im Alltag fühle ich mich oft energielos (23 Jahre). Kann meine Ernährung daran schuld sein?",
+    "Zur Verbesserung meiner Herzgesundheit (52 Jahre) möchte ich meine Essgewohnheiten anpassen – was ist empfehlenswert?",
+    "Wechseljahresbeschwerden machen mir zu schaffen (46 Jahre). Welche Ernährung kann unterstützend wirken?",
+    "In Vorbereitung auf einen Triathlon (32 Jahre) suche ich nach einer optimalen Ernährungsstrategie für Training und Wettkampf.",
+    "Mit 65 Jahren möchte ich mein Immunsystem stärken. Welche Nährstoffe und Lebensmittel spielen dabei eine zentrale Rolle?",
     ]
 
     print(f"\n{'='*80}")
