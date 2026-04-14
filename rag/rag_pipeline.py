@@ -5,9 +5,9 @@ import asyncio
 import time
 from datetime import datetime
 
-from rag.utils import run_rag_pipeline, run_rag_pipeline_batch_async
+from rag.utils import run_rag_pipeline_batch_async, OLLAMA_CONTEXT_LENGTH
 
-
+# outdated function, not used in current pipeline but kept for reference
 """ def evaluate_query(query):
     sample = run_rag_pipeline(query)
 
@@ -75,6 +75,7 @@ if __name__ == "__main__":
     print(f"Starting RAG evaluation pipeline")
     print(f"Total queries: {len(queries)}")
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Ollama context length: {OLLAMA_CONTEXT_LENGTH} tokens")
     print(f"{'='*80}\n", flush=True)
 
     pipeline_start = time.time()
