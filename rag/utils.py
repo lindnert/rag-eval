@@ -56,7 +56,8 @@ def parse_ollama_response(response_json):
     return response_json["response"]
 
 
-def generate_llm_answer(query, contexts):
+# outdated function, not used in current pipeline but kept for reference
+""" def generate_llm_answer(query, contexts):
     prompt = build_prompt(query, contexts)
     payload = {
         "model": OLLAMA_RAG_MODEL,
@@ -85,7 +86,7 @@ def generate_llm_answer(query, contexts):
         return f"[OLLAMA HTTP ERROR] {exc.code}: {error_body}"
     except Exception as exc:
         return f"[OLLAMA ERROR] {exc}"
-
+"""
 
 async def generate_llm_answer_async(session, query, contexts):
     prompt = build_prompt(query, contexts)
@@ -107,8 +108,8 @@ async def generate_llm_answer_async(session, query, contexts):
     except Exception as exc:
         return f"[OLLAMA ERROR] {exc}"
 
-
-def run_rag_pipeline(query):
+# outdated function, not used in current pipeline but kept for reference
+""" def run_rag_pipeline(query):
     retriever = _get_retriever()
     retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
 
@@ -119,19 +120,10 @@ def run_rag_pipeline(query):
         "answer": answer,
         "contexts": retrieved_docs,
     }
+"""
 
 
 async def run_rag_pipeline_batch_async(queries, batch_size=10):
-    """
-    Process multiple queries asynchronously in batches.
-
-    Args:
-        queries: List of query strings
-        batch_size: Number of concurrent requests (3 recommended for T4 GPU)
-
-    Returns:
-        List of results, one per query
-    """
     retriever = _get_retriever()
     results = []
     start_time = time.time()
