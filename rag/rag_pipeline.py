@@ -5,7 +5,7 @@ import asyncio
 import time
 from datetime import datetime
 
-from rag.utils import run_rag_pipeline_batch_async, OLLAMA_CONTEXT_LENGTH
+from rag.utils import run_rag_pipeline_async, OLLAMA_CONTEXT_LENGTH
 
 # outdated function, not used in current pipeline but kept for reference
 """ def evaluate_query(query):
@@ -21,10 +21,6 @@ from rag.utils import run_rag_pipeline_batch_async, OLLAMA_CONTEXT_LENGTH
         **deepeval_scores,
         **custom_scores
     } """
-
-
-def run_queries_batch_async(queries):
-    return asyncio.run(run_rag_pipeline_batch_async(queries, batch_size=10))
 
 
 if __name__ == "__main__":
@@ -69,6 +65,7 @@ if __name__ == "__main__":
     "Wechseljahresbeschwerden machen mir zu schaffen (46 Jahre). Welche Ernährung kann unterstützend wirken?",
     "In Vorbereitung auf einen Triathlon (32 Jahre) suche ich nach einer optimalen Ernährungsstrategie für Training und Wettkampf.",
     "Mit 65 Jahren möchte ich mein Immunsystem stärken. Welche Nährstoffe und Lebensmittel spielen dabei eine zentrale Rolle?",
+    "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?",
     ]
 
     print(f"\n{'='*80}")
@@ -79,7 +76,7 @@ if __name__ == "__main__":
     print(f"{'='*80}\n", flush=True)
 
     pipeline_start = time.time()
-    results = run_queries_batch_async(queries)
+    results = asyncio.run(run_rag_pipeline_async(queries))
     pipeline_time = time.time() - pipeline_start
 
     print(f"\n{'='*80}")
@@ -101,6 +98,5 @@ if __name__ == "__main__":
     print(f"\n{'='*80}")
     print(f"Generation complete!")
     print(f"Pipeline time: {pipeline_time:.1f}s ({pipeline_time/60:.1f}m)")
-    print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}\n", flush=True)
 
