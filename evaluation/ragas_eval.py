@@ -1,4 +1,5 @@
 import os
+import re
 from typing import cast
 
 from ragas import evaluate
@@ -25,6 +26,15 @@ print(f"[ragas_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
 _call_counter = {"n": 0}
 
+_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_code_fences(text: str) -> str:
+    if not text:
+        return text
+    m = _CODE_FENCE_RE.match(text)
+    return m.group(1).strip() if m else text
+
 
 base_llm = ChatOllama(
     model=OLLAMA_EVAL_MODEL,
@@ -42,6 +52,7 @@ class RagasJSONWrapper:
             HumanMessage(content=str(prompt)),
         ]
         response = self.llm.invoke(messages).content or "{}"
+        response = _strip_code_fences(response)
 
         if EVAL_DEBUG_LLM:
             _call_counter["n"] += 1
