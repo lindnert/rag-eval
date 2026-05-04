@@ -1,11 +1,19 @@
 from deepeval import prompt
 from langchain_ollama import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage
 from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 import os
 
 OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
+
+JSON_SYSTEM_PROMPT = (
+    "You are a strict JSON generator. "
+    "Return valid JSON only, with no explanation, prose, or text outside the JSON object. "
+    "Do not wrap the output in markdown code fences. "
+    "Always include the field \"claims\" as a list of strings; if unsure, return {\"claims\": []}."
+)
 
 class OllamaWrapper(DeepEvalBaseLLM):
     def __init__(self, llm):
@@ -15,19 +23,12 @@ class OllamaWrapper(DeepEvalBaseLLM):
         return self.llm
 
     def generate(self, prompt: str, **kwargs):
-        prompt = f"""
-            You MUST return valid JSON.
-
-            IMPORTANT:
-            - Always include the field "claims" as a list of strings.
-            - If unsure, return: {{"claims": []}}
-
-            NO explanation. ONLY JSON.
-
-        {prompt}
-        """
         try:
-            response = self.llm.invoke(prompt).content
+            messages = [
+                SystemMessage(content=JSON_SYSTEM_PROMPT),
+                HumanMessage(content=str(prompt)),
+            ]
+            response = self.llm.invoke(messages).content
 
             if not response or response.strip() == "":
                 return '{"claims": []}'
@@ -54,7 +55,8 @@ def run_deepeval(sample):
 
     llm = ChatOllama(
         model=OLLAMA_EVAL_MODEL,
-        base_url="http://localhost:11434"
+        base_url="http://localhost:11434",
+        format="json",
     )
     ollama_model = OllamaWrapper(llm)
     faithfulness = FaithfulnessMetric(model=ollama_model)

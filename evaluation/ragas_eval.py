@@ -8,36 +8,52 @@ from ragas.metrics._answer_relevance import AnswerRelevancy
 from datasets import Dataset
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.outputs import LLMResult, Generation
+from langchain_core.messages import SystemMessage, HumanMessage
 from ragas.llms import LangchainLLMWrapper
 
 OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
 OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "nomic-embed-text")
 
+JSON_SYSTEM_PROMPT = (
+    "Follow the user's instructions and return your answer as a single JSON object "
+    "that matches the schema given in the prompt. "
+    "Do not wrap the JSON in markdown code fences and do not add commentary before or after it."
+)
 
-# --- Base LLM ---
+print(f"[ragas_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
+
+EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
+_call_counter = {"n": 0}
+
+
 base_llm = ChatOllama(
     model=OLLAMA_EVAL_MODEL,
-    base_url="http://localhost:11434"
+    base_url="http://localhost:11434",
 )
 
 
-# --- JSON-forcing wrapper (IMPORTANT) ---
 class RagasJSONWrapper:
     def __init__(self, llm):
         self.llm = llm
 
-    def _inject(self, prompt):
-        return f"""
-You MUST return valid JSON only.
-No explanation. No text outside JSON.
-
-{prompt}
-"""
-
     def generate(self, prompt, **kwargs):
-        prompt = self._inject(prompt)
-        response = self.llm.invoke(prompt).content
-        return response or "{}"
+        messages = [
+            SystemMessage(content=JSON_SYSTEM_PROMPT),
+            HumanMessage(content=str(prompt)),
+        ]
+        response = self.llm.invoke(messages).content or "{}"
+
+        if EVAL_DEBUG_LLM:
+            _call_counter["n"] += 1
+            n = _call_counter["n"]
+            prompt_str = str(prompt)
+            print(f"\n--- ragas LLM call #{n} ---", flush=True)
+            print(f"[PROMPT first 400] {prompt_str[:400]}", flush=True)
+            print(f"[PROMPT  last 200] {prompt_str[-200:]}", flush=True)
+            print(f"[RESPONSE len={len(response)}]\n{response[:1500]}", flush=True)
+            print(f"--- end call #{n} ---\n", flush=True)
+
+        return response
 
     async def agenerate(self, prompt, **kwargs):
         return self.generate(prompt, **kwargs)
