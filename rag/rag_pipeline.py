@@ -26,7 +26,6 @@ from rag.utils import run_rag_pipeline_async, OLLAMA_CONTEXT_LENGTH
 if __name__ == "__main__":
 
     queries = [
-    "",
     "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?",
     "Wie kann ich meine Regeneration nach intensivem Training optimieren? Welche Lebensmittel und Timing sind dafür am wichtigsten?",
     "Ich habe starke Gelenkschmerzen und Entzündungen. Gibt es eine Ernährung, die mir helfen kann, diese zu reduzieren?",
@@ -66,6 +65,7 @@ if __name__ == "__main__":
     "Wechseljahresbeschwerden machen mir zu schaffen (46 Jahre). Welche Ernährung kann unterstützend wirken?",
     "In Vorbereitung auf einen Triathlon (32 Jahre) suche ich nach einer optimalen Ernährungsstrategie für Training und Wettkampf.",
     "Mit 65 Jahren möchte ich mein Immunsystem stärken. Welche Nährstoffe und Lebensmittel spielen dabei eine zentrale Rolle?",
+    "Nach einer Schwangerschaft (35 Jahre) möchte ich wieder fit werden. Welche Ernährung ist sinnvoll?",
     ]
 
     print(f"\n{'='*80}")

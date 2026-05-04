@@ -127,6 +127,10 @@ async def process_single_query(session, query, retriever, sem, idx, total, progr
             "top_k": OLLAMA_RAG_MODEL_TOP_K,
             }
         }
+        prompt_tokens = 0
+        gen_tokens = 0
+        prompt_eval_duration_s = 0.0
+        eval_duration_s = 0.0
         try:
             async with session.post(
                 OLLAMA_API_URL,
@@ -135,12 +139,28 @@ async def process_single_query(session, query, retriever, sem, idx, total, progr
             ) as response:
                 parsed = await response.json()
                 answer = parse_ollama_response(parsed)
+                prompt_tokens = parsed.get("prompt_eval_count", 0) or 0
+                gen_tokens = parsed.get("eval_count", 0) or 0
+                prompt_eval_duration_s = (parsed.get("prompt_eval_duration", 0) or 0) / 1e9
+                eval_duration_s = (parsed.get("eval_duration", 0) or 0) / 1e9
         except aiohttp.ClientError as exc:
             answer = f"[OLLAMA HTTP ERROR] {exc}"
         except Exception as exc:
             answer = f"[OLLAMA ERROR] {exc}"
-    
+
         query_time = time.time() - query_start
+
+        progress_counter["prompt_tokens"] += prompt_tokens
+        progress_counter["gen_tokens"] += gen_tokens
+        progress_counter["prompt_eval_duration_s"] += prompt_eval_duration_s
+        progress_counter["eval_duration_s"] += eval_duration_s
+
+        gen_rate = gen_tokens / eval_duration_s if eval_duration_s > 0 else 0.0
+        print(
+            f"    Query #{idx+1} tokens — prompt: {prompt_tokens}, gen: {gen_tokens}  "
+            f"({gen_rate:.1f} tok/s gen)",
+            flush=True,
+        )
 
         progress_counter["done"] += 1
         done = progress_counter["done"]
@@ -163,7 +183,13 @@ async def run_rag_pipeline_async(queries):
 
     start_time = time.time()
     total_queries = len(queries)
-    progress_counter = {"done": 0}
+    progress_counter = {
+        "done": 0,
+        "prompt_tokens": 0,
+        "gen_tokens": 0,
+        "prompt_eval_duration_s": 0.0,
+        "eval_duration_s": 0.0,
+    }
 
     print(f"\n{'='*80}")
     print(f"Starting batch processing: {total_queries} queries with batch_size={OLLAMA_RAG_MODEL_CONCURRENCY}")
@@ -178,10 +204,27 @@ async def run_rag_pipeline_async(queries):
         results = await asyncio.gather(*tasks)
 
     total_time = time.time() - start_time
+
+    prompt_tokens = progress_counter["prompt_tokens"]
+    gen_tokens = progress_counter["gen_tokens"]
+    total_tokens = prompt_tokens + gen_tokens
+    prompt_eval_s = progress_counter["prompt_eval_duration_s"]
+    eval_s = progress_counter["eval_duration_s"]
+
+    # Per-model rates (sum of model-time, ignores concurrency overlap)
+    model_prompt_rate = prompt_tokens / prompt_eval_s if prompt_eval_s > 0 else 0.0
+    model_gen_rate = gen_tokens / eval_s if eval_s > 0 else 0.0
+    # Wall-clock throughput (reflects concurrency benefit)
+    wall_gen_rate = gen_tokens / total_time if total_time > 0 else 0.0
+    wall_total_rate = total_tokens / total_time if total_time > 0 else 0.0
+
     print(f"{'='*80}")
     print(f"Processing completed!")
     print(f"Total time: {total_time:.1f}s ({total_time/60:.1f}m)")
     print(f"Total queries: {total_queries}")
+    print(f"Tokens — prompt: {prompt_tokens}, generated: {gen_tokens}, total: {total_tokens}")
+    print(f"Per-model rate (single-stream): prompt {model_prompt_rate:.1f} tok/s | gen {model_gen_rate:.1f} tok/s")
+    print(f"Wall-clock throughput (with concurrency): gen {wall_gen_rate:.1f} tok/s | total {wall_total_rate:.1f} tok/s")
     print(f"{'='*80}\n", flush=True)
 
     return results
