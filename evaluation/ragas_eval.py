@@ -12,7 +12,7 @@ from langchain_core.outputs import LLMResult, Generation
 from langchain_core.messages import SystemMessage, HumanMessage
 from ragas.llms import LangchainLLMWrapper
 
-OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:4b")
+OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
 OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "nomic-embed-text")
 
 JSON_SYSTEM_PROMPT = (
