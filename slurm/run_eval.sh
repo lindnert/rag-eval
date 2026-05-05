@@ -1,0 +1,105 @@
+#!/bin/bash
+#SBATCH --job-name=eval
+#SBATCH --comment="RAG Evaluation pipeline"
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=tim.lindner@campus.lmu.de
+#SBATCH --chdir=/home/l/lindnerti/rag-eval
+#SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%j.%N.out
+#SBATCH --error=/home/l/lindnerti/rag-eval/logs/eval.%j.%N.err
+#SBATCH --time=06:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem=0
+#SBATCH --partition=NvidiaAll
+
+## Submit with: sbatch slurm/run_eval.sh
+## Optionally: sbatch --dependency=afterok:<rag_jobid> slurm/run_eval.sh
+## Optionally override input: RAG_RESULTS_FILE=/path/to/rag_results_YYYYMMDD.json sbatch --export=ALL slurm/run_eval.sh
+
+set -euo pipefail
+
+WORKDIR="${SLURM_SUBMIT_DIR:-$PWD}"
+export RESULTS_DIR="${WORKDIR}/results"
+mkdir -p "${RESULTS_DIR}" "${WORKDIR}/logs"
+
+PYTHON_BIN="$(command -v python3.12 || command -v python3)"
+
+echo "==== Eval job ${SLURM_JOB_ID} on $(hostname) ===="
+echo "Start: $(date)"
+nvidia-smi || true
+
+# ---------------------------------------------------------------------------
+# 1. Python venv + dependencies
+# ---------------------------------------------------------------------------
+if [ ! -d "${WORKDIR}/.venv" ]; then
+  "${PYTHON_BIN}" -m venv "${WORKDIR}/.venv"
+fi
+source "${WORKDIR}/.venv/bin/activate"
+
+sed -i '/pywin32/d' requirements.txt
+sed -i 's/==/>=/g' requirements.txt
+
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# ---------------------------------------------------------------------------
+# 2. Install Ollama into $HOME
+# ---------------------------------------------------------------------------
+OLLAMA_DIR="${HOME}/.local/ollama"
+mkdir -p "${OLLAMA_DIR}/bin"
+export PATH="${OLLAMA_DIR}/bin:${PATH}"
+export OLLAMA_MODELS="${WORKDIR}/.ollama_models"
+mkdir -p "${OLLAMA_MODELS}"
+
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "Installing Ollama into ${OLLAMA_DIR} ..."
+  curl -fsSL https://github.com/ollama/ollama/releases/download/v0.23.1/ollama-linux-amd64.tar.zst -o /tmp/ollama.tar.zst
+  zstd -d /tmp/ollama.tar.zst -o /tmp/ollama.tar
+  tar -xf /tmp/ollama.tar -C "${OLLAMA_DIR}"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Start Ollama server (lower parallelism for eval)
+# ---------------------------------------------------------------------------
+export OLLAMA_HOST="127.0.0.1:11434"
+export OLLAMA_NUM_PARALLEL=4
+export OLLAMA_FLASH_ATTENTION=1
+export OLLAMA_KV_CACHE_TYPE=q8_0
+export OLLAMA_KEEP_ALIVE=-1
+
+pkill -f "ollama serve" || true
+sleep 2
+ollama serve > "${WORKDIR}/logs/ollama_eval_${SLURM_JOB_ID:-local}.log" 2>&1 &
+OLLAMA_PID=$!
+trap 'kill ${OLLAMA_PID} 2>/dev/null || true' EXIT
+
+for i in $(seq 1 60); do
+  if curl -sf "http://${OLLAMA_HOST}/api/tags" >/dev/null; then
+    echo "Ollama ready after ${i}s"
+    break
+  fi
+  sleep 1
+done
+
+# ---------------------------------------------------------------------------
+# 4. Pull + warm models needed for evaluation
+# ---------------------------------------------------------------------------
+ollama pull qwen3.5:2b
+ollama pull nomic-embed-text
+
+curl -sf "http://${OLLAMA_HOST}/api/generate" \
+  -d '{"model":"qwen3.5:2b","prompt":"Sag Hallo in einem Wort.","stream":false}' >/dev/null
+curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
+  -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
+echo "Models warmed up"
+
+# ---------------------------------------------------------------------------
+# 5. Run evaluation pipeline
+# ---------------------------------------------------------------------------
+echo "==== Evaluation pipeline ===="
+echo "Reading RAG results from: ${RAG_RESULTS_FILE:-${RESULTS_DIR}/rag_results_latest.json}"
+python -m evaluation.eval_pipeline
+
+echo "==== Done at $(date) ===="
+echo "Results in: ${RESULTS_DIR}"
+ls -lh "${RESULTS_DIR}"

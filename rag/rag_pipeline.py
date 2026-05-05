@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 import json
+import os
 import asyncio
 import time
 from datetime import datetime
@@ -89,8 +90,14 @@ if __name__ == "__main__":
             print(f"{k}: {v}")
         print(f"-" * 80, flush=True)
 
-    output_file = "rag_results.json"
+    results_dir = os.environ.get("RESULTS_DIR", "results")
+    os.makedirs(results_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(results_dir, f"rag_results_{timestamp}.json")
     with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    latest_link = os.path.join(results_dir, "rag_results_latest.json")
+    with open(latest_link, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     
     print(f"\n✓ Results saved to {output_file}")
