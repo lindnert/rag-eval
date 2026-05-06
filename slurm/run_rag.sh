@@ -82,14 +82,14 @@ done
 # ---------------------------------------------------------------------------
 # 4. Pull + warm models needed for RAG
 # ---------------------------------------------------------------------------
-ollama pull gemma3:4b
+ollama pull gemma4:e2b
 ollama pull nomic-embed-text
 
 echo "Warming up models with dummy requests..."
 ollama ps
 
 curl -sf "http://${OLLAMA_HOST}/api/generate" \
-  -d '{"model":"gemma3:4b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":6000}}' >/dev/null
+  -d '{"model":"gemma4:e2b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":4096}}' >/dev/null
 curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
   -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
 echo "Models warmed up"
