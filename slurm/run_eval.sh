@@ -91,7 +91,7 @@ echo "Warming up models with dummy requests..."
 ollama ps
 
 curl -sf "http://${OLLAMA_HOST}/api/generate" \
-  -d '{"model":"qwen3.5:2b","prompt":"Sag Hallo in einem Wort.","stream":false}' >/dev/null
+  -d '{"model":"qwen3.5:2b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":8192}}' >/dev/null
 curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
   -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
 echo "Models warmed up"
