@@ -84,14 +84,14 @@ done
 # ---------------------------------------------------------------------------
 # 4. Pull + warm models needed for evaluation
 # ---------------------------------------------------------------------------
-ollama pull qwen3.5:2b
+ollama pull qwen3.5:9b
 ollama pull nomic-embed-text
 
 echo "Warming up models with dummy requests..."
 ollama ps
 
 curl -sf "http://${OLLAMA_HOST}/api/generate" \
-  -d '{"model":"qwen3.5:2b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":6000}}' >/dev/null
+  -d '{"model":"qwen3.5:9b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":4096}}' >/dev/null
 curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
   -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
 echo "Models warmed up"
