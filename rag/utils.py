@@ -9,7 +9,7 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
-OLLAMA_RAG_MODEL = os.getenv("OLLAMA_RAG_MODEL", "gemma4:e2b")
+OLLAMA_RAG_MODEL = os.getenv("OLLAMA_RAG_MODEL", "gemma3:4b")
 OLLAMA_RAG_MODEL_TEMPERATURE = float(os.getenv("OLLAMA_RAG_MODEL_TEMPERATURE", "0.1"))
 OLLAMA_RAG_MODEL_TOP_P = float(os.getenv("OLLAMA_RAG_MODEL_TOP_P", "0.95"))
 OLLAMA_RAG_MODEL_TOP_K = int(os.getenv("OLLAMA_RAG_MODEL_TOP_K", "64"))
