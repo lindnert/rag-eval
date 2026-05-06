@@ -3,6 +3,7 @@ import aiohttp
 import asyncio
 import time
 from datetime import datetime
+import requests
 
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -174,6 +175,8 @@ async def process_single_query(session, query, retriever, sem, idx, total, progr
             f"Total time elapsed: {elapsed:.1f}s  ETA: {remaining:.1f}s",
             flush=True,
         )
+
+        print(requests.get("http://127.0.0.1:11434/api/ps").json(), flush=True)
 
     return {"query": query, "answer": answer, "contexts": retrieved_docs}
 

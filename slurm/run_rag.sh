@@ -85,17 +85,26 @@ done
 ollama pull gemma4:e2b
 ollama pull nomic-embed-text
 
+echo "Warming up models with dummy requests..."
+ollama ps
+
 curl -sf "http://${OLLAMA_HOST}/api/generate" \
   -d '{"model":"gemma4:e2b","prompt":"Sag Hallo in einem Wort.","stream":false}' >/dev/null
 curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
   -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
 echo "Models warmed up"
 
+echo "Current Ollama status:"
+ollama ps
+
 # ---------------------------------------------------------------------------
 # 5. Run RAG pipeline
 # ---------------------------------------------------------------------------
 echo "==== RAG pipeline ===="
 python -m rag.rag_pipeline
+
+echo "GPU status after RAG:"
+ollama ps
 
 echo "==== Done at $(date) ===="
 echo "Results in: ${RESULTS_DIR}"
