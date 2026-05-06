@@ -12,8 +12,9 @@ from langchain_core.outputs import LLMResult, Generation
 from langchain_core.messages import SystemMessage, HumanMessage
 from ragas.llms import LangchainLLMWrapper
 
-OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:9b")
-OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "nomic-embed-text")
+OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:4b")
+OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "qllama/multilingual-e5-base:q4_k_m")
+OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "6000"))
 
 JSON_SYSTEM_PROMPT = (
     "Follow the user's instructions and return your answer as a single JSON object "
@@ -39,6 +40,7 @@ def _strip_code_fences(text: str) -> str:
 base_llm = ChatOllama(
     model=OLLAMA_EVAL_MODEL,
     base_url="http://localhost:11434",
+    num_ctx=OLLAMA_CONTEXT_LENGTH,
 )
 
 

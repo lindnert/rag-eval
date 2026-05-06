@@ -6,7 +6,8 @@ from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 import os
 
-OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:9b")
+OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:4b")
+OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "8192"))
 
 JSON_SYSTEM_PROMPT = (
     "You are a strict JSON generator. "
@@ -57,6 +58,7 @@ def run_deepeval(sample):
         model=OLLAMA_EVAL_MODEL,
         base_url="http://localhost:11434",
         format="json",
+        num_ctx=OLLAMA_CONTEXT_LENGTH,
     )
     ollama_model = OllamaWrapper(llm)
     faithfulness = FaithfulnessMetric(model=ollama_model)
