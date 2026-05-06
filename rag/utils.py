@@ -13,10 +13,9 @@ OLLAMA_RAG_MODEL = os.getenv("OLLAMA_RAG_MODEL", "gemma4:e2b")
 OLLAMA_RAG_MODEL_TEMPERATURE = float(os.getenv("OLLAMA_RAG_MODEL_TEMPERATURE", "0.1"))
 OLLAMA_RAG_MODEL_TOP_P = float(os.getenv("OLLAMA_RAG_MODEL_TOP_P", "0.95"))
 OLLAMA_RAG_MODEL_TOP_K = int(os.getenv("OLLAMA_RAG_MODEL_TOP_K", "64"))
-OLLAMA_RAG_MODEL_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", 8))
-OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:2b")
+OLLAMA_RAG_MODEL_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", 10))
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
-OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "8192"))
+OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "6000"))
 FAISS_INDEX_DIR = os.path.join(os.path.dirname(__file__), "..", "richtlinien", "faiss_index")
 
 _retriever = None

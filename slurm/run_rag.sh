@@ -60,7 +60,7 @@ fi
 # 3. Start Ollama server
 # ---------------------------------------------------------------------------
 export OLLAMA_HOST="127.0.0.1:11434"
-export OLLAMA_NUM_PARALLEL=8
+export OLLAMA_NUM_PARALLEL=10
 export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_KV_CACHE_TYPE=q8_0
 export OLLAMA_KEEP_ALIVE=-1
@@ -89,7 +89,7 @@ echo "Warming up models with dummy requests..."
 ollama ps
 
 curl -sf "http://${OLLAMA_HOST}/api/generate" \
-  -d '{"model":"gemma4:e2b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":8192}}' >/dev/null
+  -d '{"model":"gemma4:e2b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":6000}}' >/dev/null
 curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
   -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
 echo "Models warmed up"
