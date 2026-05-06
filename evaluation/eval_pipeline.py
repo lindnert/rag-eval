@@ -1,5 +1,6 @@
 import json
 import time
+import requests
 from datetime import datetime
 from evaluation.ragas_eval import run_ragas
 from evaluation.deepeval_eval import run_deepeval
@@ -27,6 +28,7 @@ def evaluate_results(results, partial_path=None):
 
         try:
             result['ragas_scores'] = run_ragas(result)
+            print(requests.get("http://127.0.0.1:11434/api/ps").json(), flush=True)
             result['deepeval_scores'] = run_deepeval(result)
             result['custom_scores'] = run_custom(result)
         except Exception as e:

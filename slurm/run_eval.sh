@@ -87,11 +87,17 @@ done
 ollama pull qwen3.5:2b
 ollama pull nomic-embed-text
 
+echo "Warming up models with dummy requests..."
+ollama ps
+
 curl -sf "http://${OLLAMA_HOST}/api/generate" \
   -d '{"model":"qwen3.5:2b","prompt":"Sag Hallo in einem Wort.","stream":false}' >/dev/null
 curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
   -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
 echo "Models warmed up"
+
+echo "Current Ollama status:"
+ollama ps
 
 # ---------------------------------------------------------------------------
 # 5. Run evaluation pipeline
@@ -99,6 +105,9 @@ echo "Models warmed up"
 echo "==== Evaluation pipeline ===="
 echo "Reading RAG results from: ${RAG_RESULTS_FILE:-${RESULTS_DIR}/rag_results_latest.json}"
 python -m evaluation.eval_pipeline
+
+echo "GPU status after evaluation:"
+ollama ps
 
 echo "==== Done at $(date) ===="
 echo "Results in: ${RESULTS_DIR}"
