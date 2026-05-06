@@ -62,7 +62,7 @@ fi
 # 3. Start Ollama server (lower parallelism for eval)
 # ---------------------------------------------------------------------------
 export OLLAMA_HOST="127.0.0.1:11434"
-export OLLAMA_NUM_PARALLEL=4
+export OLLAMA_NUM_PARALLEL=1
 export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_KV_CACHE_TYPE=q8_0
 export OLLAMA_KEEP_ALIVE=-1
@@ -84,16 +84,16 @@ done
 # ---------------------------------------------------------------------------
 # 4. Pull + warm models needed for evaluation
 # ---------------------------------------------------------------------------
-ollama pull qwen3.5:9b
-ollama pull nomic-embed-text
+ollama pull qwen3.5:4b
+ollama pull qllama/multilingual-e5-base:q4_k_m
 
 echo "Warming up models with dummy requests..."
 ollama ps
 
 curl -sf "http://${OLLAMA_HOST}/api/generate" \
-  -d '{"model":"qwen3.5:9b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":4096}}' >/dev/null
+  -d '{"model":"qwen3.5:4b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":6000}}' >/dev/null
 curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
-  -d '{"model":"nomic-embed-text","prompt":"warmup"}' >/dev/null
+  -d '{"model":"qllama/multilingual-e5-base:q4_k_m","prompt":"warmup"}' >/dev/null
 echo "Models warmed up"
 
 echo "Current Ollama status:"

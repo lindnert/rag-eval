@@ -30,7 +30,7 @@ def evaluate_results(results, partial_path=None):
             result['ragas_scores'] = run_ragas(result)
             print(requests.get("http://127.0.0.1:11434/api/ps").json(), flush=True)
             result['deepeval_scores'] = run_deepeval(result)
-            result['custom_scores'] = run_custom(result)
+            #result['custom_scores'] = run_custom(result)
         except Exception as e:
             print(f"  ✗ Failed on item {idx}: {e}", flush=True)
             result['eval_error'] = str(e)
