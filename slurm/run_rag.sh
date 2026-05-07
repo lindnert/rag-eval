@@ -6,7 +6,7 @@
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
 #SBATCH --output=/home/l/lindnerti/rag-eval/logs/rag.%j.%N.out
 #SBATCH --error=/home/l/lindnerti/rag-eval/logs/rag.%j.%N.err
-#SBATCH --time=06:00:00
+#SBATCH --time=04:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=0
@@ -61,6 +61,7 @@ fi
 # ---------------------------------------------------------------------------
 export OLLAMA_HOST="127.0.0.1:11434"
 export OLLAMA_NUM_PARALLEL=10
+echo "OLLAMA_NUM_PARALLEL is set to ${OLLAMA_NUM_PARALLEL}"
 export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_KV_CACHE_TYPE=q8_0
 export OLLAMA_KEEP_ALIVE=-1
