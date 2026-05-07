@@ -1,3 +1,5 @@
+import asyncio
+import contextvars
 import os
 import re
 import shutil
@@ -5,6 +7,7 @@ import subprocess
 from typing import cast
 
 from ragas import evaluate
+from ragas.run_config import RunConfig
 from ragas.dataset_schema import EvaluationResult
 from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
@@ -16,21 +19,31 @@ from ragas.llms import LangchainLLMWrapper
 
 OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:4b")
 OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "qllama/multilingual-e5-base:q4_k_m")
-OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "8192"))
+OLLAMA_RAG_MODEL_TEMPERATURE = float(os.getenv("OLLAMA_RAG_MODEL_TEMPERATURE", "0.0"))
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "4096"))
+OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.90"))
+OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "16384"))
+RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
 
 JSON_SYSTEM_PROMPT = (
-    "Follow the user's instructions and return your answer as a single JSON object "
-    "that matches the schema given in the prompt. "
+    "You are a RAG evaluation assistant. Your task is to evaluate the quality of a generated answer based on the question, the answer, and the retrieved contexts. "
+    "Follow the user's instructions and return your answer as a single JSON object that matches the schema given in the prompt. "
     "Do not wrap the JSON in markdown code fences and do not add commentary before or after it. "
-    "/no_think"
 )
 
 print(f"[ragas_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
+RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "3"))
+print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
+# Tag debug prints with the sample index so interleaved concurrent output is readable.
+_current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_current_sample_idx", default=None
+)
 _call_counter = {"n": 0}
 _retry_state = {"last_primary_n": 0, "retry_idx": 0}
-_diag_state = {"printed": False}
+_prompt_store: dict[int, str] = {}
+_diag_state = {"printed": False, "concurrent_printed": False}
 
 _CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL | re.IGNORECASE)
 _RETRY_PROMPT_MARKER = "The output string did not satisfy"
@@ -43,9 +56,15 @@ def _strip_code_fences(text: str) -> str:
     return m.group(1).strip() if m else text
 
 
-def _print_gpu_diagnostics():
-    """Print nvidia-smi and `ollama ps` once, after the first real LLM call."""
-    print("\n========== GPU / Ollama diagnostics (after first call) ==========", flush=True)
+def _prompt_to_text(prompt) -> str:
+    if hasattr(prompt, "to_string"):
+        return prompt.to_string()
+    return str(prompt)
+
+
+def _print_gpu_diagnostics(label="after first call"):
+    """Print nvidia-smi and `ollama ps`."""
+    print(f"\n========== GPU / Ollama diagnostics ({label}) ==========", flush=True)
     if shutil.which("nvidia-smi"):
         try:
             out = subprocess.run(
@@ -76,14 +95,15 @@ def _print_gpu_diagnostics():
     print("========== end diagnostics ==========\n", flush=True)
 
 
-# format="json" enforces Ollama's structured-output mode at the server side.
-# Combined with the system prompt + ragas's schema-in-prompt this yields
-# strictly valid JSON without code fences in nearly all cases.
 base_llm = ChatOllama(
     model=OLLAMA_EVAL_MODEL,
     base_url="http://localhost:11434",
     num_ctx=OLLAMA_CONTEXT_LENGTH,
-    format="json",
+    num_predict=OLLAMA_NUM_PREDICT,
+    disable_streaming=True,
+    temperature=OLLAMA_RAG_MODEL_TEMPERATURE,
+    top_p=OLLAMA_TOP_P,
+    reasoning=False
 )
 
 
@@ -91,52 +111,85 @@ class RagasJSONWrapper:
     def __init__(self, llm):
         self.llm = llm
 
-    def generate(self, prompt, **kwargs):
-        messages = [
-            SystemMessage(content=JSON_SYSTEM_PROMPT),
-            HumanMessage(content=str(prompt)),
-        ]
-        response = self.llm.invoke(messages).content or "{}"
-        response = _strip_code_fences(response)
+    def _log_prompt(self, prompt):
+        if not EVAL_DEBUG_LLM:
+            return None
+        _call_counter["n"] += 1
+        n = _call_counter["n"]
+        prompt_str = _prompt_to_text(prompt)
+        sample_idx = _current_sample_idx.get()
+        sample_tag = f"sample={sample_idx}" if sample_idx is not None else "sample=?"
 
-        if EVAL_DEBUG_LLM:
-            _call_counter["n"] += 1
-            n = _call_counter["n"]
-            prompt_str = str(prompt)
+        is_retry = _RETRY_PROMPT_MARKER in prompt_str[:300]
+        if is_retry:
+            _retry_state["retry_idx"] += 1
+            retry_label = f"RETRY #{_retry_state['retry_idx']} of primary call #{_retry_state['last_primary_n']}"
+        else:
+            _retry_state["last_primary_n"] = n
+            _retry_state["retry_idx"] = 0
+            retry_label = "PRIMARY (retry 0)"
 
-            is_retry = _RETRY_PROMPT_MARKER in prompt_str[:300]
-            if is_retry:
-                _retry_state["retry_idx"] += 1
-                retry_label = f"RETRY #{_retry_state['retry_idx']} of primary call #{_retry_state['last_primary_n']}"
-            else:
-                _retry_state["last_primary_n"] = n
-                _retry_state["retry_idx"] = 0
-                retry_label = "PRIMARY (retry 0)"
+        # Stash prompt; it will be printed together with the response when the
+        # call completes (single self-contained block per call).
+        _prompt_store[n] = prompt_str
 
-            print(f"\n--- ragas LLM call #{n} | {retry_label} ---", flush=True)
-            print(f"[PROMPT len_chars={len(prompt_str)}]", flush=True)
-            print(f"[PROMPT FULL]\n{prompt_str}", flush=True)
-            print(f"[RESPONSE len_chars={len(response)}]\n{response}", flush=True)
-            print(f"--- end call #{n} ---\n", flush=True)
+        # Once we've kicked off enough calls that concurrency should be saturated,
+        # snapshot the GPU under load (single shot).
+        if not _diag_state["concurrent_printed"] and n >= RAGAS_CONCURRENCY:
+            _diag_state["concurrent_printed"] = True
+            _print_gpu_diagnostics(label=f"under load, after {n} calls launched")
+
+        return (n, sample_tag, retry_label)
+
+    def _log_response(self, ctx, response=None, error=None):
+        if not EVAL_DEBUG_LLM or ctx is None:
+            return
+        n, sample_tag, retry_label = ctx
+        prompt_str = _prompt_store.pop(n, "")
+        prompt_section = (
+            f"[PROMPT len_chars={len(prompt_str)}]\n"
+            f"[PROMPT FULL]\n{prompt_str}\n"
+        )
+        header = f"ragas LLM call #{n} | {sample_tag} | {retry_label}"
+        if error is not None:
+            block = (
+                f"\n--- {header} | COMPLETED (ERROR) ---\n"
+                f"{prompt_section}"
+                f"[ERROR] {type(error).__name__}: {error}\n"
+                f"--- end call #{n} ({sample_tag}) ---\n"
+            )
+        else:
+            block = (
+                f"\n--- {header} | COMPLETED ---\n"
+                f"{prompt_section}"
+                f"[RESPONSE len_chars={len(response or '')}]\n{response}\n"
+                f"--- end call #{n} ({sample_tag}) ---\n"
+            )
+        print(block, flush=True)
 
         if not _diag_state["printed"]:
             _diag_state["printed"] = True
             _print_gpu_diagnostics()
 
+    async def agenerate(self, prompt, **kwargs):
+        messages = [
+            SystemMessage(content=JSON_SYSTEM_PROMPT),
+            HumanMessage(content=_prompt_to_text(prompt)),
+        ]
+        ctx = self._log_prompt(prompt)
+        try:
+            result = await self.llm.ainvoke(messages)
+            response = (result.content if result is not None else None) or "{}"
+            response = _strip_code_fences(response)
+        except Exception as e:
+            self._log_response(ctx, error=e)
+            raise
+        self._log_response(ctx, response=response)
         return response
 
-    async def agenerate(self, prompt, **kwargs):
-        return self.generate(prompt, **kwargs)
-
-    def generate_prompt(self, prompts, **kwargs):
-        outputs = []
-        for p in prompts:
-            text = self.generate(p, **kwargs)
-            outputs.append([Generation(text=text)])
-        return LLMResult(generations=outputs)
-
     async def agenerate_prompt(self, prompts, **kwargs):
-        return self.generate_prompt(prompts, **kwargs)
+        texts = await asyncio.gather(*(self.agenerate(p, **kwargs) for p in prompts))
+        return LLMResult(generations=[[Generation(text=t)] for t in texts])
 
 
 wrapped_llm = RagasJSONWrapper(base_llm)
@@ -150,6 +203,10 @@ embeddings = OllamaEmbeddings(
 
 
 def run_ragas(sample):
+    # When EVAL_DEBUG_LLM, ask ragas to raise on per-metric failures instead of
+    # silently emitting NaN — otherwise null scores have no visible cause.
+    raise_exceptions = EVAL_DEBUG_LLM
+
     dataset = Dataset.from_dict({
         "question": [sample["query"]],
         "answer": [sample["answer"]],
@@ -165,18 +222,72 @@ def run_ragas(sample):
                 embeddings=embeddings,
                 metrics=[Faithfulness(), AnswerRelevancy()],
                 return_executor=False,
+                raise_exceptions=raise_exceptions,
+                run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=3, max_wait=60),
             ),
         )
 
+        faith = result["faithfulness"][0]
+        relev = result["answer_relevancy"][0]
         return {
-            "ragas_faithfulness": result["faithfulness"][0] if result["faithfulness"][0] == result["faithfulness"][0] else None,
-            "ragas_answer_relevancy": result["answer_relevancy"][0] if result["answer_relevancy"][0] == result["answer_relevancy"][0] else None,
+            "ragas_faithfulness": faith if faith == faith else None,
+            "ragas_answer_relevancy": relev if relev == relev else None,
         }
 
     except Exception as e:
-
+        sample_idx = _current_sample_idx.get()
+        print(
+            f"[ragas_eval] run_ragas FAILED for sample={sample_idx}: "
+            f"{type(e).__name__}: {e}",
+            flush=True,
+        )
         return {
             "ragas_faithfulness": None,
             "ragas_answer_relevancy": None,
-            "ragas_error": str(e)
+            "ragas_error": f"{type(e).__name__}: {e}",
         }
+
+
+async def arun_ragas(sample, semaphore: asyncio.Semaphore | None = None, idx: int | None = None):
+    """Async wrapper around run_ragas. ragas.evaluate is sync internally, so we
+    offload it to a thread; multiple threads in flight let Ollama serve the
+    requests in parallel (requires OLLAMA_NUM_PARALLEL >= concurrency).
+
+    `idx` is propagated to the worker thread via a ContextVar so debug prints
+    can be tagged with the originating sample index.
+    """
+    if idx is not None:
+        _current_sample_idx.set(idx)
+    if semaphore is None:
+        return await asyncio.to_thread(run_ragas, sample)
+    async with semaphore:
+        return await asyncio.to_thread(run_ragas, sample)
+
+
+async def arun_ragas_batch(samples, concurrency: int | None = None, on_done=None):
+    """Run ragas for many samples concurrently. Returns scores in input order.
+
+    on_done: optional callback `on_done(idx, sample, scores)` invoked as each
+    sample finishes (useful for progress logging / partial saves).
+    """
+    if concurrency is None:
+        concurrency = RAGAS_CONCURRENCY
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    results: list = [None] * len(samples)
+
+    async def _one(i, s):
+        # Each task gets its own context (asyncio.Task copies the parent
+        # context) so per-task ContextVar.set() is isolated.
+        scores = await arun_ragas(s, semaphore, idx=i)
+        results[i] = scores
+        if on_done is not None:
+            on_done(i, s, scores)
+        return scores
+
+    await asyncio.gather(*(_one(i, s) for i, s in enumerate(samples)))
+    return results
+
+
+def run_ragas_batch(samples, concurrency: int | None = None, on_done=None):
+    """Sync entry point for the async batch runner."""
+    return asyncio.run(arun_ragas_batch(samples, concurrency=concurrency, on_done=on_done))

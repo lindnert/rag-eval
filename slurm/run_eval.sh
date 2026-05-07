@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=eval
+#SBATCH --job-name=rag-eval
 #SBATCH --comment="RAG Evaluation pipeline"
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
 #SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%j.%N.out
 #SBATCH --error=/home/l/lindnerti/rag-eval/logs/eval.%j.%N.err
-#SBATCH --time=06:00:00
+#SBATCH --time=04:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=0
@@ -62,7 +62,8 @@ fi
 # 3. Start Ollama server (lower parallelism for eval)
 # ---------------------------------------------------------------------------
 export OLLAMA_HOST="127.0.0.1:11434"
-export OLLAMA_NUM_PARALLEL=1
+export OLLAMA_NUM_PARALLEL=3
+echo "OLLAMA_NUM_PARALLEL is set to ${OLLAMA_NUM_PARALLEL}"
 export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_KV_CACHE_TYPE=q8_0
 export OLLAMA_KEEP_ALIVE=-1
