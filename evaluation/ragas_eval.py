@@ -17,19 +17,17 @@ from langchain_core.outputs import LLMResult, Generation
 from langchain_core.messages import SystemMessage, HumanMessage
 from ragas.llms import LangchainLLMWrapper
 
-OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:4b")
-OLLAMA_EVAL_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EVAL_EMBEDDINGS_MODEL", "qwen3-embedding:0.6b")
-OLLAMA_RAG_MODEL_TEMPERATURE = float(os.getenv("OLLAMA_RAG_MODEL_TEMPERATURE", "0.0"))
-OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "4096"))
-OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.90"))
-OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "16384"))
-RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
-
-JSON_SYSTEM_PROMPT = (
-    "You are a RAG evaluation assistant. Your task is to evaluate the quality of a generated answer based on the question, the answer, and the retrieved contexts. "
-    "Follow the user's instructions and return your answer as a single JSON object that matches the schema given in the prompt. "
-    "Do not wrap the JSON in markdown code fences and do not add commentary before or after it. "
+from evaluation.eval_config import (
+    OLLAMA_EVAL_MODEL,
+    OLLAMA_EVAL_EMBEDDINGS_MODEL,
+    OLLAMA_TEMPERATURE,
+    OLLAMA_NUM_PREDICT,
+    OLLAMA_TOP_P,
+    OLLAMA_CONTEXT_LENGTH,
+    JSON_SYSTEM_PROMPT,
 )
+
+RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
 
 print(f"[ragas_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
 
@@ -102,7 +100,7 @@ def _build_base_llm() -> ChatOllama:
         num_ctx=OLLAMA_CONTEXT_LENGTH,
         num_predict=OLLAMA_NUM_PREDICT,
         disable_streaming=True,
-        temperature=OLLAMA_RAG_MODEL_TEMPERATURE,
+        temperature=OLLAMA_TEMPERATURE,
         top_p=OLLAMA_TOP_P,
         reasoning=False,
     )
