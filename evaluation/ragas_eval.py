@@ -34,7 +34,7 @@ JSON_SYSTEM_PROMPT = (
 print(f"[ragas_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
-RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "3"))
+RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "2"))
 print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
 # Tag debug prints with the sample index so interleaved concurrent output is readable.
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
@@ -95,16 +95,24 @@ def _print_gpu_diagnostics(label="after first call"):
     print("========== end diagnostics ==========\n", flush=True)
 
 
-base_llm = ChatOllama(
-    model=OLLAMA_EVAL_MODEL,
-    base_url="http://localhost:11434",
-    num_ctx=OLLAMA_CONTEXT_LENGTH,
-    num_predict=OLLAMA_NUM_PREDICT,
-    disable_streaming=True,
-    temperature=OLLAMA_RAG_MODEL_TEMPERATURE,
-    top_p=OLLAMA_TOP_P,
-    reasoning=False
-)
+def _build_base_llm() -> ChatOllama:
+    return ChatOllama(
+        model=OLLAMA_EVAL_MODEL,
+        base_url="http://localhost:11434",
+        num_ctx=OLLAMA_CONTEXT_LENGTH,
+        num_predict=OLLAMA_NUM_PREDICT,
+        disable_streaming=True,
+        temperature=OLLAMA_RAG_MODEL_TEMPERATURE,
+        top_p=OLLAMA_TOP_P,
+        reasoning=False,
+    )
+
+
+def _build_embeddings() -> OllamaEmbeddings:
+    return OllamaEmbeddings(
+        model=OLLAMA_EVAL_EMBEDDINGS_MODEL,
+        base_url="http://localhost:11434",
+    )
 
 
 class RagasJSONWrapper:
@@ -192,16 +200,6 @@ class RagasJSONWrapper:
         return LLMResult(generations=[[Generation(text=t)] for t in texts])
 
 
-wrapped_llm = RagasJSONWrapper(base_llm)
-ragas_llm = LangchainLLMWrapper(wrapped_llm)
-
-
-embeddings = OllamaEmbeddings(
-    model=OLLAMA_EVAL_EMBEDDINGS_MODEL,
-    base_url="http://localhost:11434"
-)
-
-
 def run_ragas(sample):
     # When EVAL_DEBUG_LLM, ask ragas to raise on per-metric failures instead of
     # silently emitting NaN — otherwise null scores have no visible cause.
@@ -212,6 +210,13 @@ def run_ragas(sample):
         "answer": [sample["answer"]],
         "contexts": [sample["contexts"]],
     })
+
+    # Build fresh clients per-call. ragas.evaluate() spins up its own short-lived
+    # event loop internally; reusing module-level ChatOllama/OllamaEmbeddings
+    # across calls leaves their lazy httpx.AsyncClient bound to a closed loop,
+    # producing "Event loop is closed" / "Event bound to a different event loop".
+    ragas_llm = LangchainLLMWrapper(RagasJSONWrapper(_build_base_llm()))
+    embeddings = _build_embeddings()
 
     try:
         result = cast(
