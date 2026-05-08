@@ -5,15 +5,15 @@ from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 import os
+from utils import _prompt_to_text
 
-OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:4b")
-OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "8192"))
-
-JSON_SYSTEM_PROMPT = (
-    "You are a strict JSON generator. "
-    "Return valid JSON only, with no explanation, prose, or text outside the JSON object. "
-    "Do not wrap the output in markdown code fences. "
-    "Always include the field \"claims\" as a list of strings; if unsure, return {\"claims\": []}."
+from evaluation.eval_config import (
+    OLLAMA_EVAL_MODEL,
+    OLLAMA_TEMPERATURE,
+    OLLAMA_NUM_PREDICT,
+    OLLAMA_TOP_P,
+    OLLAMA_CONTEXT_LENGTH,
+    JSON_SYSTEM_PROMPT,
 )
 
 class OllamaWrapper(DeepEvalBaseLLM):
@@ -27,7 +27,7 @@ class OllamaWrapper(DeepEvalBaseLLM):
         try:
             messages = [
                 SystemMessage(content=JSON_SYSTEM_PROMPT),
-                HumanMessage(content=str(prompt)),
+                HumanMessage(content=_prompt_to_text(prompt)),
             ]
             response = self.llm.invoke(messages).content
 
@@ -58,6 +58,9 @@ def run_deepeval(sample):
         model=OLLAMA_EVAL_MODEL,
         base_url="http://localhost:11434",
         format="json",
+        temperature=OLLAMA_TEMPERATURE,
+        num_predict=OLLAMA_NUM_PREDICT,
+        top_p=OLLAMA_TOP_P,
         num_ctx=OLLAMA_CONTEXT_LENGTH,
     )
     ollama_model = OllamaWrapper(llm)
