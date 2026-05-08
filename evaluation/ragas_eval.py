@@ -18,7 +18,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from ragas.llms import LangchainLLMWrapper
 
 OLLAMA_EVAL_MODEL = os.getenv("OLLAMA_EVAL_MODEL", "qwen3.5:4b")
-OLLAMA_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EMBEDDINGS_MODEL", "qllama/multilingual-e5-base:q4_k_m")
+OLLAMA_EVAL_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EVAL_EMBEDDINGS_MODEL", "qwen3-embedding:0.6b")
 OLLAMA_RAG_MODEL_TEMPERATURE = float(os.getenv("OLLAMA_RAG_MODEL_TEMPERATURE", "0.0"))
 OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "4096"))
 OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.90"))
@@ -197,7 +197,7 @@ ragas_llm = LangchainLLMWrapper(wrapped_llm)
 
 
 embeddings = OllamaEmbeddings(
-    model=OLLAMA_EMBEDDINGS_MODEL,
+    model=OLLAMA_EVAL_EMBEDDINGS_MODEL,
     base_url="http://localhost:11434"
 )
 
