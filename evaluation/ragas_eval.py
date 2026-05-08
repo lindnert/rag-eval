@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from typing import cast
 
+
+from utils import _prompt_to_text
 from ragas import evaluate
 from ragas.run_config import RunConfig
 from ragas.dataset_schema import EvaluationResult
@@ -52,12 +54,6 @@ def _strip_code_fences(text: str) -> str:
         return text
     m = _CODE_FENCE_RE.match(text)
     return m.group(1).strip() if m else text
-
-
-def _prompt_to_text(prompt) -> str:
-    if hasattr(prompt, "to_string"):
-        return prompt.to_string()
-    return str(prompt)
 
 
 def _print_gpu_diagnostics(label="after first call"):
