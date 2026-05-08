@@ -62,7 +62,7 @@ fi
 # 3. Start Ollama server (lower parallelism for eval)
 # ---------------------------------------------------------------------------
 export OLLAMA_HOST="127.0.0.1:11434"
-export OLLAMA_NUM_PARALLEL=2
+export OLLAMA_NUM_PARALLEL=4
 echo "OLLAMA_NUM_PARALLEL is set to ${OLLAMA_NUM_PARALLEL}"
 export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_KV_CACHE_TYPE=q8_0

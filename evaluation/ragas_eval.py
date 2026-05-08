@@ -7,7 +7,7 @@ import subprocess
 from typing import cast
 
 
-from utils import _prompt_to_text
+from evaluation.utils import _prompt_to_text
 from ragas import evaluate
 from ragas.run_config import RunConfig
 from ragas.dataset_schema import EvaluationResult
@@ -34,7 +34,7 @@ RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
 print(f"[ragas_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
-RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "2"))
+RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "4"))
 print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
 # Tag debug prints with the sample index so interleaved concurrent output is readable.
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
