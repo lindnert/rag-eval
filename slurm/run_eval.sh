@@ -86,7 +86,7 @@ done
 # 4. Pull + warm models needed for evaluation
 # ---------------------------------------------------------------------------
 ollama pull qwen3.5:4b
-ollama pull qllama/multilingual-e5-base:q4_k_m
+ollama pull qwen3-embedding:0.6b
 
 echo "Warming up models with dummy requests..."
 ollama ps
