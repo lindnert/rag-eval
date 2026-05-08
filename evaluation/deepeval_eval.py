@@ -5,7 +5,7 @@ from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 import os
-from utils import _prompt_to_text
+from evaluation.utils import _prompt_to_text
 
 from evaluation.eval_config import (
     OLLAMA_EVAL_MODEL,
