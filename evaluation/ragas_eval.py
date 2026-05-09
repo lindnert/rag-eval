@@ -1,13 +1,10 @@
 import asyncio
 import contextvars
 import os
-import re
-import shutil
-import subprocess
 from typing import cast
 
 
-from evaluation.utils import _prompt_to_text
+from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics as _print_gpu_diagnostics
 from ragas import evaluate
 from ragas.run_config import RunConfig
 from ragas.dataset_schema import EvaluationResult
@@ -45,48 +42,7 @@ _retry_state = {"last_primary_n": 0, "retry_idx": 0}
 _prompt_store: dict[int, str] = {}
 _diag_state = {"printed": False, "concurrent_printed": False}
 
-_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL | re.IGNORECASE)
 _RETRY_PROMPT_MARKER = "The output string did not satisfy"
-
-
-def _strip_code_fences(text: str) -> str:
-    if not text:
-        return text
-    m = _CODE_FENCE_RE.match(text)
-    return m.group(1).strip() if m else text
-
-
-def _print_gpu_diagnostics(label="after first call"):
-    """Print nvidia-smi and `ollama ps`."""
-    print(f"\n========== GPU / Ollama diagnostics ({label}) ==========", flush=True)
-    if shutil.which("nvidia-smi"):
-        try:
-            out = subprocess.run(
-                ["nvidia-smi"],
-                capture_output=True, text=True, timeout=10,
-            )
-            print(out.stdout, flush=True)
-            if out.stderr:
-                print(out.stderr, flush=True)
-        except Exception as e:
-            print(f"[diag] nvidia-smi failed: {e}", flush=True)
-    else:
-        print("[diag] nvidia-smi not on PATH", flush=True)
-
-    if shutil.which("ollama"):
-        try:
-            out = subprocess.run(
-                ["ollama", "ps"],
-                capture_output=True, text=True, timeout=10,
-            )
-            print(out.stdout, flush=True)
-            if out.stderr:
-                print(out.stderr, flush=True)
-        except Exception as e:
-            print(f"[diag] ollama ps failed: {e}", flush=True)
-    else:
-        print("[diag] ollama not on PATH", flush=True)
-    print("========== end diagnostics ==========\n", flush=True)
 
 
 def _build_base_llm() -> ChatOllama:
