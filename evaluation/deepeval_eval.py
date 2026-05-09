@@ -2,6 +2,7 @@ import asyncio
 import contextvars
 import json
 import os
+import time
 
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -18,10 +19,11 @@ from evaluation.eval_config import (
     OLLAMA_REPEAT_PENALTY,
     OLLAMA_CONTEXT_LENGTH,
     JSON_SYSTEM_PROMPT,
+    OLLAMA_REPEAT_LAST_N,
 )
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
-DEEPEVAL_CONCURRENCY = int(os.getenv("DEEPEVAL_CONCURRENCY", "2"))
+DEEPEVAL_CONCURRENCY = int(os.getenv("DEEPEVAL_CONCURRENCY", "1"))
 print(f"[deepeval_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
 print(f"[deepeval_eval] DEEPEVAL_CONCURRENCY = {DEEPEVAL_CONCURRENCY}", flush=True)
 
@@ -147,6 +149,7 @@ def _build_llm() -> ChatOllama:
         num_predict=OLLAMA_NUM_PREDICT,
         top_p=OLLAMA_TOP_P,
         repeat_penalty=OLLAMA_REPEAT_PENALTY,
+        repeat_last_n=OLLAMA_REPEAT_LAST_N,
         num_ctx=OLLAMA_CONTEXT_LENGTH,
         disable_streaming=True,
         reasoning=False,
@@ -236,7 +239,16 @@ async def arun_deepeval_batch(samples, concurrency: int | None = None, on_done=N
             on_done(i, s, scores)
         return scores
 
+    t0 = time.perf_counter()
     await asyncio.gather(*(_one(i, s) for i, s in enumerate(samples)))
+    elapsed = time.perf_counter() - t0
+    n = len(samples)
+    per = elapsed / n if n else 0.0
+    print(
+        f"[deepeval_eval] TOTAL deepeval time: {elapsed:.1f}s "
+        f"({elapsed/60:.2f} min) over {n} samples ({per:.2f}s/sample)",
+        flush=True,
+    )
     return results
 
 
