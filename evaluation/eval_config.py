@@ -5,6 +5,7 @@ OLLAMA_EVAL_EMBEDDINGS_MODEL = os.getenv("OLLAMA_EVAL_EMBEDDINGS_MODEL", "qwen3-
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.0"))
 OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "8192"))
 OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.90"))
+OLLAMA_REPEAT_PENALTY = float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.1"))
 OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "16384"))
 JSON_SYSTEM_PROMPT = (
     "You are a RAG evaluation assistant. Your task is to evaluate the quality of a generated answer based on the question, the answer, and the retrieved contexts. "
