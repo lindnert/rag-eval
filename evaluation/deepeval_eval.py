@@ -15,12 +15,13 @@ from evaluation.eval_config import (
     OLLAMA_TEMPERATURE,
     OLLAMA_NUM_PREDICT,
     OLLAMA_TOP_P,
+    OLLAMA_REPEAT_PENALTY,
     OLLAMA_CONTEXT_LENGTH,
     JSON_SYSTEM_PROMPT,
 )
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
-DEEPEVAL_CONCURRENCY = int(os.getenv("DEEPEVAL_CONCURRENCY", "4"))
+DEEPEVAL_CONCURRENCY = int(os.getenv("DEEPEVAL_CONCURRENCY", "2"))
 print(f"[deepeval_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
 print(f"[deepeval_eval] DEEPEVAL_CONCURRENCY = {DEEPEVAL_CONCURRENCY}", flush=True)
 
@@ -145,6 +146,7 @@ def _build_llm() -> ChatOllama:
         temperature=OLLAMA_TEMPERATURE,
         num_predict=OLLAMA_NUM_PREDICT,
         top_p=OLLAMA_TOP_P,
+        repeat_penalty=OLLAMA_REPEAT_PENALTY,
         num_ctx=OLLAMA_CONTEXT_LENGTH,
         disable_streaming=True,
         reasoning=False,
