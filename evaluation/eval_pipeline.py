@@ -64,10 +64,7 @@ def evaluate_results(results, partial_path=None):
         flush=True,
     )
 
-    print(requests.get("http://127.0.0.1:11434/api/ps").json(), flush=True)
-
-    # Phase 2: deepeval concurrently (mirrors Phase 1 — Ollama serves multiple
-    # slots in parallel when started with OLLAMA_NUM_PARALLEL >= DEEPEVAL_CONCURRENCY).
+    # Phase 2: deepeval concurrently.
     print(f"\n[Phase 2/2] Running deepeval concurrently for {len(results)} samples...", flush=True)
     phase2_start = time.time()
     deepeval_done = {"n": 0}

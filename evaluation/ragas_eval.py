@@ -11,29 +11,32 @@ from ragas.dataset_schema import EvaluationResult
 from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from datasets import Dataset
-from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.outputs import LLMResult, Generation
 from langchain_core.messages import SystemMessage, HumanMessage
+from pydantic import SecretStr
 from ragas.llms import LangchainLLMWrapper
 
-from evaluation.eval_config import (
-    OLLAMA_EVAL_MODEL,
-    OLLAMA_EVAL_EMBEDDINGS_MODEL,
-    OLLAMA_TEMPERATURE,
-    OLLAMA_NUM_PREDICT,
-    OLLAMA_TOP_P,
-    OLLAMA_CONTEXT_LENGTH,
+from evaluation.eval_config_llamacpp import (
+    LLAMACPP_EVAL_MODEL,
+    LLAMACPP_EVAL_EMBEDDINGS_MODEL,
+    LLAMACPP_GEN_BASE_URL,
+    LLAMACPP_EMB_BASE_URL,
+    LLAMACPP_TEMPERATURE,
+    LLAMACPP_NUM_PREDICT,
+    LLAMACPP_TOP_P,
+    LLAMACPP_REPEAT_PENALTY,
+    LLAMACPP_REPEAT_LAST_N,
     JSON_SYSTEM_PROMPT,
 )
 
 RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
 
-print(f"[ragas_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
+print(f"[ragas_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
 RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "4"))
 print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
-# Tag debug prints with the sample index so interleaved concurrent output is readable.
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "_current_sample_idx", default=None
 )
@@ -45,23 +48,28 @@ _diag_state = {"printed": False, "concurrent_printed": False}
 _RETRY_PROMPT_MARKER = "The output string did not satisfy"
 
 
-def _build_base_llm() -> ChatOllama:
-    return ChatOllama(
-        model=OLLAMA_EVAL_MODEL,
-        base_url="http://localhost:11434",
-        num_ctx=OLLAMA_CONTEXT_LENGTH,
-        num_predict=OLLAMA_NUM_PREDICT,
-        disable_streaming=True,
-        temperature=OLLAMA_TEMPERATURE,
-        top_p=OLLAMA_TOP_P,
-        reasoning=False,
+def _build_base_llm() -> ChatOpenAI:
+    return ChatOpenAI(
+        model=LLAMACPP_EVAL_MODEL,
+        base_url=LLAMACPP_GEN_BASE_URL,
+        api_key=SecretStr("sk-no-key-required"),
+        temperature=LLAMACPP_TEMPERATURE,
+        top_p=LLAMACPP_TOP_P,
+        max_completion_tokens=LLAMACPP_NUM_PREDICT,
+        streaming=False,
+        extra_body={
+            "repeat_penalty": LLAMACPP_REPEAT_PENALTY,
+            "repeat_last_n": LLAMACPP_REPEAT_LAST_N,
+        },
     )
 
 
-def _build_embeddings() -> OllamaEmbeddings:
-    return OllamaEmbeddings(
-        model=OLLAMA_EVAL_EMBEDDINGS_MODEL,
-        base_url="http://localhost:11434",
+def _build_embeddings() -> OpenAIEmbeddings:
+    return OpenAIEmbeddings(
+        model=LLAMACPP_EVAL_EMBEDDINGS_MODEL,
+        base_url=LLAMACPP_EMB_BASE_URL,
+        api_key=SecretStr("sk-no-key-required"),
+        check_embedding_ctx_length=False,
     )
 
 
@@ -87,12 +95,8 @@ class RagasJSONWrapper:
             _retry_state["retry_idx"] = 0
             retry_label = "PRIMARY (retry 0)"
 
-        # Stash prompt; it will be printed together with the response when the
-        # call completes (single self-contained block per call).
         _prompt_store[n] = prompt_str
 
-        # Once we've kicked off enough calls that concurrency should be saturated,
-        # snapshot the GPU under load (single shot).
         if not _diag_state["concurrent_printed"] and n >= RAGAS_CONCURRENCY:
             _diag_state["concurrent_printed"] = True
             _print_gpu_diagnostics(label=f"under load, after {n} calls launched")
@@ -151,8 +155,6 @@ class RagasJSONWrapper:
 
 
 def run_ragas(sample):
-    # When EVAL_DEBUG_LLM, ask ragas to raise on per-metric failures instead of
-    # silently emitting NaN — otherwise null scores have no visible cause.
     raise_exceptions = EVAL_DEBUG_LLM
 
     dataset = Dataset.from_dict({
@@ -161,10 +163,6 @@ def run_ragas(sample):
         "contexts": [sample["contexts"]],
     })
 
-    # Build fresh clients per-call. ragas.evaluate() spins up its own short-lived
-    # event loop internally; reusing module-level ChatOllama/OllamaEmbeddings
-    # across calls leaves their lazy httpx.AsyncClient bound to a closed loop,
-    # producing "Event loop is closed" / "Event bound to a different event loop".
     ragas_llm = LangchainLLMWrapper(RagasJSONWrapper(_build_base_llm()))
     embeddings = _build_embeddings()
 
@@ -204,13 +202,6 @@ def run_ragas(sample):
 
 
 async def arun_ragas(sample, semaphore: asyncio.Semaphore | None = None, idx: int | None = None):
-    """Async wrapper around run_ragas. ragas.evaluate is sync internally, so we
-    offload it to a thread; multiple threads in flight let Ollama serve the
-    requests in parallel (requires OLLAMA_NUM_PARALLEL >= concurrency).
-
-    `idx` is propagated to the worker thread via a ContextVar so debug prints
-    can be tagged with the originating sample index.
-    """
     if idx is not None:
         _current_sample_idx.set(idx)
     if semaphore is None:
@@ -220,19 +211,12 @@ async def arun_ragas(sample, semaphore: asyncio.Semaphore | None = None, idx: in
 
 
 async def arun_ragas_batch(samples, concurrency: int | None = None, on_done=None):
-    """Run ragas for many samples concurrently. Returns scores in input order.
-
-    on_done: optional callback `on_done(idx, sample, scores)` invoked as each
-    sample finishes (useful for progress logging / partial saves).
-    """
     if concurrency is None:
         concurrency = RAGAS_CONCURRENCY
     semaphore = asyncio.Semaphore(max(1, concurrency))
     results: list = [None] * len(samples)
 
     async def _one(i, s):
-        # Each task gets its own context (asyncio.Task copies the parent
-        # context) so per-task ContextVar.set() is isolated.
         scores = await arun_ragas(s, semaphore, idx=i)
         results[i] = scores
         if on_done is not None:
@@ -244,5 +228,4 @@ async def arun_ragas_batch(samples, concurrency: int | None = None, on_done=None
 
 
 def run_ragas_batch(samples, concurrency: int | None = None, on_done=None):
-    """Sync entry point for the async batch runner."""
     return asyncio.run(arun_ragas_batch(samples, concurrency=concurrency, on_done=on_done))
