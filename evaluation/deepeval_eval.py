@@ -4,27 +4,28 @@ import json
 import os
 import time
 
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from pydantic import SecretStr
 from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
 
 from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics
-from evaluation.eval_config import (
-    OLLAMA_EVAL_MODEL,
-    OLLAMA_TEMPERATURE,
-    OLLAMA_NUM_PREDICT,
-    OLLAMA_TOP_P,
-    OLLAMA_REPEAT_PENALTY,
-    OLLAMA_CONTEXT_LENGTH,
+from evaluation.eval_config_llamacpp import (
+    LLAMACPP_EVAL_MODEL,
+    LLAMACPP_GEN_BASE_URL,
+    LLAMACPP_TEMPERATURE,
+    LLAMACPP_NUM_PREDICT,
+    LLAMACPP_TOP_P,
+    LLAMACPP_REPEAT_PENALTY,
+    LLAMACPP_REPEAT_LAST_N,
     JSON_SYSTEM_PROMPT,
-    OLLAMA_REPEAT_LAST_N,
 )
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
 DEEPEVAL_CONCURRENCY = int(os.getenv("DEEPEVAL_CONCURRENCY", "1"))
-print(f"[deepeval_eval] OLLAMA_EVAL_MODEL = {OLLAMA_EVAL_MODEL}", flush=True)
+print(f"[deepeval_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 print(f"[deepeval_eval] DEEPEVAL_CONCURRENCY = {DEEPEVAL_CONCURRENCY}", flush=True)
 
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
@@ -35,14 +36,6 @@ _diag_state = {"printed": False, "concurrent_printed": False}
 
 
 def _coerce_to_schema(text: str, schema):
-    """Parse `text` as JSON and instantiate the given Pydantic schema.
-
-    DeepEval metrics call generate(prompt, schema=SomePydanticModel) and access
-    fields on the returned object (result.truths, result.verdicts, result.reason).
-    Returning raw JSON text caused KeyErrors like 'truths' / 'verdicts' / 'reason'
-    because DeepEval fell back to dict access on a response shaped for a different
-    step.
-    """
     cleaned = _strip_code_fences(text or "").strip() or "{}"
     try:
         data = json.loads(cleaned)
@@ -66,8 +59,6 @@ def _log_call(prompt_str, schema, response_text=None, error=None):
         return
     _call_counter["n"] += 1
     n = _call_counter["n"]
-    # Once enough calls have launched that concurrency should be saturated,
-    # snapshot the GPU under load (single shot).
     if not _diag_state["concurrent_printed"] and n >= DEEPEVAL_CONCURRENCY:
         _diag_state["concurrent_printed"] = True
         print_gpu_diagnostics(label=f"deepeval under load, after {n} calls launched")
@@ -96,7 +87,7 @@ def _log_call(prompt_str, schema, response_text=None, error=None):
         print_gpu_diagnostics(label="deepeval after first call")
 
 
-class OllamaWrapper(DeepEvalBaseLLM):
+class LlamaCppWrapper(DeepEvalBaseLLM):
     def __init__(self, llm):
         self.llm = llm
 
@@ -137,22 +128,23 @@ class OllamaWrapper(DeepEvalBaseLLM):
         return response
 
     def get_model_name(self):
-        return f"ollama-{OLLAMA_EVAL_MODEL}"
+        return f"llamacpp-{LLAMACPP_EVAL_MODEL}"
 
 
-def _build_llm() -> ChatOllama:
-    return ChatOllama(
-        model=OLLAMA_EVAL_MODEL,
-        base_url="http://localhost:11434",
-        format="json",
-        temperature=OLLAMA_TEMPERATURE,
-        num_predict=OLLAMA_NUM_PREDICT,
-        top_p=OLLAMA_TOP_P,
-        repeat_penalty=OLLAMA_REPEAT_PENALTY,
-        repeat_last_n=OLLAMA_REPEAT_LAST_N,
-        num_ctx=OLLAMA_CONTEXT_LENGTH,
-        disable_streaming=True,
-        reasoning=False,
+def _build_llm() -> ChatOpenAI:
+    return ChatOpenAI(
+        model=LLAMACPP_EVAL_MODEL,
+        base_url=LLAMACPP_GEN_BASE_URL,
+        api_key=SecretStr("sk-no-key-required"),
+        temperature=LLAMACPP_TEMPERATURE,
+        top_p=LLAMACPP_TOP_P,
+        max_completion_tokens=LLAMACPP_NUM_PREDICT,
+        streaming=False,
+        model_kwargs={"response_format": {"type": "json_object"}},
+        extra_body={
+            "repeat_penalty": LLAMACPP_REPEAT_PENALTY,
+            "repeat_last_n": LLAMACPP_REPEAT_LAST_N,
+        },
     )
 
 
@@ -164,14 +156,13 @@ def _build_metrics(model):
 
 
 def run_deepeval(sample):
-    """Sync single-sample entry point (kept for compatibility)."""
     test_case = LLMTestCase(
         input=sample["query"],
         actual_output=sample["answer"],
         retrieval_context=sample["contexts"],
     )
-    ollama_model = OllamaWrapper(_build_llm())
-    faithfulness, relevance = _build_metrics(ollama_model)
+    eval_model = LlamaCppWrapper(_build_llm())
+    faithfulness, relevance = _build_metrics(eval_model)
     try:
         faithfulness.measure(test_case)
         relevance.measure(test_case)
@@ -197,10 +188,8 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
             actual_output=sample["answer"],
             retrieval_context=sample["contexts"],
         )
-        # Fresh client per sample: same event-loop / httpx.AsyncClient hazard
-        # already documented in ragas_eval.py.
-        ollama_model = OllamaWrapper(_build_llm())
-        faithfulness, relevance = _build_metrics(ollama_model)
+        eval_model = LlamaCppWrapper(_build_llm())
+        faithfulness, relevance = _build_metrics(eval_model)
         try:
             await faithfulness.a_measure(test_case)
             await relevance.a_measure(test_case)

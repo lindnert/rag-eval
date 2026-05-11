@@ -42,63 +42,105 @@ sed -i 's/==/>=/g' requirements.txt
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# ---------------------------------------------------------------------------
-# 2. Install Ollama into $HOME
-# ---------------------------------------------------------------------------
-OLLAMA_DIR="${HOME}/.local/ollama"
-mkdir -p "${OLLAMA_DIR}/bin"
-export PATH="${OLLAMA_DIR}/bin:${PATH}"
-export OLLAMA_MODELS="${WORKDIR}/.ollama_models"
-mkdir -p "${OLLAMA_MODELS}"
-
-if ! command -v ollama >/dev/null 2>&1; then
-  echo "Installing Ollama into ${OLLAMA_DIR} ..."
-  curl -fsSL https://github.com/ollama/ollama/releases/download/v0.23.1/ollama-linux-amd64.tar.zst -o /tmp/ollama.tar.zst
-  zstd -d /tmp/ollama.tar.zst -o /tmp/ollama.tar
-  tar -xf /tmp/ollama.tar -C "${OLLAMA_DIR}"
-fi
+# llama-cpp-python with prebuilt CUDA wheels (abetlen wheel index).
+# Node driver is CUDA 13; cu125 wheel runs on it (driver is backward-compatible
+# with older CUDA runtimes — cu13 wheels are not yet published).
+LLAMA_CPP_PY_VERSION="${LLAMA_CPP_PY_VERSION:-0.3.16}"
+pip install --upgrade --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu125 \
+  "llama-cpp-python[server]>=${LLAMA_CPP_PY_VERSION}"
+pip install --upgrade huggingface_hub
 
 # ---------------------------------------------------------------------------
-# 3. Start Ollama server (lower parallelism for eval)
+# 2. Download GGUFs from Hugging Face
 # ---------------------------------------------------------------------------
-export OLLAMA_HOST="127.0.0.1:11434"
-export OLLAMA_NUM_PARALLEL=1
-echo "OLLAMA_NUM_PARALLEL is set to ${OLLAMA_NUM_PARALLEL}"
-export OLLAMA_FLASH_ATTENTION=1
-export OLLAMA_KV_CACHE_TYPE=q8_0
-export OLLAMA_KEEP_ALIVE=-1
+export HF_HOME="${WORKDIR}/.hf_cache"
+export LLAMA_MODELS_DIR="${WORKDIR}/.llamacpp_models"
+mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
 
-pkill -f "ollama serve" || true
+GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-E2B-it-GGUF}"
+GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-E2B-it-UD-Q4_K_XL.gguf}"
+EMB_REPO="${LLAMACPP_EMB_REPO:-Qwen/Qwen3-Embedding-0.6B-GGUF}"
+EMB_FILE="${LLAMACPP_EMB_FILE:-Qwen3-Embedding-0.6B-Q8_0.gguf}"
+
+echo "Downloading GGUFs (cached in ${HF_HOME})..."
+hf download "${GEN_REPO}" "${GEN_FILE}" --local-dir "${LLAMA_MODELS_DIR}/gen"
+hf download "${EMB_REPO}" "${EMB_FILE}" --local-dir "${LLAMA_MODELS_DIR}/emb"
+GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
+EMB_PATH="${LLAMA_MODELS_DIR}/emb/${EMB_FILE}"
+echo "Gen GGUF: ${GEN_PATH}"
+echo "Emb GGUF: ${EMB_PATH}"
+
+# ---------------------------------------------------------------------------
+# 3. Start llama-cpp-python servers: generation (8080) + embeddings (8081)
+# ---------------------------------------------------------------------------
+export LLAMACPP_GEN_HOST="127.0.0.1"
+export LLAMACPP_GEN_PORT=8080
+export LLAMACPP_EMB_PORT=8081
+export LLAMACPP_GEN_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1"
+export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1"
+
+# Mirrors the previous Ollama hyperparameter settings (see eval_config_llamacpp.py).
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-16384}"
+GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-1}"
+echo "LLAMACPP_GEN_PARALLEL is set to ${GEN_PARALLEL}"
+
+pkill -f "llama_cpp.server" || true
 sleep 2
-ollama serve > "${WORKDIR}/logs/ollama_eval_${SLURM_JOB_ID:-local}.log" 2>&1 &
-OLLAMA_PID=$!
-trap 'kill ${OLLAMA_PID} 2>/dev/null || true' EXIT
 
-for i in $(seq 1 60); do
-  if curl -sf "http://${OLLAMA_HOST}/api/tags" >/dev/null; then
-    echo "Ollama ready after ${i}s"
-    break
-  fi
-  sleep 1
-done
+# Generation server: flash-attn + q8_0 KV cache to mirror OLLAMA_FLASH_ATTENTION / OLLAMA_KV_CACHE_TYPE.
+# llama-cpp-python type_k/type_v: 8 = GGML_TYPE_Q8_0.
+stdbuf -oL -eL python -m llama_cpp.server \
+  --model "${GEN_PATH}" \
+  --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_GEN_PORT}" \
+  --n_ctx "${CONTEXT_LENGTH}" \
+  --n_gpu_layers -1 \
+  --flash_attn true \
+  --type_k 8 --type_v 8 \
+  --n_threads_batch "${GEN_PARALLEL}" \
+  2>&1 | stdbuf -oL sed 's/^/[GEN] /' &
+GEN_PID=$!
+
+# Embedding server: --embedding enables /v1/embeddings
+stdbuf -oL -eL python -m llama_cpp.server \
+  --model "${EMB_PATH}" \
+  --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_EMB_PORT}" \
+  --embedding true \
+  --n_gpu_layers -1 \
+  2>&1 | stdbuf -oL sed 's/^/[EMB] /' &
+EMB_PID=$!
+
+trap 'kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
+
+# Wait for both servers to load. llama-cpp-python exposes /v1/models once the
+# model is loaded; /health is not guaranteed across versions, so we poll that.
+wait_ready() {
+  local url="$1"
+  local name="$2"
+  for i in $(seq 1 600); do
+    if curl -sf "${url}/v1/models" >/dev/null; then
+      echo "${name} ready after ${i}s"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ERROR: ${name} did not become ready" >&2
+  return 1
+}
+
+wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}" "llama-cpp-python (gen)"
+wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}" "llama-cpp-python (emb)"
 
 # ---------------------------------------------------------------------------
-# 4. Pull + warm models needed for evaluation
+# 4. Warm-up requests
 # ---------------------------------------------------------------------------
-ollama pull qwen3.5:4b
-ollama pull qwen3-embedding:0.6b
-
 echo "Warming up models with dummy requests..."
-ollama ps
-
-curl -sf "http://${OLLAMA_HOST}/api/generate" \
-  -d '{"model":"qwen3.5:4b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":8192}}' >/dev/null
-curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
-  -d '{"model":"qllama/multilingual-e5-base:q4_k_m","prompt":"warmup"}' >/dev/null
+curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Sag Hallo in einem Wort."}],"max_tokens":8,"temperature":0}' >/dev/null
+curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1/embeddings" \
+  -H "Content-Type: application/json" \
+  -d '{"input":"warmup"}' >/dev/null
 echo "Models warmed up"
-
-echo "Current Ollama status:"
-ollama ps
 
 # ---------------------------------------------------------------------------
 # 5. Run evaluation pipeline
@@ -108,7 +150,7 @@ echo "Reading RAG results from: ${RAG_RESULTS_FILE:-${RESULTS_DIR}/rag_results_l
 python -m evaluation.eval_pipeline
 
 echo "GPU status after evaluation:"
-ollama ps
+nvidia-smi || true
 
 echo "==== Done at $(date) ===="
 echo "Results in: ${RESULTS_DIR}"
