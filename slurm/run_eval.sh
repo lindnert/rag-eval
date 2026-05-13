@@ -43,11 +43,16 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # llama-cpp-python with prebuilt CUDA wheels (abetlen wheel index).
-# Node driver is CUDA 13; cu125 wheel runs on it (driver is backward-compatible
-# with older CUDA runtimes — cu13 wheels are not yet published).
-LLAMA_CPP_PY_VERSION="${LLAMA_CPP_PY_VERSION:-0.3.16}"
-pip install --upgrade --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu125 \
-  "llama-cpp-python[server]>=${LLAMA_CPP_PY_VERSION}"
+# Node driver is CUDA 13 — forward-compatible with cu124 wheels.
+# (cu125 does NOT exist on the abetlen index; with `--upgrade` + `>=` pip
+#  silently fell back to the CPU wheel on PyPI, leaving GPU at 0%.)
+# Pin EXACTLY and use --index-url so PyPI is only fallback for non-llama deps.
+# Already-installed wheels are a pip no-op ("Requirement already satisfied").
+LLAMA_CPP_PY_VERSION="${LLAMA_CPP_PY_VERSION:-0.3.23}"
+pip install --no-cache-dir \
+  --index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 \
+  --extra-index-url https://pypi.org/simple \
+  "llama-cpp-python==${LLAMA_CPP_PY_VERSION}"
 pip install --upgrade huggingface_hub
 
 # ---------------------------------------------------------------------------
@@ -101,10 +106,15 @@ stdbuf -oL -eL python -m llama_cpp.server \
 GEN_PID=$!
 
 # Embedding server: --embedding enables /v1/embeddings
+# Cap n_ctx at 2048: embeddings are one-shot forward passes over a single
+# chunk; without this, llama.cpp uses the model's max training context
+# (32k for Qwen3-Embedding) and pre-allocates ~7 GB KV cache, OOMing on
+# an 8 GB GPU that already hosts the generation model.
 stdbuf -oL -eL python -m llama_cpp.server \
   --model "${EMB_PATH}" \
   --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_EMB_PORT}" \
   --embedding true \
+  --n_ctx 2048 \
   --n_gpu_layers -1 \
   2>&1 | stdbuf -oL sed 's/^/[EMB] /' &
 EMB_PID=$!
@@ -142,15 +152,42 @@ curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1/embeddings" \
   -d '{"input":"warmup"}' >/dev/null
 echo "Models warmed up"
 
+echo "GPU status immediately after warm-up (models should be resident on GPU):"
+nvidia-smi || true
+
 # ---------------------------------------------------------------------------
 # 5. Run evaluation pipeline
 # ---------------------------------------------------------------------------
 echo "==== Evaluation pipeline ===="
 echo "Reading RAG results from: ${RAG_RESULTS_FILE:-${RESULTS_DIR}/rag_results_latest.json}"
+
+# Background sampler: log compact GPU utilization + memory every 30 s while the
+# eval runs. Helps confirm whether llama.cpp actually offloaded layers to CUDA.
+GPU_LOG="${WORKDIR}/logs/gpu_sample.${SLURM_JOB_ID:-local}.log"
+(
+  while true; do
+    {
+      echo "---- $(date '+%F %T') ----"
+      nvidia-smi --query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total \
+                 --format=csv,noheader,nounits
+      nvidia-smi --query-compute-apps=pid,process_name,used_memory \
+                 --format=csv,noheader,nounits
+    } >> "${GPU_LOG}" 2>&1
+    sleep 30
+  done
+) &
+GPU_SAMPLER_PID=$!
+trap 'kill ${GPU_SAMPLER_PID} 2>/dev/null || true; kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
+echo "GPU sampler PID=${GPU_SAMPLER_PID}, logging to ${GPU_LOG}"
+
 python -m evaluation.eval_pipeline
+
+kill ${GPU_SAMPLER_PID} 2>/dev/null || true
 
 echo "GPU status after evaluation:"
 nvidia-smi || true
+echo "---- GPU sample log (${GPU_LOG}) ----"
+cat "${GPU_LOG}" || true
 
 echo "==== Done at $(date) ===="
 echo "Results in: ${RESULTS_DIR}"
