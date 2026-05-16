@@ -19,8 +19,7 @@ def _strip_code_fences(text: str) -> str:
 
 
 def print_gpu_diagnostics(label: str = "after first call"):
-    """Print nvidia-smi and `ollama ps` for a quick GPU/Ollama snapshot."""
-    print(f"\n========== GPU / Ollama diagnostics ({label}) ==========", flush=True)
+    print(f"\n========== GPU diagnostics ({label}) ==========", flush=True)
     if shutil.which("nvidia-smi"):
         try:
             out = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=10)
@@ -31,15 +30,4 @@ def print_gpu_diagnostics(label: str = "after first call"):
             print(f"[diag] nvidia-smi failed: {e}", flush=True)
     else:
         print("[diag] nvidia-smi not on PATH", flush=True)
-
-    if shutil.which("ollama"):
-        try:
-            out = subprocess.run(["ollama", "ps"], capture_output=True, text=True, timeout=10)
-            print(out.stdout, flush=True)
-            if out.stderr:
-                print(out.stderr, flush=True)
-        except Exception as e:
-            print(f"[diag] ollama ps failed: {e}", flush=True)
-    else:
-        print("[diag] ollama not on PATH", flush=True)
     print("========== end diagnostics ==========\n", flush=True)
