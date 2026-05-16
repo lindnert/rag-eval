@@ -76,41 +76,96 @@ echo "Gen GGUF: ${GEN_PATH}"
 echo "Emb GGUF: ${EMB_PATH}"
 
 # ---------------------------------------------------------------------------
-# 3. Start llama-cpp-python servers: generation (8080) + embeddings (8081)
+# 3. Build native llama-server (once, cached) — needed because llama_cpp.server
+#    (Python wrapper) doesn't expose --parallel for gen and hardcodes
+#    n_seq_max=256 for embeddings → KV-cache OOM. Native binary fixes both.
+# ---------------------------------------------------------------------------
+LLAMACPP_TAG="${LLAMACPP_TAG:-master}"
+LLAMACPP_BIN_DIR="${WORKDIR}/.llamacpp_bin/${LLAMACPP_TAG}"
+LLAMACPP_SERVER="${LLAMACPP_BIN_DIR}/llama-server"
+
+if [ ! -x "${LLAMACPP_SERVER}" ]; then
+  echo "Building llama-server (${LLAMACPP_TAG}) — one-time, cached at ${LLAMACPP_BIN_DIR}"
+  SRC_DIR="${WORKDIR}/.llamacpp_src/${LLAMACPP_TAG}"
+  rm -rf "${SRC_DIR}"
+  git clone --depth 1 --branch "${LLAMACPP_TAG}" https://github.com/ggml-org/llama.cpp "${SRC_DIR}"
+  # CUDA 12.0 supports gcc 10-12 only:
+  #   - gcc < 10 hits a <type_traits> incompatibility under C++17
+  #   - gcc > 12 is rejected by /usr/include/crt/host_config.h
+  # Pick highest supported version present on the node.
+  BUILD_CXX=""
+  for cand in g++-12 g++-11 g++-10; do
+    if command -v "${cand}" >/dev/null 2>&1; then
+      BUILD_CXX="$(command -v "${cand}")"
+      BUILD_CC="$(command -v "${cand/g++/gcc}")"
+      break
+    fi
+  done
+  if [ -z "${BUILD_CXX}" ]; then
+    echo "ERROR: no compatible gcc found (need gcc-10, -11, or -12 for CUDA 12.0)" >&2
+    exit 1
+  fi
+  echo "Using CC=${BUILD_CC}, CXX=${BUILD_CXX}"
+  CC="${BUILD_CC}" CXX="${BUILD_CXX}" cmake -S "${SRC_DIR}" -B "${SRC_DIR}/build" \
+    -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=OFF \
+    -DCMAKE_CUDA_HOST_COMPILER="${BUILD_CXX}"
+  cmake --build "${SRC_DIR}/build" --config Release -j --target llama-server
+  mkdir -p "${LLAMACPP_BIN_DIR}"
+  cp "${SRC_DIR}/build/bin/llama-server" "${LLAMACPP_BIN_DIR}/"
+  # Bundle shared libs next to the binary (avoids LD_LIBRARY_PATH gymnastics).
+  cp "${SRC_DIR}/build/bin/"*.so "${LLAMACPP_BIN_DIR}/" 2>/dev/null || true
+  rm -rf "${SRC_DIR}"
+fi
+echo "llama-server: ${LLAMACPP_SERVER}"
+
+# ---------------------------------------------------------------------------
+# 4. Start gen (8080) + emb (8081) servers, each configured independently.
 # ---------------------------------------------------------------------------
 export LLAMACPP_GEN_HOST="127.0.0.1"
 export LLAMACPP_GEN_PORT=8080
+export LLAMACPP_EMB_PORT=8081
 export LLAMACPP_GEN_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1"
-# Embeddings run in-process inside the Python eval pipeline — no HTTP server.
-# (llama_cpp.server's 256-slot default inflates the KV cache and OOMs the GPU.)
-export LLAMACPP_EMB_MODEL_PATH="${EMB_PATH}"
+export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1"
 
-# Mirrors the previous Ollama hyperparameter settings (see eval_config_llamacpp.py).
-# n_ctx is the TOTAL across slots → 32768/4 = 8192 per slot, matching NUM_PREDICT.
+# Gen: n_ctx is total across slots → 32768/4 = 8192 per slot, matches NUM_PREDICT.
 CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-32768}"
 GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-4}"
-echo "LLAMACPP_GEN_PARALLEL=${GEN_PARALLEL}, CONTEXT_LENGTH=${CONTEXT_LENGTH}"
+EMB_CONTEXT_LENGTH="${LLAMACPP_EMB_CONTEXT_LENGTH:-2048}"
+echo "GEN_PARALLEL=${GEN_PARALLEL}, GEN_CTX=${CONTEXT_LENGTH}, EMB_CTX=${EMB_CONTEXT_LENGTH}"
 
+pkill -f "llama-server" || true
 pkill -f "llama_cpp.server" || true
 sleep 2
 
-# Generation server: flash-attn + q8_0 KV cache to mirror OLLAMA_FLASH_ATTENTION / OLLAMA_KV_CACHE_TYPE.
-# llama-cpp-python type_k/type_v: 8 = GGML_TYPE_Q8_0.
-stdbuf -oL -eL python -m llama_cpp.server \
+# Generation server: real concurrent slots via --parallel + --cont-batching.
+# -fa = flash-attn; -ctk/-ctv q8_0 = q8_0 KV cache (mirrors OLLAMA_KV_CACHE_TYPE).
+stdbuf -oL -eL "${LLAMACPP_SERVER}" \
   --model "${GEN_PATH}" \
   --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_GEN_PORT}" \
-  --n_ctx "${CONTEXT_LENGTH}" \
-  --n_gpu_layers -1 \
-  --flash_attn true \
-  --type_k 8 --type_v 8 \
-  --n_threads_batch "${GEN_PARALLEL}" \
+  --ctx-size "${CONTEXT_LENGTH}" \
+  --n-gpu-layers -1 \
+  --parallel "${GEN_PARALLEL}" \
+  --cont-batching \
+  -fa \
+  -ctk q8_0 -ctv q8_0 \
   2>&1 | stdbuf -oL sed 's/^/[GEN] /' &
 GEN_PID=$!
 
-trap 'kill ${GEN_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
+# Embedding server: --parallel 1 keeps n_seq_max=1, so n_ctx is honored exactly
+# (the bug we hit in llama_cpp.server doesn't exist in the native binary).
+stdbuf -oL -eL "${LLAMACPP_SERVER}" \
+  --model "${EMB_PATH}" \
+  --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_EMB_PORT}" \
+  --ctx-size "${EMB_CONTEXT_LENGTH}" \
+  --n-gpu-layers -1 \
+  --parallel 1 \
+  --embeddings \
+  2>&1 | stdbuf -oL sed 's/^/[EMB] /' &
+EMB_PID=$!
 
-# Wait for both servers to load. llama-cpp-python exposes /v1/models once the
-# model is loaded; /health is not guaranteed across versions, so we poll that.
+trap 'kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama-server" 2>/dev/null || true' EXIT
+
+# Wait for both servers. Native llama-server exposes /v1/models once loaded.
 wait_ready() {
   local url="$1"
   local name="$2"
@@ -125,16 +180,20 @@ wait_ready() {
   return 1
 }
 
-wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}" "llama-cpp-python (gen)"
+wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}" "llama-server (gen)"
+wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}" "llama-server (emb)"
 
 # ---------------------------------------------------------------------------
-# 4. Warm-up requests
+# 5. Warm-up requests
 # ---------------------------------------------------------------------------
 echo "Warming up models with dummy requests..."
 curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Sag Hallo in einem Wort."}],"max_tokens":8,"temperature":0}' >/dev/null
-echo "Models warmed up (gen only; emb is loaded lazily in-process by ragas)"
+curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1/embeddings" \
+  -H "Content-Type: application/json" \
+  -d '{"input":"warmup"}' >/dev/null
+echo "Both models warmed up"
 
 echo "GPU status immediately after warm-up (models should be resident on GPU):"
 nvidia-smi || true
@@ -161,7 +220,7 @@ GPU_LOG="${WORKDIR}/logs/gpu_sample.${SLURM_JOB_ID:-local}.log"
   done
 ) &
 GPU_SAMPLER_PID=$!
-trap 'kill ${GPU_SAMPLER_PID} 2>/dev/null || true; kill ${GEN_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
+trap 'kill ${GPU_SAMPLER_PID} 2>/dev/null || true; kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama-server" 2>/dev/null || true' EXIT
 echo "GPU sampler PID=${GPU_SAMPLER_PID}, logging to ${GPU_LOG}"
 
 python -m evaluation.eval_pipeline

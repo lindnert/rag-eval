@@ -2,7 +2,7 @@ import json
 import time
 import requests
 from datetime import datetime
-from evaluation.ragas_eval import run_ragas_batch, _get_emb_model
+from evaluation.ragas_eval import run_ragas_batch
 from evaluation.deepeval_eval import run_deepeval_batch
 from evaluation.custom_eval import run_custom
 
@@ -21,14 +21,6 @@ def evaluate_results(results, partial_path=None):
     print(f"{'='*80}\n", flush=True)
 
     start_time = time.time()
-
-    # Eagerly load the embedding model on the main thread before launching
-    # concurrent ragas workers. The double-checked lock inside _get_emb_model
-    # protects init, but pre-warming here removes any first-call latency from
-    # the critical path and ensures the model is GPU-resident before workers run.
-    print("Pre-loading in-process embedding model...", flush=True)
-    _get_emb_model()
-    print("Embedding model loaded.", flush=True)
 
     # Phase 1: ragas scores in parallel.
     print(f"[Phase 1/2] Running ragas concurrently for {len(results)} samples...", flush=True)
