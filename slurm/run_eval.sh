@@ -80,14 +80,16 @@ echo "Emb GGUF: ${EMB_PATH}"
 # ---------------------------------------------------------------------------
 export LLAMACPP_GEN_HOST="127.0.0.1"
 export LLAMACPP_GEN_PORT=8080
-export LLAMACPP_EMB_PORT=8081
 export LLAMACPP_GEN_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1"
-export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1"
+# Embeddings run in-process inside the Python eval pipeline — no HTTP server.
+# (llama_cpp.server's 256-slot default inflates the KV cache and OOMs the GPU.)
+export LLAMACPP_EMB_MODEL_PATH="${EMB_PATH}"
 
 # Mirrors the previous Ollama hyperparameter settings (see eval_config_llamacpp.py).
-CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-16384}"
-GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-1}"
-echo "LLAMACPP_GEN_PARALLEL is set to ${GEN_PARALLEL}"
+# n_ctx is the TOTAL across slots → 32768/4 = 8192 per slot, matching NUM_PREDICT.
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-32768}"
+GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-4}"
+echo "LLAMACPP_GEN_PARALLEL=${GEN_PARALLEL}, CONTEXT_LENGTH=${CONTEXT_LENGTH}"
 
 pkill -f "llama_cpp.server" || true
 sleep 2
@@ -105,21 +107,7 @@ stdbuf -oL -eL python -m llama_cpp.server \
   2>&1 | stdbuf -oL sed 's/^/[GEN] /' &
 GEN_PID=$!
 
-# Embedding server: --embedding enables /v1/embeddings
-# Cap n_ctx at 2048: embeddings are one-shot forward passes over a single
-# chunk; without this, llama.cpp uses the model's max training context
-# (32k for Qwen3-Embedding) and pre-allocates ~7 GB KV cache, OOMing on
-# an 8 GB GPU that already hosts the generation model.
-stdbuf -oL -eL python -m llama_cpp.server \
-  --model "${EMB_PATH}" \
-  --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_EMB_PORT}" \
-  --embedding true \
-  --n_ctx 2048 \
-  --n_gpu_layers -1 \
-  2>&1 | stdbuf -oL sed 's/^/[EMB] /' &
-EMB_PID=$!
-
-trap 'kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
+trap 'kill ${GEN_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
 
 # Wait for both servers to load. llama-cpp-python exposes /v1/models once the
 # model is loaded; /health is not guaranteed across versions, so we poll that.
@@ -138,7 +126,6 @@ wait_ready() {
 }
 
 wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}" "llama-cpp-python (gen)"
-wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}" "llama-cpp-python (emb)"
 
 # ---------------------------------------------------------------------------
 # 4. Warm-up requests
@@ -147,10 +134,7 @@ echo "Warming up models with dummy requests..."
 curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Sag Hallo in einem Wort."}],"max_tokens":8,"temperature":0}' >/dev/null
-curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1/embeddings" \
-  -H "Content-Type: application/json" \
-  -d '{"input":"warmup"}' >/dev/null
-echo "Models warmed up"
+echo "Models warmed up (gen only; emb is loaded lazily in-process by ragas)"
 
 echo "GPU status immediately after warm-up (models should be resident on GPU):"
 nvidia-smi || true
@@ -177,7 +161,7 @@ GPU_LOG="${WORKDIR}/logs/gpu_sample.${SLURM_JOB_ID:-local}.log"
   done
 ) &
 GPU_SAMPLER_PID=$!
-trap 'kill ${GPU_SAMPLER_PID} 2>/dev/null || true; kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
+trap 'kill ${GPU_SAMPLER_PID} 2>/dev/null || true; kill ${GEN_PID} 2>/dev/null || true; pkill -f "llama_cpp.server" 2>/dev/null || true' EXIT
 echo "GPU sampler PID=${GPU_SAMPLER_PID}, logging to ${GPU_LOG}"
 
 python -m evaluation.eval_pipeline

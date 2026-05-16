@@ -11,17 +11,17 @@ from ragas.dataset_schema import EvaluationResult
 from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from datasets import Dataset
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
+from langchain_core.embeddings import Embeddings
 from langchain_core.outputs import LLMResult, Generation
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import SecretStr
 from ragas.llms import LangchainLLMWrapper
+from llama_cpp import Llama
 
 from evaluation.eval_config_llamacpp import (
     LLAMACPP_EVAL_MODEL,
-    LLAMACPP_EVAL_EMBEDDINGS_MODEL,
     LLAMACPP_GEN_BASE_URL,
-    LLAMACPP_EMB_BASE_URL,
     LLAMACPP_TEMPERATURE,
     LLAMACPP_NUM_PREDICT,
     LLAMACPP_TOP_P,
@@ -35,7 +35,7 @@ RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
 print(f"[ragas_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
-RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "4"))
+RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "4"))  # match gen server slot count
 print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "_current_sample_idx", default=None
@@ -64,13 +64,58 @@ def _build_base_llm() -> ChatOpenAI:
     )
 
 
-def _build_embeddings() -> OpenAIEmbeddings:
-    return OpenAIEmbeddings(
-        model=LLAMACPP_EVAL_EMBEDDINGS_MODEL,
-        base_url=LLAMACPP_EMB_BASE_URL,
-        api_key=SecretStr("sk-no-key-required"),
-        check_embedding_ctx_length=False,
-    )
+_emb_model: Llama | None = None
+_emb_lock = __import__("threading").Lock()
+
+
+def _get_emb_model() -> Llama:
+    global _emb_model
+    if _emb_model is None:
+        with _emb_lock:
+            if _emb_model is None:
+                model_path = os.environ["LLAMACPP_EMB_MODEL_PATH"]
+                # n_seq_max=1: llama-cpp-python defaults n_seq_max to 256 when
+                # embedding=True, which inflates the KV cache to ~7 GB (256 slots
+                # × 256 tokens/slot = 65536 effective ctx) and OOMs on 8 GB GPUs.
+                # We only ever embed one batch at a time (lock-serialized), so
+                # one slot is all we need.
+                _emb_model = Llama(
+                    model_path=model_path,
+                    embedding=True,
+                    n_ctx=2048,
+                    n_batch=512,
+                    n_gpu_layers=-1,
+                    n_seq_max=1,
+                    verbose=False,
+                )
+    return _emb_model
+
+
+class LlamaCppEmbeddings(Embeddings):
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        m = _get_emb_model()
+        try:
+            with _emb_lock:
+                out = m.create_embedding(texts)
+        except Exception as e:
+            import traceback
+            print(
+                f"[LlamaCppEmbeddings] create_embedding FAILED "
+                f"({type(e).__name__}: {e}). "
+                f"len(texts)={len(texts)}, "
+                f"max_text_len={max((len(t) for t in texts), default=0)}",
+                flush=True,
+            )
+            traceback.print_exc()
+            raise
+        return [d["embedding"] for d in out["data"]]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_documents([text])[0]
+
+
+def _build_embeddings() -> Embeddings:
+    return LlamaCppEmbeddings()
 
 
 class RagasJSONWrapper:
@@ -188,12 +233,14 @@ def run_ragas(sample):
         }
 
     except Exception as e:
+        import traceback
         sample_idx = _current_sample_idx.get()
         print(
             f"[ragas_eval] run_ragas FAILED for sample={sample_idx}: "
             f"{type(e).__name__}: {e}",
             flush=True,
         )
+        traceback.print_exc()
         return {
             "ragas_faithfulness": None,
             "ragas_answer_relevancy": None,
