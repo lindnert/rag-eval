@@ -84,39 +84,19 @@ LLAMACPP_TAG="${LLAMACPP_TAG:-master}"
 LLAMACPP_BIN_DIR="${WORKDIR}/.llamacpp_bin/${LLAMACPP_TAG}"
 LLAMACPP_SERVER="${LLAMACPP_BIN_DIR}/llama-server"
 
+# CUDA 13 toolkit installed to user home (see README/setup notes).
+# The compute node's driver supports CUDA 13; we just need the runtime libs
+# on LD_LIBRARY_PATH so the dynamically-linked llama-server can find them.
+CUDA_HOME="${CUDA_HOME:-$HOME/cuda-13.0}"
+export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+
 if [ ! -x "${LLAMACPP_SERVER}" ]; then
-  echo "Building llama-server (${LLAMACPP_TAG}) — one-time, cached at ${LLAMACPP_BIN_DIR}"
-  SRC_DIR="${WORKDIR}/.llamacpp_src/${LLAMACPP_TAG}"
-  rm -rf "${SRC_DIR}"
-  git clone --depth 1 --branch "${LLAMACPP_TAG}" https://github.com/ggml-org/llama.cpp "${SRC_DIR}"
-  # CUDA 12.0 supports gcc 10-12 only:
-  #   - gcc < 10 hits a <type_traits> incompatibility under C++17
-  #   - gcc > 12 is rejected by /usr/include/crt/host_config.h
-  # Pick highest supported version present on the node.
-  BUILD_CXX=""
-  for cand in g++-12 g++-11 g++-10; do
-    if command -v "${cand}" >/dev/null 2>&1; then
-      BUILD_CXX="$(command -v "${cand}")"
-      BUILD_CC="$(command -v "${cand/g++/gcc}")"
-      break
-    fi
-  done
-  if [ -z "${BUILD_CXX}" ]; then
-    echo "ERROR: no compatible gcc found (need gcc-10, -11, or -12 for CUDA 12.0)" >&2
-    exit 1
-  fi
-  echo "Using CC=${BUILD_CC}, CXX=${BUILD_CXX}"
-  CC="${BUILD_CC}" CXX="${BUILD_CXX}" cmake -S "${SRC_DIR}" -B "${SRC_DIR}/build" \
-    -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=OFF \
-    -DCMAKE_CUDA_HOST_COMPILER="${BUILD_CXX}"
-  cmake --build "${SRC_DIR}/build" --config Release -j --target llama-server
-  mkdir -p "${LLAMACPP_BIN_DIR}"
-  cp "${SRC_DIR}/build/bin/llama-server" "${LLAMACPP_BIN_DIR}/"
-  # Bundle shared libs next to the binary (avoids LD_LIBRARY_PATH gymnastics).
-  cp "${SRC_DIR}/build/bin/"*.so "${LLAMACPP_BIN_DIR}/" 2>/dev/null || true
-  rm -rf "${SRC_DIR}"
+  echo "ERROR: llama-server not found at ${LLAMACPP_SERVER}." >&2
+  echo "Build it once on the login node — see slurm/build_llama_server.sh" >&2
+  exit 1
 fi
 echo "llama-server: ${LLAMACPP_SERVER}"
+echo "CUDA_HOME=${CUDA_HOME}, LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
 
 # ---------------------------------------------------------------------------
 # 4. Start gen (8080) + emb (8081) servers, each configured independently.
@@ -146,7 +126,7 @@ stdbuf -oL -eL "${LLAMACPP_SERVER}" \
   --n-gpu-layers -1 \
   --parallel "${GEN_PARALLEL}" \
   --cont-batching \
-  -fa \
+  -fa on \
   -ctk q8_0 -ctv q8_0 \
   2>&1 | stdbuf -oL sed 's/^/[GEN] /' &
 GEN_PID=$!
