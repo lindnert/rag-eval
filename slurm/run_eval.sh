@@ -4,13 +4,16 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
-#SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%j.%N.out
-#SBATCH --error=/home/l/lindnerti/rag-eval/logs/eval.%j.%N.err
+#SBATCH --output=/home/l/lindnerti/rag-eval/logs/%A/eval.%a.%N.out
+#SBATCH --error=/home/l/lindnerti/rag-eval/logs/%A/eval.%a.%N.err
 #SBATCH --time=04:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=0
 #SBATCH --partition=NvidiaAll
+#SBATCH --array=0-2
+#SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%A_%a.%N.out
+#SBATCH --error=/home/l/lindnerti/rag-eval/logs/eval.%A_%a.%N.err
 
 ## Submit with: sbatch slurm/run_eval.sh
 ## Optionally: sbatch --dependency=afterok:<rag_jobid> slurm/run_eval.sh
@@ -201,6 +204,10 @@ GPU_LOG="${WORKDIR}/logs/gpu_sample.${SLURM_JOB_ID:-local}.log"
 GPU_SAMPLER_PID=$!
 trap 'kill ${GPU_SAMPLER_PID} 2>/dev/null || true; kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama-server" 2>/dev/null || true' EXIT
 echo "GPU sampler PID=${GPU_SAMPLER_PID}, logging to ${GPU_LOG}"
+
+export EVAL_SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-0}"
+export EVAL_SHARD_COUNT="${SLURM_ARRAY_TASK_COUNT:-1}"
+export EVAL_SHARD_TAG="${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}"
 
 python -m evaluation.eval_pipeline
 
