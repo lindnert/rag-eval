@@ -191,8 +191,10 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
         eval_model = LlamaCppWrapper(_build_llm())
         faithfulness, relevance = _build_metrics(eval_model)
         try:
-            await faithfulness.a_measure(test_case)
-            await relevance.a_measure(test_case)
+            await asyncio.gather(
+                faithfulness.a_measure(test_case),
+                relevance.a_measure(test_case),
+            )
             return {
                 "deepeval_faithfulness": faithfulness.score,
                 "deepeval_relevance": relevance.score,
