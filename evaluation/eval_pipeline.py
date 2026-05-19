@@ -138,13 +138,18 @@ if __name__ == "__main__":
     )
     results = load_rag_results(rag_input)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    partial_file = os.path.join(results_dir, f"evaluated_results_{timestamp}.partial.json")
+    shard_idx   = int(os.environ.get("EVAL_SHARD_INDEX", "0"))
+    shard_count = int(os.environ.get("EVAL_SHARD_COUNT", "1"))
+    shard_tag   = os.environ.get("EVAL_SHARD_TAG", "local")
+    if shard_count > 1:
+        results = results[shard_idx::shard_count]
+    print(f"Shard {shard_idx}/{shard_count}: {len(results)} samples", flush=True)
+
+    shard_dir = os.path.join(results_dir, "_shards", shard_tag.split("_")[0])  # group by array job id
+    os.makedirs(shard_dir, exist_ok=True)
+
+    partial_file = os.path.join(shard_dir, f"shard_{shard_tag}.partial.json")
     evaluated_results = evaluate_results(results, partial_path=partial_file)
 
-    out_file = os.path.join(results_dir, f"evaluated_results_{timestamp}.json")
+    out_file = os.path.join(shard_dir, f"shard_{shard_tag}.json")
     save_evaluated_results(evaluated_results, out_file)
-    save_evaluated_results(
-        evaluated_results,
-        os.path.join(results_dir, "evaluated_results_latest.json"),
-    )
