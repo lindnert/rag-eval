@@ -36,7 +36,7 @@ RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
 print(f"[ragas_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
-RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "4"))  # match gen server slot count
+RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "6"))  # match gen server slot count
 print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "_current_sample_idx", default=None
