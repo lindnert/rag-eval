@@ -4,16 +4,13 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
-#SBATCH --output=/home/l/lindnerti/rag-eval/logs/%A/eval.%a.%N.out
-#SBATCH --error=/home/l/lindnerti/rag-eval/logs/%A/eval.%a.%N.err
+#SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%A_%a.%N.out
 #SBATCH --time=04:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=0
 #SBATCH --partition=NvidiaAll
 #SBATCH --array=0-2
-#SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%A_%a.%N.out
-#SBATCH --error=/home/l/lindnerti/rag-eval/logs/eval.%A_%a.%N.err
 
 ## Submit with: sbatch slurm/run_eval.sh
 ## Optionally: sbatch --dependency=afterok:<rag_jobid> slurm/run_eval.sh
@@ -22,8 +19,18 @@
 set -euo pipefail
 
 WORKDIR="${SLURM_SUBMIT_DIR:-$PWD}"
+ERR_LOG="${WORKDIR}/logs/eval.${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}.$(hostname).err"
+exec 2> >(tee -a "${ERR_LOG}" >&2)
+
 export RESULTS_DIR="${WORKDIR}/results"
 mkdir -p "${RESULTS_DIR}" "${WORKDIR}/logs"
+
+# log the merge job as a dependent job that runs after all shards are done; if this is the last shard (task_id=0), it will trigger the merge job.
+if [ "${SLURM_ARRAY_TASK_ID:-0}" = "0" ]; then
+  sbatch --dependency=afterok:${SLURM_ARRAY_JOB_ID} \
+         --export=ALL,MERGE_JOB_ID=${SLURM_ARRAY_JOB_ID} \
+         "${WORKDIR}/slurm/merge_eval.sh"
+fi
 
 PYTHON_BIN="$(command -v python3.12 || command -v python3)"
 
