@@ -176,7 +176,7 @@ def run_ragas(sample):
                 dataset,
                 llm=ragas_llm,
                 embeddings=embeddings,
-                metrics=[Faithfulness(), AnswerRelevancy()],
+                metrics=[Faithfulness(), AnswerRelevancy(strictness=3)],
                 return_executor=False,
                 raise_exceptions=raise_exceptions,
                 run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=3, max_wait=60),
