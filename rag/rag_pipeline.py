@@ -1,11 +1,11 @@
 from dotenv import load_dotenv
 load_dotenv()
-import json
 import os
 import asyncio
 import time
 from datetime import datetime
 
+from common.json_io import dump as dump_json
 from rag.utils import run_rag_pipeline_async
 from rag.llm_config import LLAMACPP_RAG_CONCURRENCY, LLAMACPP_RAG_MODEL
 
@@ -106,8 +106,7 @@ if __name__ == "__main__":
     shard_dir = os.path.join(results_dir, "_shards_rag", shard_tag.split("_")[0])
     os.makedirs(shard_dir, exist_ok=True)
     output_file = os.path.join(shard_dir, f"shard_{shard_tag}.json")
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+    dump_json(results, output_file)
 
     print(f"\n✓ Shard results saved to {output_file}")
 

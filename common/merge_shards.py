@@ -5,6 +5,8 @@ import os
 import shutil
 from datetime import datetime
 
+from common.json_io import dump as dump_json
+
 # Per-kind merge configuration. Both flows write shard files named
 # shard_<jobid>_<taskid>.json under a kind-specific subdir of RESULTS_DIR.
 CONFIGS = {
@@ -56,8 +58,7 @@ def merge(kind, results_dir=None):
     out = os.path.join(results_dir, f"{cfg['output_prefix']}_{ts}.json")
     latest = os.path.join(results_dir, f"{cfg['output_prefix']}_latest.json")
     for path in (out, latest):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(merged, f, indent=2, ensure_ascii=False)
+        dump_json(merged, path)
 
     print(f"Merged {len(shards)} shards → {len(merged)} samples → {out}")
 
