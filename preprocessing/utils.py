@@ -10,18 +10,47 @@ from bs4 import BeautifulSoup
 from llama_index.core import Document
 from llama_index.core.node_parser import SentenceSplitter
 
-from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from pydantic import SecretStr
 
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
+EMB_BATCH_SIZE = int(os.getenv("EMB_BATCH_SIZE", "32"))
 
-OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qllama/multilingual-e5-base:q4_k_m")
+# Embedding model prefixes — must stay consistent between indexing and querying.
+# Current model (multilingual-e5-base) was trained with "passage: " / "query: ".
+# For models that don't use prefixes (e.g. bge-m3), set these to "".
+PASSAGE_PREFIX = "passage: "
+QUERY_PREFIX = "query: "
+
+LLAMACPP_EMB_BASE_URL = os.getenv("LLAMACPP_EMB_BASE_URL", "http://127.0.0.1:8081/v1")
+LLAMACPP_EMB_MODEL = os.getenv(
+    "LLAMACPP_EMB_MODEL",
+    "dinab/multilingual-e5-base-Q4_K_M-GGUF",
+)
+
 CHUNKS_PATH = str(Path(__file__).resolve().parent.parent / "richtlinien" / "all_chunks.json")
-FAISS_INDEX_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien" / "faiss_index")
+FAISS_INDEX_DIR = os.getenv(
+    "FAISS_INDEX_DIR",
+    str(Path(__file__).resolve().parent.parent / "richtlinien" / "faiss_index_e5_llamacpp"),
+)
+
+
+def get_embeddings(show_progress_bar: bool = False) -> OpenAIEmbeddings:
+    return OpenAIEmbeddings(
+        model=LLAMACPP_EMB_MODEL,
+        base_url=LLAMACPP_EMB_BASE_URL,
+        api_key=SecretStr("sk-no-key-required"),
+        check_embedding_ctx_length=False,
+        tiktoken_enabled=False,
+        chunk_size=EMB_BATCH_SIZE,
+        timeout=120,
+        show_progress_bar=show_progress_bar,
+    )
 
 
 ## ---------------------- For HTML ------------------------
@@ -179,7 +208,7 @@ def chunk_text(text, metadata):
     return nodes
 
 def build_retriever(chunks_path=CHUNKS_PATH, index_dir=FAISS_INDEX_DIR, k=3):
-    embeddings = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
+    embeddings = get_embeddings()
 
     if os.path.exists(index_dir):
         vectorstore = FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
@@ -187,7 +216,7 @@ def build_retriever(chunks_path=CHUNKS_PATH, index_dir=FAISS_INDEX_DIR, k=3):
         with open(chunks_path, "r", encoding="utf-8") as f:
             chunks = json.load(f)
 
-        texts = [c["text"] for c in chunks]
+        texts = [PASSAGE_PREFIX + c["text"] for c in chunks]
         metadatas = [c["metadata"] for c in chunks]
 
         vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
