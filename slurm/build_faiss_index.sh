@@ -11,6 +11,9 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=0
 #SBATCH --partition=NvidiaAll
+#SBATCH --exclude=adakit
+#SBATCH --exclusive
+
 
 ## Submit with: sbatch slurm/build_faiss_index.sh
 
@@ -58,20 +61,23 @@ mkdir -p "${HF_HOME}"
 EMB_HOST="127.0.0.1"
 EMB_PORT="${LLAMACPP_EMB_PORT:-8081}"
 export LLAMACPP_EMB_BASE_URL="http://${EMB_HOST}:${EMB_PORT}/v1"
-export LLAMACPP_EMB_MODEL="${LLAMACPP_EMB_MODEL:-dinab/multilingual-e5-base-Q4_K_M-GGUF}"
+export LLAMACPP_EMB_MODEL="${LLAMACPP_EMB_MODEL:-lm-kit/bge-m3-gguf:Q4_K_M}"
 
 pkill -f "llama-server" || true
 sleep 2
 
+# bge-m3: encoder-only (no KV cache), trained up to 8192 tokens but we only
+# need ~500-token chunks → -c 1024 leaves headroom while keeping VRAM down.
+# -ub 1024 keeps physical batch above the largest expected chunk so pooling
+# happens in a single forward pass.
 stdbuf -oL -eL "${LLAMACPP_SERVER}" \
-  --hf-repo dinab/multilingual-e5-base-Q4_K_M-GGUF \
-  --hf-file multilingual-e5-base-q4_k_m.gguf \
+  -hf lm-kit/bge-m3-gguf:Q4_K_M \
   --host "${EMB_HOST}" --port "${EMB_PORT}" \
-  -c 2048 \
+  -c 1024 \
   -b 1024 -ub 1024 \
   --n-gpu-layers -1 \
   --parallel 1 \
-  --embeddings --pooling mean \
+  --embeddings --pooling cls \
   2>&1 | stdbuf -oL sed 's/^/[EMB] /' &
 EMB_PID=$!
 trap 'kill ${EMB_PID} 2>/dev/null || true; pkill -f "llama-server" 2>/dev/null || true' EXIT
@@ -95,7 +101,7 @@ nvidia-smi || true
 # ---------------------------------------------------------------------------
 # 4. Build the index via preprocessing.utils.build_retriever()
 # ---------------------------------------------------------------------------
-export FAISS_INDEX_DIR="${FAISS_INDEX_DIR:-${WORKDIR}/richtlinien/faiss_index_e5_llamacpp}"
+export FAISS_INDEX_DIR="${FAISS_INDEX_DIR:-${WORKDIR}/richtlinien/faiss_index_bge_m3}"
 echo "Writing index to ${FAISS_INDEX_DIR}"
 
 # build_retriever() short-circuits if the dir exists, so refuse to silently no-op.

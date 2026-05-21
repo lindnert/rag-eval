@@ -6,15 +6,15 @@ from pydantic import SecretStr
 EMB_BATCH_SIZE = int(os.getenv("EMB_BATCH_SIZE", "32"))
 
 # Embedding model prefixes — must stay consistent between indexing and querying.
-# Current model (multilingual-e5-base) was trained with "passage: " / "query: ".
-# For models that don't use prefixes (e.g. bge-m3), set these to "".
-PASSAGE_PREFIX = "passage: "
-QUERY_PREFIX = "query: "
+# Current model (bge-m3) was trained instruction-free → no prefixes.
+# For E5-family models, switch to "passage: " / "query: ".
+PASSAGE_PREFIX = ""
+QUERY_PREFIX = ""
 
 LLAMACPP_EMB_BASE_URL = os.getenv("LLAMACPP_EMB_BASE_URL", "http://127.0.0.1:8081/v1")
 LLAMACPP_EMB_MODEL = os.getenv(
     "LLAMACPP_EMB_MODEL",
-    "dinab/multilingual-e5-base-Q4_K_M-GGUF",
+    "lm-kit/bge-m3-gguf:Q4_K_M",
 )
 
 

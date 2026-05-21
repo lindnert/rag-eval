@@ -11,7 +11,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CHUNKS_PATH = str(_PROJECT_ROOT / "richtlinien" / "all_chunks.json")
 FAISS_INDEX_DIR = os.getenv(
     "FAISS_INDEX_DIR",
-    str(_PROJECT_ROOT / "richtlinien" / "faiss_index_e5_llamacpp"),
+    str(_PROJECT_ROOT / "richtlinien" / "faiss_index_bge_m3"),
 )
 
 
