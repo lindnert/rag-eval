@@ -3,6 +3,8 @@ import json
 import utils
 from pathlib import Path
 
+from retrieval import build_retriever
+
 DATA_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien")
 OUTPUT_DIR = DATA_DIR
 
@@ -90,4 +92,4 @@ def generate_chunks():
 
 if __name__ == "__main__":
     generate_chunks()
-    utils.build_retriever()
+    build_retriever()
