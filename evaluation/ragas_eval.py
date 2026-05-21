@@ -167,6 +167,9 @@ class RagasJSONWrapper:
         return LLMResult(generations=[[Generation(text=t)] for t in texts])
 
 
+_NO_REASON_FALLBACK = "no reasoning provided by ragas"
+
+
 def _score_value(result):
     # Collections metrics return a MetricResult with .value; be defensive in
     # case a numeric is returned directly.
@@ -175,6 +178,13 @@ def _score_value(result):
         return float(val) if val is not None and val == val else None
     except (TypeError, ValueError):
         return None
+
+
+def _score_reason(result) -> str:
+    reason = getattr(result, "reason", None)
+    if reason is None or (isinstance(reason, str) and not reason.strip()):
+        return _NO_REASON_FALLBACK
+    return reason
 
 
 async def _score_one(sample: dict) -> dict:
@@ -199,7 +209,6 @@ async def _score_one(sample: dict) -> dict:
             answer_relevancy.ascore(
                 user_input=user_input,
                 response=response,
-                retrieved_contexts=retrieved_contexts,
             ),
             context_relevance.ascore(
                 user_input=user_input,
@@ -208,8 +217,11 @@ async def _score_one(sample: dict) -> dict:
         )
         return {
             "ragas_faithfulness": _score_value(faith_res),
+            "ragas_faithfulness_reason": _score_reason(faith_res),
             "ragas_answer_relevancy": _score_value(relev_res),
+            "ragas_answer_relevancy_reason": _score_reason(relev_res),
             "ragas_context_relevance": _score_value(ctx_res),
+            "ragas_context_relevance_reason": _score_reason(ctx_res),
         }
     except Exception as e:
         import traceback
@@ -222,8 +234,11 @@ async def _score_one(sample: dict) -> dict:
         traceback.print_exc()
         return {
             "ragas_faithfulness": None,
+            "ragas_faithfulness_reason": _NO_REASON_FALLBACK,
             "ragas_answer_relevancy": None,
+            "ragas_answer_relevancy_reason": _NO_REASON_FALLBACK,
             "ragas_context_relevance": None,
+            "ragas_context_relevance_reason": _NO_REASON_FALLBACK,
             "ragas_error": f"{type(e).__name__}: {e}",
         }
 
