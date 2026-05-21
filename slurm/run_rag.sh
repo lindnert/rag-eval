@@ -4,8 +4,7 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
-#SBATCH --output=/home/l/lindnerti/rag-eval/logs/rag.%j.%N.out
-#SBATCH --error=/home/l/lindnerti/rag-eval/logs/rag.%j.%N.err
+#SBATCH --output=/home/l/lindnerti/rag-eval/logs/rag.%A_%a.%N.out
 #SBATCH --time=04:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -13,14 +12,26 @@
 #SBATCH --partition=NvidiaAll
 #SBATCH --exclude=adakit
 #SBATCH --exclusive
+#SBATCH --array=0-2
 
 ## Submit with: sbatch slurm/run_rag.sh
 
 set -euo pipefail
 
 WORKDIR="${SLURM_SUBMIT_DIR:-$PWD}"
+ERR_LOG="${WORKDIR}/logs/rag.${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}.$(hostname).err"
+exec 2> >(tee -a "${ERR_LOG}" >&2)
+
 export RESULTS_DIR="${WORKDIR}/results"
 mkdir -p "${RESULTS_DIR}" "${WORKDIR}/logs"
+
+# First-firing task schedules the merge job; --dependency=afterok holds it
+# until all shards in the array finish successfully.
+if [ "${SLURM_ARRAY_TASK_ID:-0}" = "0" ]; then
+  sbatch --dependency=afterok:${SLURM_ARRAY_JOB_ID} \
+         --export=ALL,MERGE_JOB_ID=${SLURM_ARRAY_JOB_ID} \
+         "${WORKDIR}/slurm/merge_rag.sh"
+fi
 
 PYTHON_BIN="$(command -v python3.12 || command -v python3)"
 
@@ -159,6 +170,12 @@ nvidia-smi || true
 # 6. Run RAG pipeline
 # ---------------------------------------------------------------------------
 echo "==== RAG pipeline ===="
+
+export RAG_SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-0}"
+export RAG_SHARD_COUNT="${SLURM_ARRAY_TASK_COUNT:-1}"
+export RAG_SHARD_TAG="${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}"
+echo "Shard ${RAG_SHARD_INDEX}/${RAG_SHARD_COUNT} (tag=${RAG_SHARD_TAG})"
+
 python -m rag.rag_pipeline
 
 echo "==== Done at $(date) ===="

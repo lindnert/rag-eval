@@ -70,15 +70,25 @@ if __name__ == "__main__":
     # "Nach einer Schwangerschaft (35 Jahre) möchte ich wieder fit werden. Welche Ernährung ist sinnvoll?",
     ]
 
+    # Shard the queries across SLURM array tasks. Global ids are assigned
+    # *before* slicing so each shard's outputs carry their original index and
+    # can be re-ordered correctly by rag.merge_shards.
+    indexed_queries = list(enumerate(queries))
+    shard_idx   = int(os.environ.get("RAG_SHARD_INDEX", "0"))
+    shard_count = int(os.environ.get("RAG_SHARD_COUNT", "1"))
+    shard_tag   = os.environ.get("RAG_SHARD_TAG", "local")
+    if shard_count > 1:
+        indexed_queries = indexed_queries[shard_idx::shard_count]
+
     print(f"\n{'='*80}")
     print(f"Starting RAG evaluation pipeline")
-    print(f"Total queries: {len(queries)}")
+    print(f"Shard {shard_idx}/{shard_count}: {len(indexed_queries)} of {len(queries)} queries")
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Model: {LLAMACPP_RAG_MODEL}  (concurrency={LLAMACPP_RAG_CONCURRENCY})")
     print(f"{'='*80}\n", flush=True)
 
     pipeline_start = time.time()
-    results = asyncio.run(run_rag_pipeline_async(queries))
+    results = asyncio.run(run_rag_pipeline_async(indexed_queries))
     pipeline_time = time.time() - pipeline_start
 
     print(f"\n{'='*80}")
@@ -92,16 +102,14 @@ if __name__ == "__main__":
         print(f"-" * 80, flush=True)
 
     results_dir = os.environ.get("RESULTS_DIR", "results")
-    os.makedirs(results_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = os.path.join(results_dir, f"rag_results_{timestamp}.json")
+    # Group by array job id so the merge step can find all shards.
+    shard_dir = os.path.join(results_dir, "_shards_rag", shard_tag.split("_")[0])
+    os.makedirs(shard_dir, exist_ok=True)
+    output_file = os.path.join(shard_dir, f"shard_{shard_tag}.json")
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
-    latest_link = os.path.join(results_dir, "rag_results_latest.json")
-    with open(latest_link, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    
-    print(f"\n✓ Results saved to {output_file}")
+
+    print(f"\n✓ Shard results saved to {output_file}")
 
     print(f"\n{'='*80}")
     print(f"Generation complete!")
