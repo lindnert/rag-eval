@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=rag
-#SBATCH --comment="RAG pipeline"
+#SBATCH --comment="RAG pipeline (llama.cpp)"
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
@@ -11,6 +11,8 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=0
 #SBATCH --partition=NvidiaAll
+#SBATCH --exclude=adakit
+#SBATCH --exclusive
 
 ## Submit with: sbatch slurm/run_rag.sh
 
@@ -36,71 +38,122 @@ fi
 source "${WORKDIR}/.venv/bin/activate"
 
 # ---------------------------------------------------------------------------
-# 2. Install Ollama into $HOME
+# 2. Download GGUFs from Hugging Face
 # ---------------------------------------------------------------------------
-OLLAMA_DIR="${HOME}/.local/ollama"
-mkdir -p "${OLLAMA_DIR}/bin"
-export PATH="${OLLAMA_DIR}/bin:${PATH}"
-export OLLAMA_MODELS="${WORKDIR}/.ollama_models"
-mkdir -p "${OLLAMA_MODELS}"
+export HF_HOME="${WORKDIR}/.hf_cache"
+export LLAMA_MODELS_DIR="${WORKDIR}/.llamacpp_models"
+mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
 
-if ! command -v ollama >/dev/null 2>&1; then
-  echo "Installing Ollama into ${OLLAMA_DIR} ..."
-  curl -fsSL https://github.com/ollama/ollama/releases/download/v0.23.1/ollama-linux-amd64.tar.zst -o /tmp/ollama.tar.zst
-  zstd -d /tmp/ollama.tar.zst -o /tmp/ollama.tar
-  tar -xf /tmp/ollama.tar -C "${OLLAMA_DIR}"
+GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-E2B-it-GGUF}"
+GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-E2B-it-UD-Q4_K_XL.gguf}"
+
+echo "Downloading gen GGUF (cached in ${HF_HOME})..."
+hf download "${GEN_REPO}" "${GEN_FILE}" --local-dir "${LLAMA_MODELS_DIR}/gen"
+GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
+echo "Gen GGUF: ${GEN_PATH}"
+
+# Embedding model is pulled by llama-server via -hf (cached in HF_HOME);
+# must match what built the FAISS index in slurm/build_faiss_index.sh.
+
+# ---------------------------------------------------------------------------
+# 3. Locate native llama-server (built once via slurm/build_llama_server.sh)
+# ---------------------------------------------------------------------------
+LLAMACPP_TAG="${LLAMACPP_TAG:-master}"
+LLAMACPP_BIN_DIR="${WORKDIR}/.llamacpp_bin/${LLAMACPP_TAG}"
+LLAMACPP_SERVER="${LLAMACPP_BIN_DIR}/llama-server"
+
+CUDA_HOME="${CUDA_HOME:-$HOME/cuda-13.0}"
+export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+
+if [ ! -x "${LLAMACPP_SERVER}" ]; then
+  echo "ERROR: llama-server not found at ${LLAMACPP_SERVER}." >&2
+  echo "Build it once on the login node — see slurm/build_llama_server.sh" >&2
+  exit 1
 fi
+echo "llama-server: ${LLAMACPP_SERVER}"
 
 # ---------------------------------------------------------------------------
-# 3. Start Ollama server
+# 4. Start gen (8080) + emb (8081) servers
 # ---------------------------------------------------------------------------
-export OLLAMA_HOST="127.0.0.1:11434"
-export OLLAMA_NUM_PARALLEL=10
-echo "OLLAMA_NUM_PARALLEL is set to ${OLLAMA_NUM_PARALLEL}"
-export OLLAMA_FLASH_ATTENTION=1
-export OLLAMA_KV_CACHE_TYPE=q8_0
-export OLLAMA_KEEP_ALIVE=-1
+export LLAMACPP_GEN_HOST="127.0.0.1"
+export LLAMACPP_GEN_PORT=8080
+export LLAMACPP_EMB_PORT=8081
+export LLAMACPP_GEN_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1"
+export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1"
 
-pkill -f "ollama serve" || true
+# Match the embedding model used at index build time (bge-m3, CLS pooling, no prefixes).
+export LLAMACPP_EMB_MODEL="${LLAMACPP_EMB_MODEL:-lm-kit/bge-m3-gguf:Q4_K_M}"
+
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-16384}"
+GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-6}"
+echo "GEN_PARALLEL=${GEN_PARALLEL}, GEN_CTX=${CONTEXT_LENGTH}"
+
+pkill -f "llama-server" || true
 sleep 2
-ollama serve > "${WORKDIR}/logs/ollama_rag_${SLURM_JOB_ID:-local}.log" 2>&1 &
-OLLAMA_PID=$!
-trap 'kill ${OLLAMA_PID} 2>/dev/null || true' EXIT
 
-for i in $(seq 1 60); do
-  if curl -sf "http://${OLLAMA_HOST}/api/tags" >/dev/null; then
-    echo "Ollama ready after ${i}s"
-    break
-  fi
-  sleep 1
-done
+# Generation server.
+stdbuf -oL -eL "${LLAMACPP_SERVER}" \
+  --model "${GEN_PATH}" \
+  --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_GEN_PORT}" \
+  --ctx-size "${CONTEXT_LENGTH}" \
+  --n-gpu-layers -1 \
+  --parallel "${GEN_PARALLEL}" \
+  --cont-batching \
+  -fa on \
+  -ctk q8_0 -ctv q8_0 \
+  2>&1 | stdbuf -oL sed 's/^/[GEN] /' &
+GEN_PID=$!
+
+# Embedding server — same config as slurm/build_faiss_index.sh so query and
+# passage embeddings stay in the same space.
+stdbuf -oL -eL "${LLAMACPP_SERVER}" \
+  -hf "${LLAMACPP_EMB_MODEL}" \
+  --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_EMB_PORT}" \
+  -c 1024 \
+  -b 1024 -ub 1024 \
+  --n-gpu-layers -1 \
+  --parallel 1 \
+  --embeddings --pooling cls \
+  2>&1 | stdbuf -oL sed 's/^/[EMB] /' &
+EMB_PID=$!
+
+trap 'kill ${GEN_PID} ${EMB_PID} 2>/dev/null || true; pkill -f "llama-server" 2>/dev/null || true' EXIT
+
+wait_ready() {
+  local url="$1"
+  local name="$2"
+  for i in $(seq 1 600); do
+    if curl -sf "${url}/v1/models" >/dev/null; then
+      echo "${name} ready after ${i}s"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ERROR: ${name} did not become ready" >&2
+  return 1
+}
+
+wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}" "llama-server (gen)"
+wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}" "llama-server (emb)"
 
 # ---------------------------------------------------------------------------
-# 4. Pull + warm models needed for RAG
+# 5. Warm-up
 # ---------------------------------------------------------------------------
-ollama pull gemma4:e2b
-ollama pull qllama/multilingual-e5-base:q4_k_m
-
-echo "Warming up models with dummy requests..."
-ollama ps
-
-curl -sf "http://${OLLAMA_HOST}/api/generate" \
-  -d '{"model":"gemma4:e2b","prompt":"Sag Hallo in einem Wort.","stream":false,"options":{"num_ctx":6000}}' >/dev/null
-curl -sf "http://${OLLAMA_HOST}/api/embeddings" \
-  -d '{"model":"qllama/multilingual-e5-base:q4_k_m","prompt":"warmup"}' >/dev/null
-echo "Models warmed up"
-
-echo "Current Ollama status:"
-ollama ps
+echo "Warming up models..."
+curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Sag Hallo in einem Wort."}],"max_tokens":8,"temperature":0}' >/dev/null
+curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1/embeddings" \
+  -H "Content-Type: application/json" \
+  -d '{"input":"warmup"}' >/dev/null
+echo "Both models warmed up"
+nvidia-smi || true
 
 # ---------------------------------------------------------------------------
-# 5. Run RAG pipeline
+# 6. Run RAG pipeline
 # ---------------------------------------------------------------------------
 echo "==== RAG pipeline ===="
 python -m rag.rag_pipeline
-
-echo "GPU status after RAG:"
-ollama ps
 
 echo "==== Done at $(date) ===="
 echo "Results in: ${RESULTS_DIR}"

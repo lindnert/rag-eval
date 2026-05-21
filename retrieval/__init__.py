@@ -10,6 +10,7 @@ from retrieval.retriever import (
     CHUNKS_PATH,
     FAISS_INDEX_DIR,
     build_retriever,
+    build_vectorstore,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "CHUNKS_PATH",
     "FAISS_INDEX_DIR",
     "build_retriever",
+    "build_vectorstore",
 ]

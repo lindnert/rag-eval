@@ -1,167 +1,130 @@
-import os
-import aiohttp
 import asyncio
 import time
 from datetime import datetime
-import requests
 
-from langchain_ollama import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS
+import aiohttp
 
-OLLAMA_API_URL = "http://localhost:11434/api/generate"
-OLLAMA_RAG_MODEL = os.getenv("OLLAMA_RAG_MODEL", "gemma4:e2b")
-OLLAMA_RAG_MODEL_TEMPERATURE = float(os.getenv("OLLAMA_RAG_MODEL_TEMPERATURE", "0.1"))
-OLLAMA_RAG_MODEL_TOP_P = float(os.getenv("OLLAMA_RAG_MODEL_TOP_P", "0.95"))
-OLLAMA_RAG_MODEL_TOP_K = int(os.getenv("OLLAMA_RAG_MODEL_TOP_K", "64"))
-OLLAMA_RAG_MODEL_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", 10))
-OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qllama/multilingual-e5-base:q4_k_m")
-OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "6000"))
-FAISS_INDEX_DIR = os.path.join(os.path.dirname(__file__), "..", "richtlinien", "faiss_index")
+from rag.llm_config import (
+    LLAMACPP_GEN_BASE_URL,
+    LLAMACPP_RAG_CONCURRENCY,
+    LLAMACPP_RAG_MAX_TOKENS,
+    LLAMACPP_RAG_MODEL,
+    LLAMACPP_RAG_TEMPERATURE,
+    LLAMACPP_RAG_TOP_LOGPROBS,
+    LLAMACPP_RAG_TOP_P,
+    RAG_K,
+)
+from retrieval import QUERY_PREFIX, build_vectorstore
 
-_retriever = None
-
-
-def _get_retriever(index_dir=FAISS_INDEX_DIR, k=3):
-    global _retriever
-    if _retriever is None:
-        embeddings = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
-        vectorstore = FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
-        _retriever = vectorstore.as_retriever(search_kwargs={"k": k})
-    return _retriever
+_vectorstore = None
 
 
-def build_prompt(query, contexts):
-    prompt_lines = [
-        "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt.",
-        "Antworte kurz und prägnant (max 3-4 Absätze). Verwende nur Informationen aus dem Kontext.",
-        "",
-        f"Frage: {query}",
-    ]
+def _get_vectorstore():
+    global _vectorstore
+    if _vectorstore is None:
+        _vectorstore = build_vectorstore()
+    return _vectorstore
 
+
+SYSTEM_PROMPT = (
+    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
+    "Antworte kurz und prägnant (max 3-4 Absätze). Verwende nur Informationen aus dem Kontext."
+)
+
+
+def build_user_prompt(query, contexts):
+    lines = [f"Frage: {query}"]
     if contexts:
-        prompt_lines.append("")
-        prompt_lines.append("Kontextinformationen:")
-        for index, context in enumerate(contexts, start=1):
-            prompt_lines.append(f"{index}. {context}")
+        lines.append("")
+        lines.append("Kontextinformationen:")
+        for i, c in enumerate(contexts, start=1):
+            lines.append(f"{i}. {c}")
     else:
-        prompt_lines.append("")
-        prompt_lines.append("Hinweis: Kein Kontext verfügbar.")
-        
-    prompt_lines.append("")
-    prompt_lines.append("Antwort:")
-
-    return "\n".join(prompt_lines)
+        lines.append("")
+        lines.append("Hinweis: Kein Kontext verfügbar.")
+    return "\n".join(lines)
 
 
-def parse_ollama_response(response_json):
-    if "response" in response_json:
-        return response_json["response"]
-    if "error" in response_json:
-        raise ValueError(f"Ollama error: {response_json['error']}")
-    raise ValueError(f"Unexpected Ollama response shape: {response_json}")
+def _retrieve(vectorstore, query, k=RAG_K):
+    # QUERY_PREFIX is "" for bge-m3 but kept for symmetry with E5/Qwen3.
+    docs_with_scores = vectorstore.similarity_search_with_score(
+        QUERY_PREFIX + query, k=k
+    )
+    contexts = [doc.page_content for doc, _ in docs_with_scores]
+    scores = [float(score) for _, score in docs_with_scores]
+    return contexts, scores
 
-# outdated function, not used in current pipeline but kept for reference
-"""async def generate_llm_answer_async(session, query, contexts):
-    prompt = build_prompt(query, contexts)
-    payload = {
-        "model": OLLAMA_RAG_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "num_ctx": OLLAMA_CONTEXT_LENGTH,
-            "temperature": OLLAMA_RAG_MODEL_TEMPERATURE,
-            "top_p": OLLAMA_RAG_MODEL_TOP_P,
-            "top_k": OLLAMA_RAG_MODEL_TOP_K,
-        }
-    }
 
-    try:
-        async with session.post(OLLAMA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=600)) as response:
-            parsed = await response.json()
-            return parse_ollama_response(parsed)
-    except aiohttp.ClientError as exc:
-        return f"[OLLAMA HTTP ERROR] {exc}"
-    except Exception as exc:
-        return f"[OLLAMA ERROR] {exc}"
-
-"""
-
-# outdated function, not used in current pipeline but kept for reference
-""" def run_rag_pipeline(query):
-    retriever = _get_retriever()
-    retrieved_docs = [doc.page_content for doc in retriever.invoke(query)]
-
-    answer = generate_llm_answer(query, retrieved_docs)
-
-    return {
-        "query": query,
-        "answer": answer,
-        "contexts": retrieved_docs,
-    }
-"""
-async def process_single_query(session, query, retriever, sem, idx, total, progress_counter, start_time):
+async def process_single_query(
+    session, query, sem, idx, total, progress_counter, start_time
+):
     loop = asyncio.get_event_loop()
+    vectorstore = _get_vectorstore()
 
-    # Run blocking retrieval in a thread so it doesn't block the event loop
     try:
-        retrieved_docs = await loop.run_in_executor(
-            None,
-            lambda: [doc.page_content for doc in retriever.invoke(query)]
+        contexts, retrieval_scores = await loop.run_in_executor(
+            None, lambda: _retrieve(vectorstore, query)
         )
     except Exception as exc:
-        return {"query": query, "answer": f"[RETRIEVAL ERROR] {exc}", "contexts": []}
+        return {
+            "query": query,
+            "answer": f"[RETRIEVAL ERROR] {exc}",
+            "contexts": [],
+            "retrieval_scores": [],
+            "gen_logprobs": [],
+            "variant": "rag",
+        }
 
-    # Semaphore limits how many LLM requests are in-flight at once
     async with sem:
         query_start = time.time()
-
-        prompt = build_prompt(query, retrieved_docs)
         payload = {
-        "model": OLLAMA_RAG_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "num_ctx": OLLAMA_CONTEXT_LENGTH,
-            "temperature": OLLAMA_RAG_MODEL_TEMPERATURE,
-            "top_p": OLLAMA_RAG_MODEL_TOP_P,
-            "top_k": OLLAMA_RAG_MODEL_TOP_K,
-            }
+            "model": LLAMACPP_RAG_MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": build_user_prompt(query, contexts)},
+            ],
+            "temperature": LLAMACPP_RAG_TEMPERATURE,
+            "top_p": LLAMACPP_RAG_TOP_P,
+            "max_tokens": LLAMACPP_RAG_MAX_TOKENS,
+            "logprobs": True,
+            "top_logprobs": LLAMACPP_RAG_TOP_LOGPROBS,
+            "stream": False,
         }
+
+        answer = ""
+        gen_logprobs = []
         prompt_tokens = 0
         gen_tokens = 0
-        prompt_eval_duration_s = 0.0
-        eval_duration_s = 0.0
         try:
             async with session.post(
-                OLLAMA_API_URL,
+                f"{LLAMACPP_GEN_BASE_URL}/chat/completions",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=120),
+                timeout=aiohttp.ClientTimeout(total=600),
             ) as response:
                 parsed = await response.json()
-                answer = parse_ollama_response(parsed)
-                prompt_tokens = parsed.get("prompt_eval_count", 0) or 0
-                gen_tokens = parsed.get("eval_count", 0) or 0
-                prompt_eval_duration_s = (parsed.get("prompt_eval_duration", 0) or 0) / 1e9
-                eval_duration_s = (parsed.get("eval_duration", 0) or 0) / 1e9
+                if "error" in parsed:
+                    answer = f"[LLAMACPP ERROR] {parsed['error']}"
+                else:
+                    choice = parsed["choices"][0]
+                    answer = choice["message"]["content"]
+                    lp = choice.get("logprobs") or {}
+                    content = lp.get("content") or []
+                    gen_logprobs = [
+                        tok["logprob"]
+                        for tok in content
+                        if tok.get("logprob") is not None
+                    ]
+                    usage = parsed.get("usage") or {}
+                    prompt_tokens = usage.get("prompt_tokens", 0) or 0
+                    gen_tokens = usage.get("completion_tokens", 0) or 0
         except aiohttp.ClientError as exc:
-            answer = f"[OLLAMA HTTP ERROR] {exc}"
+            answer = f"[LLAMACPP HTTP ERROR] {exc}"
         except Exception as exc:
-            answer = f"[OLLAMA ERROR] {exc}"
+            answer = f"[LLAMACPP ERROR] {exc}"
 
         query_time = time.time() - query_start
-
         progress_counter["prompt_tokens"] += prompt_tokens
         progress_counter["gen_tokens"] += gen_tokens
-        progress_counter["prompt_eval_duration_s"] += prompt_eval_duration_s
-        progress_counter["eval_duration_s"] += eval_duration_s
-
-        gen_rate = gen_tokens / eval_duration_s if eval_duration_s > 0 else 0.0
-        print(
-            f"    Query #{idx+1} tokens — prompt: {prompt_tokens}, gen: {gen_tokens}  "
-            f"({gen_rate:.1f} tok/s gen)",
-            flush=True,
-        )
-
         progress_counter["done"] += 1
         done = progress_counter["done"]
         elapsed = time.time() - start_time
@@ -170,63 +133,57 @@ async def process_single_query(session, query, retriever, sem, idx, total, progr
 
         print(
             f"  [{done:>{len(str(total))}}/{total}]  "
-            f"Query #{idx+1} answered in {query_time:.1f}s  Rate: {rate:.2f} s/q |  "
-            f"Total time elapsed: {elapsed:.1f}s  ETA: {remaining:.1f}s",
+            f"Query #{idx + 1} done in {query_time:.1f}s  "
+            f"prompt={prompt_tokens} gen={gen_tokens}  "
+            f"Rate: {rate:.2f} s/q  ETA: {remaining:.1f}s",
             flush=True,
         )
 
-        print(requests.get("http://127.0.0.1:11434/api/ps").json(), flush=True)
-
-    return {"query": query, "answer": answer, "contexts": retrieved_docs}
-
-async def run_rag_pipeline_async(queries):
-    retriever = _get_retriever()
-    sem = asyncio.Semaphore(OLLAMA_RAG_MODEL_CONCURRENCY)
-
-    start_time = time.time()
-    total_queries = len(queries)
-    progress_counter = {
-        "done": 0,
-        "prompt_tokens": 0,
-        "gen_tokens": 0,
-        "prompt_eval_duration_s": 0.0,
-        "eval_duration_s": 0.0,
+    return {
+        "query": query,
+        "answer": answer,
+        "contexts": contexts,
+        "retrieval_scores": retrieval_scores,
+        "gen_logprobs": gen_logprobs,
+        "variant": "rag",
     }
 
-    print(f"\n{'='*80}")
-    print(f"Starting batch processing: {total_queries} queries with batch_size={OLLAMA_RAG_MODEL_CONCURRENCY}")
+
+async def run_rag_pipeline_async(queries):
+    _get_vectorstore()  # warm before fan-out so all tasks share one instance
+    sem = asyncio.Semaphore(LLAMACPP_RAG_CONCURRENCY)
+    start_time = time.time()
+    total_queries = len(queries)
+    progress_counter = {"done": 0, "prompt_tokens": 0, "gen_tokens": 0}
+
+    print(f"\n{'=' * 80}")
+    print(
+        f"Starting RAG batch: {total_queries} queries "
+        f"(concurrency={LLAMACPP_RAG_CONCURRENCY})"
+    )
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*80}\n", flush=True)
+    print(f"{'=' * 80}\n", flush=True)
 
     async with aiohttp.ClientSession() as session:
         tasks = [
-            process_single_query(session, q, retriever, sem, i, total_queries, progress_counter, start_time)
+            process_single_query(
+                session, q, sem, i, total_queries, progress_counter, start_time
+            )
             for i, q in enumerate(queries)
-            ]
+        ]
         results = await asyncio.gather(*tasks)
 
     total_time = time.time() - start_time
-
     prompt_tokens = progress_counter["prompt_tokens"]
     gen_tokens = progress_counter["gen_tokens"]
-    total_tokens = prompt_tokens + gen_tokens
-    prompt_eval_s = progress_counter["prompt_eval_duration_s"]
-    eval_s = progress_counter["eval_duration_s"]
-
-    # Per-model rates (sum of model-time, ignores concurrency overlap)
-    model_prompt_rate = prompt_tokens / prompt_eval_s if prompt_eval_s > 0 else 0.0
-    model_gen_rate = gen_tokens / eval_s if eval_s > 0 else 0.0
-    # Wall-clock throughput (reflects concurrency benefit)
     wall_gen_rate = gen_tokens / total_time if total_time > 0 else 0.0
-    wall_total_rate = total_tokens / total_time if total_time > 0 else 0.0
 
-    print(f"{'='*80}")
-    print(f"Processing completed!")
-    print(f"Total time: {total_time:.1f}s ({total_time/60:.1f}m)")
-    print(f"Total queries: {total_queries}")
-    print(f"Tokens — prompt: {prompt_tokens}, generated: {gen_tokens}, total: {total_tokens}")
-    print(f"Per-model rate (single-stream): prompt {model_prompt_rate:.1f} tok/s | gen {model_gen_rate:.1f} tok/s")
-    print(f"Wall-clock throughput (with concurrency): gen {wall_gen_rate:.1f} tok/s | total {wall_total_rate:.1f} tok/s")
-    print(f"{'='*80}\n", flush=True)
+    print(f"{'=' * 80}")
+    print(f"Done — total: {total_time:.1f}s ({total_time / 60:.1f}m)")
+    print(
+        f"Tokens — prompt: {prompt_tokens}, gen: {gen_tokens}  "
+        f"({wall_gen_rate:.1f} tok/s wall-clock gen)"
+    )
+    print(f"{'=' * 80}\n", flush=True)
 
     return results
