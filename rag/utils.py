@@ -7,6 +7,7 @@ import aiohttp
 from rag.llm_config import (
     LLAMACPP_GEN_BASE_URL,
     LLAMACPP_RAG_CONCURRENCY,
+    LLAMACPP_RAG_ENABLE_THINKING,
     LLAMACPP_RAG_MAX_TOKENS,
     LLAMACPP_RAG_MODEL,
     LLAMACPP_RAG_TEMPERATURE,
@@ -59,7 +60,7 @@ def _retrieve(vectorstore, query, k=RAG_K):
     return contexts, scores
 
 
-async def _generate(session, messages):
+async def _generate(session, messages, enable_thinking=LLAMACPP_RAG_ENABLE_THINKING):
     payload = {
         "model": LLAMACPP_RAG_MODEL,
         "messages": messages,
@@ -69,6 +70,7 @@ async def _generate(session, messages):
         "logprobs": True,
         "top_logprobs": LLAMACPP_RAG_TOP_LOGPROBS,
         "stream": False,
+        "chat_template_kwargs": {"enable_thinking": enable_thinking},
     }
     answer = ""
     gen_logprobs = []

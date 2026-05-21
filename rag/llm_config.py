@@ -3,7 +3,14 @@ import os
 LLAMACPP_GEN_BASE_URL = os.getenv("LLAMACPP_GEN_BASE_URL", "http://localhost:8080/v1")
 LLAMACPP_RAG_MODEL = os.getenv(
     "LLAMACPP_RAG_MODEL",
-    "unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL",
+    "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
+)
+
+# Qwen3-family chat template emits <think>…</think> blocks by default; we
+# disable thinking on the baseline so gen_logprobs reflect only the answer.
+# Step 4 (self-correction) will flip this on for the rag_sc regen.
+LLAMACPP_RAG_ENABLE_THINKING = (
+    os.getenv("LLAMACPP_RAG_ENABLE_THINKING", "false").lower() == "true"
 )
 
 LLAMACPP_RAG_TEMPERATURE = float(os.getenv("LLAMACPP_RAG_TEMPERATURE", "0.1"))
