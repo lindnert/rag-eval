@@ -44,13 +44,19 @@ export HF_HOME="${WORKDIR}/.hf_cache"
 export LLAMA_MODELS_DIR="${WORKDIR}/.llamacpp_models"
 mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
 
-GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-E2B-it-GGUF}"
-GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-E2B-it-UD-Q4_K_XL.gguf}"
+GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/Qwen3.5-4B-GGUF}"
+GEN_FILE="${LLAMACPP_GEN_FILE:-Qwen3.5-4B-UD-Q4_K_XL.gguf}"
 
-echo "Downloading gen GGUF (cached in ${HF_HOME})..."
+# Family-distinct from the gemma judge in evaluation/, avoids self-reference bias.
+# hf download skips re-fetch if --local-dir already contains the file.
+echo "Downloading gen GGUF (cached in ${LLAMA_MODELS_DIR}/gen)..."
 hf download "${GEN_REPO}" "${GEN_FILE}" --local-dir "${LLAMA_MODELS_DIR}/gen"
 GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
 echo "Gen GGUF: ${GEN_PATH}"
+
+# Tell rag/llm_config.py which model identifier to send in /v1/chat/completions.
+# (llama-server reports this string under /v1/models for the loaded model.)
+export LLAMACPP_RAG_MODEL="${LLAMACPP_RAG_MODEL:-unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL}"
 
 # Embedding model is pulled by llama-server via -hf (cached in HF_HOME);
 # must match what built the FAISS index in slurm/build_faiss_index.sh.
