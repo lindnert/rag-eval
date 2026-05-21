@@ -1,25 +1,25 @@
+# Legacy ragas eval using the pre-collections API (ragas.evaluate + Dataset).
+# Kept for metrics that do not yet exist in ragas.metrics.collections,
+# notably FaithfulnessWithHHEM. Not imported by the active pipeline.
 import asyncio
 import contextvars
 import os
 from typing import cast
 
-from evaluation.utils import (
-    _prompt_to_text,
-    _strip_code_fences,
-    print_gpu_diagnostics as _print_gpu_diagnostics,
-)
-from ragas.metrics.collections import (
-    Faithfulness,
-    AnswerRelevancy,
-    ContextRelevance,
-)
-from ragas.llms import LangchainLLMWrapper
-from ragas.embeddings.base import embedding_factory, BaseRagasEmbedding
-from openai import AsyncOpenAI
-from langchain_openai import ChatOpenAI
+
+from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics as _print_gpu_diagnostics
+from ragas import evaluate
+from ragas.run_config import RunConfig
+from ragas.dataset_schema import EvaluationResult
+from ragas.metrics._faithfulness import Faithfulness
+from ragas.metrics._answer_relevance import AnswerRelevancy
+from datasets import Dataset
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.embeddings import Embeddings
 from langchain_core.outputs import LLMResult, Generation
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import SecretStr
+from ragas.llms import LangchainLLMWrapper
 
 from evaluation.eval_config_llamacpp import (
     LLAMACPP_EVAL_MODEL,
@@ -34,12 +34,13 @@ from evaluation.eval_config_llamacpp import (
     JSON_SYSTEM_PROMPT,
 )
 
+RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
+
 print(f"[ragas_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
 RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "6"))  # match gen server slot count
 print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
-
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "_current_sample_idx", default=None
 )
@@ -67,22 +68,14 @@ def _build_base_llm() -> ChatOpenAI:
     )
 
 
-def _build_embeddings():
+def _build_embeddings() -> Embeddings:
     # Native llama-server on LLAMACPP_EMB_BASE_URL (started in run_eval.sh
     # with --parallel 1, so n_seq_max=1 and n_ctx is honored exactly).
-    # Collections metrics require the modern BaseRagasEmbedding interface,
-    # which embedding_factory produces from an AsyncOpenAI client.
-    client = AsyncOpenAI(
-        api_key="sk-no-key-required",
+    return OpenAIEmbeddings(
+        model=LLAMACPP_EVAL_EMBEDDINGS_MODEL,
         base_url=LLAMACPP_EMB_BASE_URL,
-    )
-    return cast(
-        BaseRagasEmbedding,
-        embedding_factory(
-            "openai",
-            model=LLAMACPP_EVAL_EMBEDDINGS_MODEL,
-            client=client,
-        ),
+        api_key=SecretStr("sk-no-key-required"),
+        check_embedding_ctx_length=False,
     )
 
 
@@ -167,55 +160,44 @@ class RagasJSONWrapper:
         return LLMResult(generations=[[Generation(text=t)] for t in texts])
 
 
-def _score_value(result):
-    # Collections metrics return a MetricResult with .value; be defensive in
-    # case a numeric is returned directly.
-    val = getattr(result, "value", result)
-    try:
-        return float(val) if val is not None and val == val else None
-    except (TypeError, ValueError):
-        return None
+def run_ragas(sample):
+    raise_exceptions = EVAL_DEBUG_LLM
 
+    dataset = Dataset.from_dict({
+        "question": [sample["query"]],
+        "answer": [sample["answer"]],
+        "contexts": [sample["contexts"]],
+    })
 
-async def _score_one(sample: dict) -> dict:
     ragas_llm = LangchainLLMWrapper(RagasJSONWrapper(_build_base_llm()))
     embeddings = _build_embeddings()
 
-    faithfulness = Faithfulness(llm=ragas_llm)
-    answer_relevancy = AnswerRelevancy(llm=ragas_llm, embeddings=embeddings)
-    context_relevance = ContextRelevance(llm=ragas_llm)
-
-    user_input = sample["query"]
-    response = sample["answer"]
-    retrieved_contexts = sample["contexts"]
-
     try:
-        faith_res, relev_res, ctx_res = await asyncio.gather(
-            faithfulness.ascore(
-                user_input=user_input,
-                response=response,
-                retrieved_contexts=retrieved_contexts,
-            ),
-            answer_relevancy.ascore(
-                user_input=user_input,
-                response=response,
-                retrieved_contexts=retrieved_contexts,
-            ),
-            context_relevance.ascore(
-                user_input=user_input,
-                retrieved_contexts=retrieved_contexts,
+        result = cast(
+            EvaluationResult,
+            evaluate(
+                dataset,
+                llm=ragas_llm,
+                embeddings=embeddings,
+                metrics=[Faithfulness(), AnswerRelevancy()],
+                return_executor=False,
+                raise_exceptions=raise_exceptions,
+                run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=3, max_wait=60),
             ),
         )
+
+        faith = result["faithfulness"][0]
+        relev = result["answer_relevancy"][0]
         return {
-            "ragas_faithfulness": _score_value(faith_res),
-            "ragas_answer_relevancy": _score_value(relev_res),
-            "ragas_context_relevance": _score_value(ctx_res),
+            "ragas_faithfulness": faith if faith == faith else None,
+            "ragas_answer_relevancy": relev if relev == relev else None,
         }
+
     except Exception as e:
         import traceback
         sample_idx = _current_sample_idx.get()
         print(
-            f"[ragas_eval] _score_one FAILED for sample={sample_idx}: "
+            f"[ragas_eval] run_ragas FAILED for sample={sample_idx}: "
             f"{type(e).__name__}: {e}",
             flush=True,
         )
@@ -223,22 +205,17 @@ async def _score_one(sample: dict) -> dict:
         return {
             "ragas_faithfulness": None,
             "ragas_answer_relevancy": None,
-            "ragas_context_relevance": None,
             "ragas_error": f"{type(e).__name__}: {e}",
         }
-
-
-def run_ragas(sample):
-    return asyncio.run(_score_one(sample))
 
 
 async def arun_ragas(sample, semaphore: asyncio.Semaphore | None = None, idx: int | None = None):
     if idx is not None:
         _current_sample_idx.set(idx)
     if semaphore is None:
-        return await _score_one(sample)
+        return await asyncio.to_thread(run_ragas, sample)
     async with semaphore:
-        return await _score_one(sample)
+        return await asyncio.to_thread(run_ragas, sample)
 
 
 async def arun_ragas_batch(samples, concurrency: int | None = None, on_done=None):

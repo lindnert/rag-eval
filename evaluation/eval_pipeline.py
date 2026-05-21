@@ -36,8 +36,9 @@ def evaluate_results(results, partial_path=None):
         preview = sample['query'][:60]
         faith = scores.get("ragas_faithfulness")
         relev = scores.get("ragas_answer_relevancy")
+        ctx_rel = scores.get("ragas_context_relevance")
         err = scores.get("ragas_error")
-        score_str = f"faith={faith} relev={relev}"
+        score_str = f"faith={faith} relev={relev} ctx_rel={ctx_rel}"
         if err:
             score_str += f" ERROR={err}"
         print(
