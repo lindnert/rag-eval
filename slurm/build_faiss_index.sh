@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=build-faiss
+#SBATCH --job-name=faiss
 #SBATCH --comment="Rebuild FAISS index with llama-server embeddings"
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
@@ -68,6 +68,7 @@ stdbuf -oL -eL "${LLAMACPP_SERVER}" \
   --hf-file multilingual-e5-base-q4_k_m.gguf \
   --host "${EMB_HOST}" --port "${EMB_PORT}" \
   -c 2048 \
+  -b 1024 -ub 1024 \
   --n-gpu-layers -1 \
   --parallel 1 \
   --embeddings --pooling mean \
@@ -103,7 +104,7 @@ if [ -d "${FAISS_INDEX_DIR}" ]; then
   exit 1
 fi
 
-python -c "from preprocessing.utils import build_retriever; build_retriever()"
+python -c "from retrieval import build_retriever; build_retriever()"
 
 echo "==== Done at $(date) ===="
 ls -lh "${FAISS_INDEX_DIR}"
