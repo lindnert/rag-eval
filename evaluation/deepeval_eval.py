@@ -156,6 +156,16 @@ def _build_metrics(model):
     )
 
 
+_NO_REASON_FALLBACK = "no reasoning provided by deepeval"
+
+
+def _metric_reason(metric) -> str:
+    reason = getattr(metric, "reason", None)
+    if reason is None or (isinstance(reason, str) and not reason.strip()):
+        return _NO_REASON_FALLBACK
+    return reason
+
+
 def run_deepeval(sample):
     test_case = LLMTestCase(
         input=sample["query"],
@@ -170,14 +180,20 @@ def run_deepeval(sample):
         contextual_relevance.measure(test_case)
         return {
             "deepeval_faithfulness": faithfulness.score,
+            "deepeval_faithfulness_reason": _metric_reason(faithfulness),
             "deepeval_relevance": relevance.score,
+            "deepeval_relevance_reason": _metric_reason(relevance),
             "deepeval_contextual_relevance": contextual_relevance.score,
+            "deepeval_contextual_relevance_reason": _metric_reason(contextual_relevance),
         }
     except Exception as e:
         return {
             "deepeval_faithfulness": None,
+            "deepeval_faithfulness_reason": _NO_REASON_FALLBACK,
             "deepeval_relevance": None,
+            "deepeval_relevance_reason": _NO_REASON_FALLBACK,
             "deepeval_contextual_relevance": None,
+            "deepeval_contextual_relevance_reason": _NO_REASON_FALLBACK,
             "deepeval_error": f"{type(e).__name__}: {e}",
         }
 
@@ -202,8 +218,11 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
             )
             return {
                 "deepeval_faithfulness": faithfulness.score,
+                "deepeval_faithfulness_reason": _metric_reason(faithfulness),
                 "deepeval_relevance": relevance.score,
+                "deepeval_relevance_reason": _metric_reason(relevance),
                 "deepeval_contextual_relevance": contextual_relevance.score,
+                "deepeval_contextual_relevance_reason": _metric_reason(contextual_relevance),
             }
         except Exception as e:
             print(
@@ -213,8 +232,11 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
             )
             return {
                 "deepeval_faithfulness": None,
+                "deepeval_faithfulness_reason": _NO_REASON_FALLBACK,
                 "deepeval_relevance": None,
+                "deepeval_relevance_reason": _NO_REASON_FALLBACK,
                 "deepeval_contextual_relevance": None,
+                "deepeval_contextual_relevance_reason": _NO_REASON_FALLBACK,
                 "deepeval_error": f"{type(e).__name__}: {e}",
             }
 
