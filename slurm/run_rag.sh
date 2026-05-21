@@ -27,18 +27,13 @@ echo "Start: $(date)"
 nvidia-smi || true
 
 # ---------------------------------------------------------------------------
-# 1. Python venv + dependencies
+# 1. Activate pre-built venv (see slurm/build_venv.sh)
 # ---------------------------------------------------------------------------
 if [ ! -d "${WORKDIR}/.venv" ]; then
-  "${PYTHON_BIN}" -m venv "${WORKDIR}/.venv"
+  echo "ERROR: venv not found at ${WORKDIR}/.venv — run slurm/build_venv.sh on the login node" >&2
+  exit 1
 fi
 source "${WORKDIR}/.venv/bin/activate"
-
-sed -i '/pywin32/d' requirements.txt
-sed -i 's/==/>=/g' requirements.txt
-
-pip install --upgrade pip
-pip install -r requirements.txt
 
 # ---------------------------------------------------------------------------
 # 2. Install Ollama into $HOME

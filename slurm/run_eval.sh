@@ -39,31 +39,13 @@ echo "Start: $(date)"
 nvidia-smi || true
 
 # ---------------------------------------------------------------------------
-# 1. Python venv + dependencies
+# 1. Activate pre-built venv (see slurm/build_venv.sh)
 # ---------------------------------------------------------------------------
 if [ ! -d "${WORKDIR}/.venv" ]; then
-  "${PYTHON_BIN}" -m venv "${WORKDIR}/.venv"
+  echo "ERROR: venv not found at ${WORKDIR}/.venv — run slurm/build_venv.sh on the login node" >&2
+  exit 1
 fi
 source "${WORKDIR}/.venv/bin/activate"
-
-sed -i '/pywin32/d' requirements.txt
-sed -i 's/==/>=/g' requirements.txt
-
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# llama-cpp-python with prebuilt CUDA wheels (abetlen wheel index).
-# Node driver is CUDA 13 — forward-compatible with cu124 wheels.
-# (cu125 does NOT exist on the abetlen index; with `--upgrade` + `>=` pip
-#  silently fell back to the CPU wheel on PyPI, leaving GPU at 0%.)
-# Pin EXACTLY and use --index-url so PyPI is only fallback for non-llama deps.
-# Already-installed wheels are a pip no-op ("Requirement already satisfied").
-LLAMA_CPP_PY_VERSION="${LLAMA_CPP_PY_VERSION:-0.3.23}"
-pip install --no-cache-dir \
-  --index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 \
-  --extra-index-url https://pypi.org/simple \
-  "llama-cpp-python==${LLAMA_CPP_PY_VERSION}"
-pip install --upgrade huggingface_hub
 
 # ---------------------------------------------------------------------------
 # 2. Download GGUFs from Hugging Face
