@@ -9,7 +9,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import SecretStr
 from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
-from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
+from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric, ContextualRelevancyMetric
 
 from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics
 from evaluation.eval_config_llamacpp import (
@@ -152,6 +152,7 @@ def _build_metrics(model):
     return (
         FaithfulnessMetric(model=model, async_mode=True),
         AnswerRelevancyMetric(model=model, async_mode=True),
+        ContextualRelevancyMetric(model=model, async_mode=True),
     )
 
 
@@ -162,18 +163,21 @@ def run_deepeval(sample):
         retrieval_context=sample["contexts"],
     )
     eval_model = LlamaCppWrapper(_build_llm())
-    faithfulness, relevance = _build_metrics(eval_model)
+    faithfulness, relevance, contextual_relevance = _build_metrics(eval_model)
     try:
         faithfulness.measure(test_case)
         relevance.measure(test_case)
+        contextual_relevance.measure(test_case)
         return {
             "deepeval_faithfulness": faithfulness.score,
             "deepeval_relevance": relevance.score,
+            "deepeval_contextual_relevance": contextual_relevance.score,
         }
     except Exception as e:
         return {
             "deepeval_faithfulness": None,
             "deepeval_relevance": None,
+            "deepeval_contextual_relevance": None,
             "deepeval_error": f"{type(e).__name__}: {e}",
         }
 
@@ -189,15 +193,17 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
             retrieval_context=sample["contexts"],
         )
         eval_model = LlamaCppWrapper(_build_llm())
-        faithfulness, relevance = _build_metrics(eval_model)
+        faithfulness, relevance, contextual_relevance = _build_metrics(eval_model)
         try:
             await asyncio.gather(
                 faithfulness.a_measure(test_case),
                 relevance.a_measure(test_case),
+                contextual_relevance.a_measure(test_case),
             )
             return {
                 "deepeval_faithfulness": faithfulness.score,
                 "deepeval_relevance": relevance.score,
+                "deepeval_contextual_relevance": contextual_relevance.score,
             }
         except Exception as e:
             print(
@@ -208,6 +214,7 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
             return {
                 "deepeval_faithfulness": None,
                 "deepeval_relevance": None,
+                "deepeval_contextual_relevance": None,
                 "deepeval_error": f"{type(e).__name__}: {e}",
             }
 
