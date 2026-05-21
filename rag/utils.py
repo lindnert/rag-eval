@@ -120,7 +120,7 @@ async def process_single_query(
             )
         except Exception as exc:
             return {
-                "query_id": query_id,
+                "id": query_id,
                 "query": query,
                 "variant": variant,
                 "answer": f"[RETRIEVAL ERROR] {exc}",
@@ -159,7 +159,7 @@ async def process_single_query(
         )
 
     return {
-        "query_id": query_id,
+        "id": query_id,
         "query": query,
         "variant": variant,
         "answer": answer,
@@ -169,16 +169,19 @@ async def process_single_query(
     }
 
 
-async def run_rag_pipeline_async(queries):
+async def run_rag_pipeline_async(indexed_queries):
+    # indexed_queries: iterable of (query_id, query_text). The caller is
+    # responsible for handing out *global* ids so they survive shard slicing.
+    indexed_queries = list(indexed_queries)
     _get_vectorstore()  # warm before fan-out so all tasks share one instance
     sem = asyncio.Semaphore(LLAMACPP_RAG_CONCURRENCY)
     start_time = time.time()
-    total_tasks = len(queries) * len(VARIANTS)
+    total_tasks = len(indexed_queries) * len(VARIANTS)
     progress_counter = {"done": 0, "prompt_tokens": 0, "gen_tokens": 0}
 
     print(f"\n{'=' * 80}")
     print(
-        f"Starting RAG batch: {len(queries)} queries × {len(VARIANTS)} variants "
+        f"Starting RAG batch: {len(indexed_queries)} queries × {len(VARIANTS)} variants "
         f"= {total_tasks} tasks  (concurrency={LLAMACPP_RAG_CONCURRENCY})"
     )
     print(f"Variants: {VARIANTS}")
@@ -188,9 +191,9 @@ async def run_rag_pipeline_async(queries):
     async with aiohttp.ClientSession() as session:
         tasks = [
             process_single_query(
-                session, q, i, v, sem, total_tasks, progress_counter, start_time
+                session, q, qid, v, sem, total_tasks, progress_counter, start_time
             )
-            for i, q in enumerate(queries)
+            for qid, q in indexed_queries
             for v in VARIANTS
         ]
         results = await asyncio.gather(*tasks)
