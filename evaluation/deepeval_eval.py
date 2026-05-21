@@ -102,30 +102,54 @@ class LlamaCppWrapper(DeepEvalBaseLLM):
 
     def generate(self, prompt, schema=None, **kwargs):
         prompt_str = _prompt_to_text(prompt)
-        try:
-            response = self.llm.invoke(self._messages(prompt)).content or ""
-        except Exception as e:
-            _log_call(prompt_str, schema, error=e)
-            raise
-        response = _strip_code_fences(response)
-        _log_call(prompt_str, schema, response_text=response)
-        if schema is not None:
-            return _coerce_to_schema(response, schema)
-        return response
+        last_err: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                response = self.llm.invoke(self._messages(prompt)).content or ""
+            except Exception as e:
+                _log_call(prompt_str, schema, error=e)
+                raise
+            response = _strip_code_fences(response)
+            _log_call(prompt_str, schema, response_text=response)
+            if schema is None:
+                return response
+            try:
+                return _coerce_to_schema(response, schema)
+            except ValueError as e:
+                last_err = e
+                print(
+                    f"[deepeval_eval] schema validation failed (attempt {attempt}/3) "
+                    f"for {getattr(schema, '__name__', '?')}: {e}",
+                    flush=True,
+                )
+        assert last_err is not None
+        raise last_err
 
     async def a_generate(self, prompt, schema=None, **kwargs):
         prompt_str = _prompt_to_text(prompt)
-        try:
-            result = await self.llm.ainvoke(self._messages(prompt))
-            response = (result.content if result is not None else "") or ""
-        except Exception as e:
-            _log_call(prompt_str, schema, error=e)
-            raise
-        response = _strip_code_fences(response)
-        _log_call(prompt_str, schema, response_text=response)
-        if schema is not None:
-            return _coerce_to_schema(response, schema)
-        return response
+        last_err: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                result = await self.llm.ainvoke(self._messages(prompt))
+                response = (result.content if result is not None else "") or ""
+            except Exception as e:
+                _log_call(prompt_str, schema, error=e)
+                raise
+            response = _strip_code_fences(response)
+            _log_call(prompt_str, schema, response_text=response)
+            if schema is None:
+                return response
+            try:
+                return _coerce_to_schema(response, schema)
+            except ValueError as e:
+                last_err = e
+                print(
+                    f"[deepeval_eval] schema validation failed (attempt {attempt}/3) "
+                    f"for {getattr(schema, '__name__', '?')}: {e}",
+                    flush=True,
+                )
+        assert last_err is not None
+        raise last_err
 
     def get_model_name(self):
         return f"llamacpp-{LLAMACPP_EVAL_MODEL}"
@@ -210,35 +234,35 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
         )
         eval_model = LlamaCppWrapper(_build_llm())
         faithfulness, relevance, contextual_relevance = _build_metrics(eval_model)
-        try:
-            await asyncio.gather(
-                faithfulness.a_measure(test_case),
-                relevance.a_measure(test_case),
-                contextual_relevance.a_measure(test_case),
-            )
-            return {
-                "deepeval_faithfulness": faithfulness.score,
-                "deepeval_faithfulness_reason": _metric_reason(faithfulness),
-                "deepeval_relevance": relevance.score,
-                "deepeval_relevance_reason": _metric_reason(relevance),
-                "deepeval_contextual_relevance": contextual_relevance.score,
-                "deepeval_contextual_relevance_reason": _metric_reason(contextual_relevance),
-            }
-        except Exception as e:
-            print(
-                f"[deepeval_eval] arun_deepeval FAILED sample={idx}: "
-                f"{type(e).__name__}: {e}",
-                flush=True,
-            )
-            return {
-                "deepeval_faithfulness": None,
-                "deepeval_faithfulness_reason": _NO_REASON_FALLBACK,
-                "deepeval_relevance": None,
-                "deepeval_relevance_reason": _NO_REASON_FALLBACK,
-                "deepeval_contextual_relevance": None,
-                "deepeval_contextual_relevance_reason": _NO_REASON_FALLBACK,
-                "deepeval_error": f"{type(e).__name__}: {e}",
-            }
+        outcomes = await asyncio.gather(
+            faithfulness.a_measure(test_case),
+            relevance.a_measure(test_case),
+            contextual_relevance.a_measure(test_case),
+            return_exceptions=True,
+        )
+
+        def _pick(metric, outcome, score_key, reason_key):
+            if isinstance(outcome, Exception):
+                print(
+                    f"[deepeval_eval] {score_key} FAILED sample={idx}: "
+                    f"{type(outcome).__name__}: {outcome}",
+                    flush=True,
+                )
+                return {
+                    score_key: None,
+                    reason_key: _NO_REASON_FALLBACK,
+                    f"{score_key}_error": f"{type(outcome).__name__}: {outcome}",
+                }
+            return {score_key: metric.score, reason_key: _metric_reason(metric)}
+
+        result: dict = {}
+        result.update(_pick(faithfulness, outcomes[0],
+                            "deepeval_faithfulness", "deepeval_faithfulness_reason"))
+        result.update(_pick(relevance, outcomes[1],
+                            "deepeval_relevance", "deepeval_relevance_reason"))
+        result.update(_pick(contextual_relevance, outcomes[2],
+                            "deepeval_contextual_relevance", "deepeval_contextual_relevance_reason"))
+        return result
 
     if semaphore is None:
         return await _go()

@@ -77,10 +77,11 @@ def evaluate_results(results, partial_path=None):
         preview = sample['query'][:60]
         faith = scores.get("deepeval_faithfulness")
         relev = scores.get("deepeval_relevance")
-        err = scores.get("deepeval_error")
-        score_str = f"faith={faith} relev={relev}"
-        if err:
-            score_str += f" ERROR={err}"
+        ctx_rel = scores.get("deepeval_contextual_relevance")
+        score_str = f"faith={faith} relev={relev} ctx_rel={ctx_rel}"
+        errs = {k: v for k, v in scores.items() if k.endswith("_error")}
+        if errs:
+            score_str += " ERRORS=" + "; ".join(f"{k}={v}" for k, v in errs.items())
         print(
             f"  [deepeval {n}/{len(results)}] sample={idx} | {score_str} "
             f"| {preview}... | Elapsed: {elapsed:.1f}s | ETA: {remaining:.1f}s",
