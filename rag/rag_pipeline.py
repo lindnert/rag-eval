@@ -81,9 +81,6 @@ if __name__ == "__main__":
     results = asyncio.run(run_rag_pipeline_async(queries))
     pipeline_time = time.time() - pipeline_start
 
-    for i, r in enumerate(results):
-        r["id"] = i
-
     print(f"\n{'='*80}")
     print(f"Printing results...")
     print(f"{'='*80}\n", flush=True)

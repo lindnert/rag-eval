@@ -16,6 +16,9 @@ from rag.llm_config import (
 )
 from retrieval import QUERY_PREFIX, build_vectorstore
 
+VARIANTS = ("no_rag", "rag", "rag_sc")
+_RAG_VARIANTS = {"rag", "rag_sc"}
+
 _vectorstore = None
 
 
@@ -26,22 +29,23 @@ def _get_vectorstore():
     return _vectorstore
 
 
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_RAG = (
     "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
     "Antworte kurz und prägnant (max 3-4 Absätze). Verwende nur Informationen aus dem Kontext."
 )
 
+SYSTEM_PROMPT_NO_RAG = (
+    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
+    "Antworte kurz und prägnant (max 3-4 Absätze)."
+)
+
 
 def build_user_prompt(query, contexts):
-    lines = [f"Frage: {query}"]
-    if contexts:
-        lines.append("")
-        lines.append("Kontextinformationen:")
-        for i, c in enumerate(contexts, start=1):
-            lines.append(f"{i}. {c}")
-    else:
-        lines.append("")
-        lines.append("Hinweis: Kein Kontext verfügbar.")
+    if not contexts:
+        return f"Frage: {query}"
+    lines = [f"Frage: {query}", "", "Kontextinformationen:"]
+    for i, c in enumerate(contexts, start=1):
+        lines.append(f"{i}. {c}")
     return "\n".join(lines)
 
 
@@ -55,74 +59,87 @@ def _retrieve(vectorstore, query, k=RAG_K):
     return contexts, scores
 
 
+async def _generate(session, messages):
+    payload = {
+        "model": LLAMACPP_RAG_MODEL,
+        "messages": messages,
+        "temperature": LLAMACPP_RAG_TEMPERATURE,
+        "top_p": LLAMACPP_RAG_TOP_P,
+        "max_tokens": LLAMACPP_RAG_MAX_TOKENS,
+        "logprobs": True,
+        "top_logprobs": LLAMACPP_RAG_TOP_LOGPROBS,
+        "stream": False,
+    }
+    answer = ""
+    gen_logprobs = []
+    prompt_tokens = 0
+    gen_tokens = 0
+    try:
+        async with session.post(
+            f"{LLAMACPP_GEN_BASE_URL}/chat/completions",
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=600),
+        ) as response:
+            parsed = await response.json()
+            if "error" in parsed:
+                answer = f"[LLAMACPP ERROR] {parsed['error']}"
+            else:
+                choice = parsed["choices"][0]
+                answer = choice["message"]["content"]
+                lp = choice.get("logprobs") or {}
+                content = lp.get("content") or []
+                gen_logprobs = [
+                    tok["logprob"]
+                    for tok in content
+                    if tok.get("logprob") is not None
+                ]
+                usage = parsed.get("usage") or {}
+                prompt_tokens = usage.get("prompt_tokens", 0) or 0
+                gen_tokens = usage.get("completion_tokens", 0) or 0
+    except aiohttp.ClientError as exc:
+        answer = f"[LLAMACPP HTTP ERROR] {exc}"
+    except Exception as exc:
+        answer = f"[LLAMACPP ERROR] {exc}"
+    return answer, gen_logprobs, prompt_tokens, gen_tokens
+
+
 async def process_single_query(
-    session, query, sem, idx, total, progress_counter, start_time
+    session, query, query_id, variant, sem, total, progress_counter, start_time
 ):
     loop = asyncio.get_event_loop()
-    vectorstore = _get_vectorstore()
+    contexts = []
+    retrieval_scores = []
 
-    try:
-        contexts, retrieval_scores = await loop.run_in_executor(
-            None, lambda: _retrieve(vectorstore, query)
-        )
-    except Exception as exc:
-        return {
-            "query": query,
-            "answer": f"[RETRIEVAL ERROR] {exc}",
-            "contexts": [],
-            "retrieval_scores": [],
-            "gen_logprobs": [],
-            "variant": "rag",
-        }
+    if variant in _RAG_VARIANTS:
+        vectorstore = _get_vectorstore()
+        try:
+            contexts, retrieval_scores = await loop.run_in_executor(
+                None, lambda: _retrieve(vectorstore, query)
+            )
+        except Exception as exc:
+            return {
+                "query_id": query_id,
+                "query": query,
+                "variant": variant,
+                "answer": f"[RETRIEVAL ERROR] {exc}",
+                "contexts": [],
+                "retrieval_scores": [],
+                "gen_logprobs": [],
+            }
+
+    system_prompt = SYSTEM_PROMPT_RAG if variant in _RAG_VARIANTS else SYSTEM_PROMPT_NO_RAG
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": build_user_prompt(query, contexts)},
+    ]
 
     async with sem:
-        query_start = time.time()
-        payload = {
-            "model": LLAMACPP_RAG_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_user_prompt(query, contexts)},
-            ],
-            "temperature": LLAMACPP_RAG_TEMPERATURE,
-            "top_p": LLAMACPP_RAG_TOP_P,
-            "max_tokens": LLAMACPP_RAG_MAX_TOKENS,
-            "logprobs": True,
-            "top_logprobs": LLAMACPP_RAG_TOP_LOGPROBS,
-            "stream": False,
-        }
+        task_start = time.time()
+        answer, gen_logprobs, prompt_tokens, gen_tokens = await _generate(
+            session, messages
+        )
+        task_time = time.time() - task_start
 
-        answer = ""
-        gen_logprobs = []
-        prompt_tokens = 0
-        gen_tokens = 0
-        try:
-            async with session.post(
-                f"{LLAMACPP_GEN_BASE_URL}/chat/completions",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=600),
-            ) as response:
-                parsed = await response.json()
-                if "error" in parsed:
-                    answer = f"[LLAMACPP ERROR] {parsed['error']}"
-                else:
-                    choice = parsed["choices"][0]
-                    answer = choice["message"]["content"]
-                    lp = choice.get("logprobs") or {}
-                    content = lp.get("content") or []
-                    gen_logprobs = [
-                        tok["logprob"]
-                        for tok in content
-                        if tok.get("logprob") is not None
-                    ]
-                    usage = parsed.get("usage") or {}
-                    prompt_tokens = usage.get("prompt_tokens", 0) or 0
-                    gen_tokens = usage.get("completion_tokens", 0) or 0
-        except aiohttp.ClientError as exc:
-            answer = f"[LLAMACPP HTTP ERROR] {exc}"
-        except Exception as exc:
-            answer = f"[LLAMACPP ERROR] {exc}"
-
-        query_time = time.time() - query_start
         progress_counter["prompt_tokens"] += prompt_tokens
         progress_counter["gen_tokens"] += gen_tokens
         progress_counter["done"] += 1
@@ -133,19 +150,20 @@ async def process_single_query(
 
         print(
             f"  [{done:>{len(str(total))}}/{total}]  "
-            f"Query #{idx + 1} done in {query_time:.1f}s  "
+            f"Q#{query_id + 1} [{variant}] done in {task_time:.1f}s  "
             f"prompt={prompt_tokens} gen={gen_tokens}  "
-            f"Rate: {rate:.2f} s/q  ETA: {remaining:.1f}s",
+            f"Rate: {rate:.2f} s/task  ETA: {remaining:.1f}s",
             flush=True,
         )
 
     return {
+        "query_id": query_id,
         "query": query,
+        "variant": variant,
         "answer": answer,
         "contexts": contexts,
         "retrieval_scores": retrieval_scores,
         "gen_logprobs": gen_logprobs,
-        "variant": "rag",
     }
 
 
@@ -153,23 +171,25 @@ async def run_rag_pipeline_async(queries):
     _get_vectorstore()  # warm before fan-out so all tasks share one instance
     sem = asyncio.Semaphore(LLAMACPP_RAG_CONCURRENCY)
     start_time = time.time()
-    total_queries = len(queries)
+    total_tasks = len(queries) * len(VARIANTS)
     progress_counter = {"done": 0, "prompt_tokens": 0, "gen_tokens": 0}
 
     print(f"\n{'=' * 80}")
     print(
-        f"Starting RAG batch: {total_queries} queries "
-        f"(concurrency={LLAMACPP_RAG_CONCURRENCY})"
+        f"Starting RAG batch: {len(queries)} queries × {len(VARIANTS)} variants "
+        f"= {total_tasks} tasks  (concurrency={LLAMACPP_RAG_CONCURRENCY})"
     )
+    print(f"Variants: {VARIANTS}")
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * 80}\n", flush=True)
 
     async with aiohttp.ClientSession() as session:
         tasks = [
             process_single_query(
-                session, q, sem, i, total_queries, progress_counter, start_time
+                session, q, i, v, sem, total_tasks, progress_counter, start_time
             )
             for i, q in enumerate(queries)
+            for v in VARIANTS
         ]
         results = await asyncio.gather(*tasks)
 
