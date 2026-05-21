@@ -15,6 +15,9 @@
 ## Submit with: sbatch slurm/run_eval.sh
 ## Optionally: sbatch --dependency=afterok:<rag_jobid> slurm/run_eval.sh
 ## Optionally override input: RAG_RESULTS_FILE=/path/to/rag_results_YYYYMMDD.json sbatch --export=ALL slurm/run_eval.sh
+## Override array size (= number of shards / nodes):
+##   sbatch --array=0-5 slurm/run_eval.sh   # 6 shards
+##   sbatch --array=0   slurm/run_eval.sh   # single shard (no sharding)
 
 set -euo pipefail
 

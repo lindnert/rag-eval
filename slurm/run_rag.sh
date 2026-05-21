@@ -15,6 +15,9 @@
 #SBATCH --array=0-2
 
 ## Submit with: sbatch slurm/run_rag.sh
+## Override array size (= number of shards / nodes):
+##   sbatch --array=0-5 slurm/run_rag.sh    # 6 shards
+##   sbatch --array=0   slurm/run_rag.sh    # single shard (no sharding)
 
 set -euo pipefail
 
