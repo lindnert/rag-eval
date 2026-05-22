@@ -91,14 +91,18 @@ def _retrieval_correction_triggers(scores):
     return triggers
 
 
+def _logprob_stats(logprobs):
+    """Return (mean, min) of a non-empty logprob list."""
+    return sum(logprobs) / len(logprobs), min(logprobs)
+
+
 def _generation_correction_triggers(logprobs):
     if not logprobs:
         return ["empty_logprobs"]
+    mean_lp, min_lp = _logprob_stats(logprobs)
     triggers = []
-    mean_lp = sum(logprobs) / len(logprobs)
     if mean_lp < RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD:
         triggers.append(f"mean={mean_lp:.3f}<{RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD}")
-    min_lp = min(logprobs)
     if min_lp < RAG_SC_GEN_MIN_LOGPROB_THRESHOLD:
         triggers.append(f"min={min_lp:.3f}<{RAG_SC_GEN_MIN_LOGPROB_THRESHOLD}")
     return triggers
@@ -244,11 +248,14 @@ async def process_single_query(
 
     # --- SC retrieval pass (budget=1) ----------------------------------------
     if variant == "rag_sc":
+        # Insertion order here = JSON field order; front-load human-readable
+        # fields (answer = HyDE draft, triggers) so they're easy to skim.
         sc_metadata = {
+            "answer": None,  # HyDE draft answer (only used to re-embed)
             "retrieval_correction_triggers": _retrieval_correction_triggers(retrieval_scores),
-            "retrieval_retried": False,
+            "retrieval_retried_count": 0,
             "generation_correction_triggers": [],
-            "generation_retried": False,
+            "generation_retried_count": 0,
         }
         if sc_metadata["retrieval_correction_triggers"]:
             hyde_text = await _generate_hyde(session, sem, query)
@@ -257,13 +264,13 @@ async def process_single_query(
                     hyde_ctx, hyde_retrieval_scores = await loop.run_in_executor(
                         None, lambda: _retrieve(vectorstore, hyde_text)
                     )
+                    sc_metadata["answer"] = hyde_text
                     sc_metadata["original_contexts"] = list(contexts)
                     sc_metadata["original_retrieval_scores"] = list(retrieval_scores)
-                    sc_metadata["hyde_answer"] = hyde_text
                     contexts, retrieval_scores = _merge_and_rerank(
                         contexts, retrieval_scores, hyde_ctx, hyde_retrieval_scores
                     )
-                    sc_metadata["retrieval_retried"] = True
+                    sc_metadata["retrieval_retried_count"] += 1
                 except Exception as exc:
                     sc_metadata["retrieval_error"] = str(exc)
 
@@ -285,8 +292,13 @@ async def process_single_query(
                 gen_logprobs
             )
             if sc_metadata["generation_correction_triggers"]:
+                orig_mean, orig_min = (
+                    _logprob_stats(gen_logprobs) if gen_logprobs else (None, None)
+                )
                 sc_metadata["original_answer"] = answer
                 sc_metadata["original_gen_logprobs"] = list(gen_logprobs)
+                sc_metadata["original_mean_logprob"] = orig_mean
+                sc_metadata["original_min_logprob"] = orig_min
                 strict_messages = [
                     {"role": "system", "content": SYSTEM_PROMPT_RAG_STRICT},
                     {"role": "user", "content": build_user_prompt(query, contexts)},
@@ -300,7 +312,12 @@ async def process_single_query(
                 gen_logprobs = regen_lp
                 prompt_tokens += p2
                 gen_tokens += g2
-                sc_metadata["generation_retried"] = True
+                regen_mean, regen_min = (
+                    _logprob_stats(gen_logprobs) if gen_logprobs else (None, None)
+                )
+                sc_metadata["mean_logprob"] = regen_mean
+                sc_metadata["min_logprob"] = regen_min
+                sc_metadata["generation_retried_count"] += 1
 
         task_time = time.time() - task_start
 
@@ -315,8 +332,8 @@ async def process_single_query(
         sc_tag = ""
         if sc_metadata is not None:
             sc_tag = (
-                f" sc(ret={'Y' if sc_metadata['retrieval_retried'] else 'n'},"
-                f" sc(gen={'Y' if sc_metadata['generation_retried'] else 'n'})"
+                f" sc(ret={sc_metadata['retrieval_retried_count']},"
+                f"gen={sc_metadata['generation_retried_count']})"
             )
 
         print(
