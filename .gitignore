@@ -217,3 +217,14 @@ richtlinien/CSV/
 richtlinien/HTML/
 richtlinien/PDF/
 richtlinien/PDF_table/
+
+# Logs
+logs/
+
+# Results
+results/
+
+# Models & HF
+.ollama_models/
+.llamacpp*
+.hf*
