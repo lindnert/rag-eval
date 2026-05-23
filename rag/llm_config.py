@@ -21,6 +21,11 @@ LLAMACPP_RAG_TOP_P = float(os.getenv("LLAMACPP_RAG_TOP_P", "0.95"))
 # which may emit short reasoning before the final answer.
 LLAMACPP_RAG_MAX_TOKENS = int(os.getenv("LLAMACPP_RAG_MAX_TOKENS", "2048"))
 
+# Regen path runs with enable_thinking=True; Qwen3 commonly spends 1k+ tokens
+# reasoning before the final answer, so give the regen a bigger budget than
+# the baseline gen to avoid truncating the visible answer.
+LLAMACPP_RAG_REGEN_MAX_TOKENS = int(os.getenv("LLAMACPP_RAG_REGEN_MAX_TOKENS", "4096"))
+
 # top_logprobs=5 mirrors the OpenAI default; we only actually consume the
 # chosen-token logprob, but keeping the top-k around makes future analysis
 # (e.g. token-level entropy) cheap to add without re-running generation.

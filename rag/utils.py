@@ -11,6 +11,7 @@ from rag.llm_config import (
     LLAMACPP_RAG_ENABLE_THINKING,
     LLAMACPP_RAG_MAX_TOKENS,
     LLAMACPP_RAG_MODEL,
+    LLAMACPP_RAG_REGEN_MAX_TOKENS,
     LLAMACPP_RAG_TEMPERATURE,
     LLAMACPP_RAG_TOP_LOGPROBS,
     LLAMACPP_RAG_TOP_P,
@@ -147,13 +148,15 @@ def _retrieve(vectorstore, query, k=RAG_K):
     return contexts, scores
 
 
-async def _generate(session, messages, enable_thinking=LLAMACPP_RAG_ENABLE_THINKING):
+async def _generate(
+    session, messages, enable_thinking=LLAMACPP_RAG_ENABLE_THINKING, max_tokens=None
+):
     payload = {
         "model": LLAMACPP_RAG_MODEL,
         "messages": messages,
         "temperature": LLAMACPP_RAG_TEMPERATURE,
         "top_p": LLAMACPP_RAG_TOP_P,
-        "max_tokens": LLAMACPP_RAG_MAX_TOKENS,
+        "max_tokens": max_tokens if max_tokens is not None else LLAMACPP_RAG_MAX_TOKENS,
         "logprobs": True,
         "top_logprobs": LLAMACPP_RAG_TOP_LOGPROBS,
         "stream": False,
@@ -248,10 +251,7 @@ async def process_single_query(
 
     # --- SC retrieval pass (budget=1) ----------------------------------------
     if variant == "rag_sc":
-        # Insertion order here = JSON field order; front-load human-readable
-        # fields (answer = HyDE draft, triggers) so they're easy to skim.
         sc_metadata = {
-            "answer": None,  # HyDE draft answer (only used to re-embed)
             "retrieval_correction_triggers": _retrieval_correction_triggers(retrieval_scores),
             "retrieval_retried_count": 0,
             "generation_correction_triggers": [],
@@ -264,7 +264,6 @@ async def process_single_query(
                     hyde_ctx, hyde_retrieval_scores = await loop.run_in_executor(
                         None, lambda: _retrieve(vectorstore, hyde_text)
                     )
-                    sc_metadata["answer"] = hyde_text
                     sc_metadata["original_contexts"] = list(contexts)
                     sc_metadata["original_retrieval_scores"] = list(retrieval_scores)
                     contexts, retrieval_scores = _merge_and_rerank(
@@ -304,10 +303,15 @@ async def process_single_query(
                     {"role": "user", "content": build_user_prompt(query, contexts)},
                 ]
                 # Flip thinking on for the regen — Qwen3's reasoning mode buys
-                # an extra "look before you leap" pass over the context.
+                # an extra "look before you leap" pass over the context. Use a
+                # larger token budget since the <think> trace eats ~1k tokens.
                 regen_answer, regen_lp, p2, g2 = await _generate(
-                    session, strict_messages, enable_thinking=True
+                    session,
+                    strict_messages,
+                    enable_thinking=True,
+                    max_tokens=LLAMACPP_RAG_REGEN_MAX_TOKENS,
                 )
+                sc_metadata["answer_thinking"] = regen_answer
                 answer = _strip_thinking(regen_answer)
                 gen_logprobs = regen_lp
                 prompt_tokens += p2
