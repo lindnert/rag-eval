@@ -41,6 +41,7 @@ PYTHON_BIN="$(command -v python3.12 || command -v python3)"
 echo "==== RAG job ${SLURM_JOB_ID} on $(hostname) ===="
 echo "Start: $(date)"
 nvidia-smi || true
+cat /proc/driver/nvidia/version || true
 
 # ---------------------------------------------------------------------------
 # 1. Activate pre-built venv (see slurm/build_venv.sh)
