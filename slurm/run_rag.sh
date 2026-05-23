@@ -93,6 +93,12 @@ if [ ! -x "${LLAMACPP_SERVER}" ]; then
 fi
 echo "llama-server: ${LLAMACPP_SERVER}"
 
+echo "---- nvidia-ml diagnostic ----"
+ls -l /lib/x86_64-linux-gnu/libnvidia-ml.so* 2>/dev/null || true
+ls -l ${CUDA_HOME}/lib64/libnvidia-ml* 2>/dev/null || true
+LD_DEBUG=libs "${LLAMACPP_SERVER}" --version 2>&1 | grep -i nvidia-ml | head -20
+echo "------------------------------"
+
 # ---------------------------------------------------------------------------
 # 4. Start gen (8080) + emb (8081) servers
 # ---------------------------------------------------------------------------

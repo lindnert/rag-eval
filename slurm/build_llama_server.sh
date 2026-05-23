@@ -1,13 +1,20 @@
 #!/bin/bash
-# Build llama-server once on the LOGIN node (e.g. citrin).
-# The compute nodes only have CUDA 12.0 toolkit + gcc-9/13 — neither pair is
-# usable together. The login node has gcc-13 + the user-installed CUDA 13
-# toolkit at $HOME/cuda-13.0, which works.
-#
-# $HOME is shared with the compute nodes, so the resulting binary at
-# $WORKDIR/.llamacpp_bin/$LLAMACPP_TAG/llama-server is visible to SLURM jobs.
-#
-# Re-run only when bumping LLAMACPP_TAG.
+#SBATCH --job-name=rag-server
+#SBATCH --comment="RAG llama-cpp server build"
+#SBATCH --time=00:30:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem=0
+#SBATCH --partition=All
+## Build llama-server once on the LOGIN node (e.g. citrin).
+## The compute nodes only have CUDA 12.0 toolkit + gcc-9/13 — neither pair is
+## usable together. The login node has gcc-13 + the user-installed CUDA 13
+## toolkit at $HOME/cuda-13.0, which works.
+##
+## $HOME is shared with the compute nodes, so the resulting binary at
+## $WORKDIR/.llamacpp_bin/$LLAMACPP_TAG/llama-server is visible to SLURM jobs.
+##
+## Re-run only when bumping LLAMACPP_TAG.
 
 set -euo pipefail
 
