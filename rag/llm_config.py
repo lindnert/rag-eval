@@ -21,6 +21,11 @@ LLAMACPP_RAG_TOP_P = float(os.getenv("LLAMACPP_RAG_TOP_P", "0.95"))
 # which may emit short reasoning before the final answer.
 LLAMACPP_RAG_MAX_TOKENS = int(os.getenv("LLAMACPP_RAG_MAX_TOKENS", "2048"))
 
+# Regen path runs with enable_thinking=True; Qwen3 commonly spends 1k+ tokens
+# reasoning before the final answer, so give the regen a bigger budget than
+# the baseline gen to avoid truncating the visible answer.
+LLAMACPP_RAG_REGEN_MAX_TOKENS = int(os.getenv("LLAMACPP_RAG_REGEN_MAX_TOKENS", "4096"))
+
 # top_logprobs=5 mirrors the OpenAI default; we only actually consume the
 # chosen-token logprob, but keeping the top-k around makes future analysis
 # (e.g. token-level entropy) cheap to add without re-running generation.
@@ -29,3 +34,38 @@ LLAMACPP_RAG_TOP_LOGPROBS = int(os.getenv("LLAMACPP_RAG_TOP_LOGPROBS", "5"))
 LLAMACPP_RAG_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "6"))
 
 RAG_K = int(os.getenv("RAG_K", "3"))
+
+# ---------------------------------------------------------------------------
+# Self-correction (rag_sc variant). Thresholds are placeholders — tune once
+# we have logprob and retrieval-score distributions from the baseline runs.
+# ---------------------------------------------------------------------------
+
+# Direction of FAISS similarity_search_with_score values:
+#   "lower"  → L2 distance, smaller = more similar (langchain default)
+#   "higher" → inner-product / cosine, larger = more similar
+RAG_SC_SCORE_DIRECTION = os.getenv("RAG_SC_SCORE_DIRECTION", "lower").lower()
+
+# Trigger T: the *best* score in the retrieved set is itself unacceptable.
+#   lower=better → fire if min(scores) > threshold
+#   higher=better → fire if max(scores) < threshold
+RAG_SC_RETRIEVAL_BEST_THRESHOLD = float(
+    os.getenv("RAG_SC_RETRIEVAL_BEST_THRESHOLD", "0.73")
+)
+
+# Trigger Δ: high spread between best and worst → noise mixed in.
+RAG_SC_RETRIEVAL_SPREAD_THRESHOLD = float(
+    os.getenv("RAG_SC_RETRIEVAL_SPREAD_THRESHOLD", "0.05")
+)
+
+# Trigger U: mean token logprob below this → low overall confidence.
+RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD = float(
+    os.getenv("RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD", "-0.3")
+)
+
+# Trigger V: some token's logprob below this → at least one very uncertain step.
+RAG_SC_GEN_MIN_LOGPROB_THRESHOLD = float(
+    os.getenv("RAG_SC_GEN_MIN_LOGPROB_THRESHOLD", "-3.0")
+)
+
+# HyDE draft is only used to embed-and-retrieve; doesn't need to be long.
+RAG_SC_HYDE_MAX_TOKENS = int(os.getenv("RAG_SC_HYDE_MAX_TOKENS", "256"))

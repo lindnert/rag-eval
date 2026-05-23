@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from datetime import datetime
 
@@ -10,10 +11,17 @@ from rag.llm_config import (
     LLAMACPP_RAG_ENABLE_THINKING,
     LLAMACPP_RAG_MAX_TOKENS,
     LLAMACPP_RAG_MODEL,
+    LLAMACPP_RAG_REGEN_MAX_TOKENS,
     LLAMACPP_RAG_TEMPERATURE,
     LLAMACPP_RAG_TOP_LOGPROBS,
     LLAMACPP_RAG_TOP_P,
     RAG_K,
+    RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD,
+    RAG_SC_GEN_MIN_LOGPROB_THRESHOLD,
+    RAG_SC_HYDE_MAX_TOKENS,
+    RAG_SC_RETRIEVAL_BEST_THRESHOLD,
+    RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
+    RAG_SC_SCORE_DIRECTION,
 )
 from retrieval import QUERY_PREFIX, build_vectorstore
 
@@ -40,6 +48,86 @@ SYSTEM_PROMPT_NO_RAG = (
     "Antworte kurz und prägnant (max 3-4 Absätze)."
 )
 
+# Stricter prompt used by the rag_sc regen path when generation triggers fire.
+SYSTEM_PROMPT_RAG_STRICT = (
+    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
+    "Lies den bereitgestellten Kontext sorgfältig. "
+    "Identifiziere zunächst, welche Teile des Kontextes für die Frage relevant sind. "
+    "Schreibe dann deine Antwort ausschließlich auf Basis dieser relevanten Teile. "
+    "Falls der Kontext nicht genügend Informationen enthält, sage dies ausdrücklich. "
+    "Antworte kurz und prägnant (max 3-4 Absätze)."
+)
+
+# HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
+SYSTEM_PROMPT_HYDE = (
+    "Du bist ein Ernährungsberater. Schreibe eine kurze, plausible Beispiel-Antwort "
+    "auf die folgende Frage (3-5 Sätze). Diese hypothetische Antwort dient nur dazu, "
+    "passende Quellen zu finden — sachliche Korrektheit ist nicht erforderlich."
+)
+
+# Qwen3 emits its reasoning as <think>…</think> at the start of content when
+# enable_thinking=true; strip it so the stored answer isn't polluted.
+_THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+
+def _strip_thinking(text):
+    return _THINK_BLOCK.sub("", text or "").lstrip()
+
+
+def _retrieval_correction_triggers(scores):
+    """Return list of fired triggers (with values), empty if retrieval looks fine."""
+    if not scores:
+        return ["empty_scores"]
+    triggers = []
+    lo, hi = min(scores), max(scores)
+    if RAG_SC_SCORE_DIRECTION == "lower":
+        if lo > RAG_SC_RETRIEVAL_BEST_THRESHOLD:
+            triggers.append(f"lowest={lo:.3f}>{RAG_SC_RETRIEVAL_BEST_THRESHOLD}")
+    else:
+        if hi < RAG_SC_RETRIEVAL_BEST_THRESHOLD:
+            triggers.append(f"highest={hi:.3f}<{RAG_SC_RETRIEVAL_BEST_THRESHOLD}")
+    spread = hi - lo
+    if spread > RAG_SC_RETRIEVAL_SPREAD_THRESHOLD:
+        triggers.append(f"spread={spread:.3f}>{RAG_SC_RETRIEVAL_SPREAD_THRESHOLD}")
+    return triggers
+
+
+def _logprob_stats(logprobs):
+    """Return (mean, min) of a non-empty logprob list."""
+    return sum(logprobs) / len(logprobs), min(logprobs)
+
+
+def _generation_correction_triggers(logprobs):
+    if not logprobs:
+        return ["empty_logprobs"]
+    mean_lp, min_lp = _logprob_stats(logprobs)
+    triggers = []
+    if mean_lp < RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD:
+        triggers.append(f"mean={mean_lp:.3f}<{RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD}")
+    if min_lp < RAG_SC_GEN_MIN_LOGPROB_THRESHOLD:
+        triggers.append(f"min={min_lp:.3f}<{RAG_SC_GEN_MIN_LOGPROB_THRESHOLD}")
+    return triggers
+
+
+def _merge_and_rerank(ctx_orig, retr_scores_orig, ctx_hyde, retr_scores_hyde, k=RAG_K):
+    """Union both retrievals, dedupe by context text, keep best score per doc,
+    sort by direction, truncate to k."""
+    pool = {}
+    for context, score in list(zip(ctx_orig, retr_scores_orig)) + list(zip(ctx_hyde, retr_scores_hyde)):
+        existing = pool.get(context)
+        if existing is None:
+            pool[context] = score
+        elif RAG_SC_SCORE_DIRECTION == "lower":
+            pool[context] = min(existing, score)
+        else:
+            pool[context] = max(existing, score)
+    items = sorted(
+        pool.items(),
+        key=lambda kv_pair: kv_pair[1],
+        reverse=(RAG_SC_SCORE_DIRECTION == "higher"),
+    )[:k]
+    return [c for c, _ in items], [s for _, s in items]
+
 
 def build_user_prompt(query, contexts):
     if not contexts:
@@ -60,13 +148,15 @@ def _retrieve(vectorstore, query, k=RAG_K):
     return contexts, scores
 
 
-async def _generate(session, messages, enable_thinking=LLAMACPP_RAG_ENABLE_THINKING):
+async def _generate(
+    session, messages, enable_thinking=LLAMACPP_RAG_ENABLE_THINKING, max_tokens=None
+):
     payload = {
         "model": LLAMACPP_RAG_MODEL,
         "messages": messages,
         "temperature": LLAMACPP_RAG_TEMPERATURE,
         "top_p": LLAMACPP_RAG_TOP_P,
-        "max_tokens": LLAMACPP_RAG_MAX_TOKENS,
+        "max_tokens": max_tokens if max_tokens is not None else LLAMACPP_RAG_MAX_TOKENS,
         "logprobs": True,
         "top_logprobs": LLAMACPP_RAG_TOP_LOGPROBS,
         "stream": False,
@@ -105,12 +195,42 @@ async def _generate(session, messages, enable_thinking=LLAMACPP_RAG_ENABLE_THINK
     return answer, gen_logprobs, prompt_tokens, gen_tokens
 
 
+async def _generate_hyde(session, sem, query):
+    """Draft a short hypothetical answer used to seed a second retrieval pass."""
+    payload = {
+        "model": LLAMACPP_RAG_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT_HYDE},
+            {"role": "user", "content": query},
+        ],
+        "temperature": LLAMACPP_RAG_TEMPERATURE,
+        "top_p": LLAMACPP_RAG_TOP_P,
+        "max_tokens": RAG_SC_HYDE_MAX_TOKENS,
+        "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    async with sem:
+        try:
+            async with session.post(
+                f"{LLAMACPP_GEN_BASE_URL}/chat/completions",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as response:
+                parsed = await response.json()
+                if "error" in parsed:
+                    return ""
+                return parsed["choices"][0]["message"].get("content") or ""
+        except Exception:
+            return ""
+
+
 async def process_single_query(
     session, query, query_id, variant, sem, total, progress_counter, start_time
 ):
     loop = asyncio.get_event_loop()
     contexts = []
     retrieval_scores = []
+    sc_metadata = None  # only populated for variant == "rag_sc"
 
     if variant in _RAG_VARIANTS:
         vectorstore = _get_vectorstore()
@@ -129,6 +249,30 @@ async def process_single_query(
                 "gen_logprobs": [],
             }
 
+    # --- SC retrieval pass (budget=1) ----------------------------------------
+    if variant == "rag_sc":
+        sc_metadata = {
+            "retrieval_correction_triggers": _retrieval_correction_triggers(retrieval_scores),
+            "retrieval_retried_count": 0,
+            "generation_correction_triggers": [],
+            "generation_retried_count": 0,
+        }
+        if sc_metadata["retrieval_correction_triggers"]:
+            hyde_text = await _generate_hyde(session, sem, query)
+            if hyde_text.strip():
+                try:
+                    hyde_ctx, hyde_retrieval_scores = await loop.run_in_executor(
+                        None, lambda: _retrieve(vectorstore, hyde_text)
+                    )
+                    sc_metadata["original_contexts"] = list(contexts)
+                    sc_metadata["original_retrieval_scores"] = list(retrieval_scores)
+                    contexts, retrieval_scores = _merge_and_rerank(
+                        contexts, retrieval_scores, hyde_ctx, hyde_retrieval_scores
+                    )
+                    sc_metadata["retrieval_retried_count"] += 1
+                except Exception as exc:
+                    sc_metadata["retrieval_error"] = str(exc)
+
     system_prompt = SYSTEM_PROMPT_RAG if variant in _RAG_VARIANTS else SYSTEM_PROMPT_NO_RAG
     messages = [
         {"role": "system", "content": system_prompt},
@@ -140,6 +284,45 @@ async def process_single_query(
         answer, gen_logprobs, prompt_tokens, gen_tokens = await _generate(
             session, messages
         )
+
+        # --- SC generation pass (budget=1) -----------------------------------
+        if sc_metadata is not None:
+            sc_metadata["generation_correction_triggers"] = _generation_correction_triggers(
+                gen_logprobs
+            )
+            if sc_metadata["generation_correction_triggers"]:
+                orig_mean, orig_min = (
+                    _logprob_stats(gen_logprobs) if gen_logprobs else (None, None)
+                )
+                sc_metadata["original_answer"] = answer
+                sc_metadata["original_gen_logprobs"] = list(gen_logprobs)
+                sc_metadata["original_mean_logprob"] = orig_mean
+                sc_metadata["original_min_logprob"] = orig_min
+                strict_messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT_RAG_STRICT},
+                    {"role": "user", "content": build_user_prompt(query, contexts)},
+                ]
+                # Flip thinking on for the regen — Qwen3's reasoning mode buys
+                # an extra "look before you leap" pass over the context. Use a
+                # larger token budget since the <think> trace eats ~1k tokens.
+                regen_answer, regen_lp, p2, g2 = await _generate(
+                    session,
+                    strict_messages,
+                    enable_thinking=True,
+                    max_tokens=LLAMACPP_RAG_REGEN_MAX_TOKENS,
+                )
+                sc_metadata["answer_thinking"] = regen_answer
+                answer = _strip_thinking(regen_answer)
+                gen_logprobs = regen_lp
+                prompt_tokens += p2
+                gen_tokens += g2
+                regen_mean, regen_min = (
+                    _logprob_stats(gen_logprobs) if gen_logprobs else (None, None)
+                )
+                sc_metadata["mean_logprob"] = regen_mean
+                sc_metadata["min_logprob"] = regen_min
+                sc_metadata["generation_retried_count"] += 1
+
         task_time = time.time() - task_start
 
         progress_counter["prompt_tokens"] += prompt_tokens
@@ -150,15 +333,22 @@ async def process_single_query(
         rate = elapsed / done if done > 0 else 0
         remaining = (total - done) * rate
 
+        sc_tag = ""
+        if sc_metadata is not None:
+            sc_tag = (
+                f" sc(ret={sc_metadata['retrieval_retried_count']},"
+                f"gen={sc_metadata['generation_retried_count']})"
+            )
+
         print(
             f"  [{done:>{len(str(total))}}/{total}]  "
-            f"Q#{query_id + 1} [{variant}] done in {task_time:.1f}s  "
+            f"Q#{query_id + 1} [{variant}]{sc_tag} done in {task_time:.1f}s  "
             f"prompt={prompt_tokens} gen={gen_tokens}  "
             f"Rate: {rate:.2f} s/task  ETA: {remaining:.1f}s",
             flush=True,
         )
 
-    return {
+    result = {
         "id": query_id,
         "query": query,
         "variant": variant,
@@ -167,6 +357,9 @@ async def process_single_query(
         "retrieval_scores": retrieval_scores,
         "gen_logprobs": gen_logprobs,
     }
+    if sc_metadata is not None:
+        result["sc_metadata"] = sc_metadata
+    return result
 
 
 async def run_rag_pipeline_async(indexed_queries):

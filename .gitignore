@@ -223,3 +223,8 @@ logs/
 
 # Results
 results/
+
+# Models & HF
+.ollama_models/
+.llamacpp*
+.hf*

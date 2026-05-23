@@ -9,7 +9,7 @@
 ## Re-run when requirements.txt changes.
 
 set -euo pipefail
-WORKDIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORKDIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "${WORKDIR}"
 
 rm -rf .venv
