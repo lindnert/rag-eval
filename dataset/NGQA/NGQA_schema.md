@@ -17,6 +17,7 @@
     ],
     "summary": ...,
     "reference_answer": ...
+    "summary_agrees_with_reference_answer": ...
   },
   "difficulty": ...,
   "knowledge_required": {

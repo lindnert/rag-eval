@@ -11,6 +11,7 @@ Converts NGQA graph samples (nodes + edges) into evaluation samples with:
 import ast
 import csv
 import json
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -168,7 +169,13 @@ def _build_gold(parsed: dict) -> dict:
     ]
 
     if not contradictions:
-        summary = "This food appears suitable for the user based on the given profile."
+        favorable = [humanize_tag(t) for t in parsed['nutrition_tags']
+                     if t.startswith('low_') or t in ('high_protein', 'high_fiber')]
+        if favorable:
+            summary = (f"This food appears suitable for the user, because "
+                       f"it is {', '.join(favorable)}.")
+        else:
+            summary = "This food appears suitable for the user based on the given profile."
     else:
         phrases = [
             f"the user's {c['condition']} conflicts with the food being "
@@ -251,6 +258,15 @@ def graph_to_sample(
     gold = _build_gold(parsed)
     if reference_answer is not None:
         gold['reference_answer'] = reference_answer
+        # On the hard split, NGQA's reference_answer judges general nutritional
+        # quality and can disagree with the user-specific is_healthy derived
+        # from contradict edges (~36% of hard samples; always with
+        # is_healthy=False but reference="Yes"). Flag it for downstream filtering.
+        m = re.match(r'^(yes|no)\b', reference_answer.strip().lower())
+        ref_polarity = (m.group(1) == 'yes') if m else None
+        gold['summary_agrees_with_reference_answer'] = (
+            None if ref_polarity is None else ref_polarity == gold['is_healthy']
+        )
 
     food_facts = _verbalize_food(parsed)
     user_profile = _verbalize_user(parsed)
@@ -293,12 +309,13 @@ def _parse_cell(cell: Any) -> list:
 def process_csv(
     input_path: str,
     output_path: str,
-    id_column: str | None = None,
 ) -> int:
     """
-    Read an NGQA CSV and write a JSONL file of evaluation samples.
-    Only the *hard* question/answer columns are used; easy and medium
-    columns are ignored.
+    Read every row of the NGQA CSV and write one JSONL evaluation sample per row.
+    The verbose question_hard / answer_hard columns are always used as the question text and reference_answer,
+    regardless of the row's difficulty tag (which is preserved as metadata for filtering)
+    The shorter question_easy/medium and answer_easy/medium columns are not used —
+    the gold answer is reconstructed from the graph instead.
 
     Expected columns:
       - question_hard: the natural-language question
