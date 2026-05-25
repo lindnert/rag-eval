@@ -12,6 +12,7 @@ from rag.utils import run_rag_pipeline_async
 from rag.llm_config import LLAMACPP_RAG_CONCURRENCY, LLAMACPP_RAG_MODEL
 
 from dataset.NGQA.loader import load_ngqa, to_metadata as ngqa_to_metadata
+from dataset.LLMDRS.loader import load_llmdrs, to_metadata as llmdrs_to_metadata
 
 if __name__ == "__main__":
 
@@ -58,22 +59,30 @@ if __name__ == "__main__":
     # "Nach einer Schwangerschaft (35 Jahre) möchte ich wieder fit werden. Welche Ernährung ist sinnvoll?",
     #]
 
+    # NGQA strata
     s1 = load_ngqa(difficulty="easy", has_conflict=False, limit=5)
     s2 = load_ngqa(difficulty="easy", has_conflict=True, limit=5)
     s3 = load_ngqa(difficulty="medium", has_conflict=False, limit=5)
     s4 = load_ngqa(difficulty="medium", has_conflict=True, limit=5)
     s5 = load_ngqa(difficulty="hard", summary_agrees_with_reference_answer=True, limit=5)
     s6 = load_ngqa(difficulty="hard", summary_agrees_with_reference_answer=False, limit=5)
-    samples = s1 + s2 + s3 + s4 + s5 + s6
+    ngqa_samples = s1 + s2 + s3 + s4 + s5 + s6
 
-    # Shuffle the combined cross-stratum list with a fixed seed so each shard
-    # gets a representative mix (and so reruns are reproducible).
-    random.Random(0).shuffle(samples)
+    # LLMDRS — all 50 English patient profiles. Gold is GPT-4 output, used to
+    # probe whether the eval framework flags guideline-deviation.
+    llmdrs_samples = load_llmdrs(limit=6)
 
-    # Build (query, metadata) pairs. The metadata dict is opaque to the
-    # pipeline — each dataset's loader defines its own `to_metadata`, and the
-    # fields it returns become top-level keys on every result row.
-    items = [(s["query"], ngqa_to_metadata(s)) for s in samples]
+    # Build (query, metadata) pairs per-dataset since each loader defines its
+    # own `to_metadata`. The metadata dict is opaque to the pipeline and its
+    # fields become top-level keys on every result row.
+    items = (
+        [(s["query"], ngqa_to_metadata(s)) for s in ngqa_samples]
+        + [(s["query"], llmdrs_to_metadata(s)) for s in llmdrs_samples]
+    )
+
+    # Shuffle the combined cross-dataset/cross-stratum list with a fixed seed
+    # so each shard gets a representative mix (and reruns are reproducible).
+    random.Random(0).shuffle(items)
 
     # Shard across SLURM array tasks. Global pipeline ids are assigned *before*
     # slicing so each shard's outputs carry their original index and can be

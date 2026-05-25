@@ -1,0 +1,50 @@
+Provide dietary recommendation for this patient profile.  MODY DM Name: Mariya Age: 20 Gender: Female Ethnicity: Ukrainian Location: Was born and lives in Semey, Kazakhstan Family Structure: Lives with mother, grandmother, and younger brother Medical History: No known medical conditions Family history of diabetes (mother) Medication: None Clinical Presentation: Increased thirst Increased urination Fatigue Difficulty concentrating Diagnosis: Early onset DM Anthropometry, Body Composition, and Functional Assessment: Weight: Current - 48 kg, 1 month earlier - 51 kg Height: 1.63 m Body Mass Index (BMI): 18.1 kg/m2 Biochemical and Hematological Markers: Fasting Blood Glucose Level: 8.4 mmol/L HbA1c Level: 7.6% C-peptide Level: 0.87 nmol/L Total Cholesterol: 4.8 mmol/L LDL Cholesterol: 3.2 mmol/L HDL Cholesterol: 1.2 mmol/L Triglycerides: 1.8 mmol/L Diet: Breakfast: Cottage cheese, fruits, tea without sugar, protein bar Mid-morning snack: Walnuts (30-40 g), water (0.250 L) Lunch: Borscht or chicken noodle soup, fresh salad, 2 slices of bread, tea with sugar Evening meal: Either a burger or pizza with teammates after training OR baked beef with vegetables, fries, coke, and cake or cookies for dessert Snacks: Occasionally consumes chips and chocolates Environmental, Behavioral, and Social Factors: Student at university, studying Finance Member of the university volleyball team Regularly participates in exercise and sports Lives an active lifestyle No history of smoking or alcohol consumption                                            Dietary Recommendation:
+
+1. Maintain a well-balanced diet with a focus on portion control to avoid further weight loss and to ensure adequate calorie intake to support an active lifestyle.
+
+2. Include a variety of whole, plant-based foods such as fruits, vegetables, legumes, nuts, and seeds to obtain essential nutrients, vitamins, and minerals.
+
+3. Prioritize consuming high-fiber foods and low glycemic index carbohydrates to help control blood glucose levels. Examples include whole grains, legumes, non-starchy vegetables, and fruits with the skin intact.
+
+4. Replace refined and processed carbohydrates found in fast food, white bread, and sugary desserts with whole grains such as brown rice, quinoa, and whole wheat bread.
+
+5. Consume lean protein sources such as baked or grilled chicken or fish, legumes, tofu, and low-fat dairy products to support muscle health and maintenance.
+
+6. Focus on heart-healthy fats, such as those found in nuts, seeds, avocados, and oily fish (salmon, mackerel, sardines), to improve cholesterol levels.
+
+7. Minimize or avoid sugary beverages, such as soda, and replace them with water, unsweetened tea, or other sugar-free alternatives.
+
+8. When eating out with teammates, opt for healthier meal choices such as a grilled chicken salad or a veggie-filled wrap instead of pizza or burgers.
+
+9. Continue regular physical activity, as exercise can help improve insulin sensitivity and assist with glucose management.
+
+10. Monitor blood glucose levels regularly and adjust the diet accordingly, with guidance from a healthcare professional, to maintain optimal glucose control.
+
+11. Consider consulting with a registered dietitian or nutritionist for personalized guidance and meal planning to support the management of diabetes and maintenance of a healthy lifestyle. Give a specific diet plan for the day based on the patient profile using Central Asian food.Breakfast:
+- 1 serving of Oatmeal cooked with low-fat milk and topped with fresh berries (such as strawberries, blueberries, or raspberries) and chopped nuts (such as almonds or walnuts)
+- 1 glass of unsweetened almond milk or a cup of herbal tea without sugar
+
+Mid-morning snack:
+- 1 apple with a tablespoon of natural almond or peanut butter
+- A small handful of unsalted mixed nuts (cashews, almonds, and walnuts)
+
+Lunch:
+- 1 bowl of Lentil soup with vegetables (carrots, tomatoes, onions) seasoned with cumin and coriander
+- 1 serving of grilled chicken or fish
+- Mixed salad with cucumber, tomato, and cabbage with a drizzle of olive oil and lemon juice
+- 1 slice of whole wheat bread or 1 serving of brown rice
+
+Afternoon snack:
+- 1 container of plain yogurt with a tablespoon of honey
+- A handful of red grapes or your favorite fruit
+
+Dinner:
+- A serving of Beef Plov made with brown rice, raisins, and carrots
+- Steamed green beans or zucchini dressed with olive oil and garlic
+- A side of Tabbouleh salad made with bulgur, tomatoes, cucumbers, and fresh herbs
+
+Evening snack:
+- 2-3 dried fruits like apricots or dates
+- A cup of hot herbal tea without sugar
+
+Note: Make sure to drink plenty of water throughout the day and adjust serving sizes based on the patient's hunger and activity level.
