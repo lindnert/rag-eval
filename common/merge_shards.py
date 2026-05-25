@@ -22,14 +22,16 @@ CONFIGS = {
 
 
 def _sort_key(kind):
-    # RAG output has three rows per query id (one per variant), so add the
-    # variant as a tiebreaker for deterministic ordering. Eval output has one
-    # row per id, so plain id-sort is enough.
+    # RAG output has three rows per query (one per variant) and uses
+    # `pipeline_id` (global 0..N-1 enumerate index assigned before sharding)
+    # as the stable cross-shard ordering key. Sample-level `id` from the
+    # dataset is preserved separately on each row but isn't used for sorting.
+    # Eval output has one row per id, so plain id-sort is enough.
     if kind == "rag":
         from rag.utils import VARIANTS
 
         order = {v: i for i, v in enumerate(VARIANTS)}
-        return lambda r: (r["id"], order.get(r.get("variant", ""), 99))
+        return lambda r: (r["pipeline_id"], order.get(r.get("variant", ""), 99))
     return lambda r: r["id"]
 
 

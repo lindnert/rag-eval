@@ -239,7 +239,7 @@ async def _generate_hyde(session, sem, query):
 
 
 async def process_single_query(
-    session, query, query_id, variant, sem, total, progress_counter, start_time
+    session, query, pipeline_id, metadata, variant, sem, total, progress_counter, start_time
 ):
     loop = asyncio.get_event_loop()
     contexts = []
@@ -254,7 +254,8 @@ async def process_single_query(
             )
         except Exception as exc:
             return {
-                "id": query_id,
+                "pipeline_id": pipeline_id,
+                **(metadata or {}),
                 "query": query,
                 "variant": variant,
                 "answer": f"[RETRIEVAL ERROR] {exc}",
@@ -347,14 +348,17 @@ async def process_single_query(
 
         print(
             f"  [{done:>{len(str(total))}}/{total}]  "
-            f"Q#{query_id + 1} [{variant}]{sc_tag} done in {task_time:.1f}s  "
+            f"Q#{pipeline_id + 1} [{variant}]{sc_tag} done in {task_time:.1f}s  "
             f"prompt={prompt_tokens} gen={gen_tokens}  "
             f"Rate: {rate:.2f} s/task  ETA: {remaining:.1f}s",
             flush=True,
         )
 
     result = {
-        "id": query_id,
+        "pipeline_id": pipeline_id,
+        # Spread the dataset-supplied metadata (id, summary, difficulty, …) at
+        # top level. Pipeline-owned keys below override any colliding names.
+        **(metadata or {}),
         "query": query,
         "variant": variant,
         "answer": answer,
@@ -367,19 +371,21 @@ async def process_single_query(
     return result
 
 
-async def run_rag_pipeline_async(indexed_queries):
-    # indexed_queries: iterable of (query_id, query_text). The caller is
-    # responsible for handing out *global* ids so they survive shard slicing.
-    indexed_queries = list(indexed_queries)
+async def run_rag_pipeline_async(indexed_items):
+    # indexed_items: iterable of (pipeline_id, query_text, metadata_dict).
+    # The caller hands out *global* pipeline ids so they survive shard slicing
+    # and can be re-merged in order. `metadata` is opaque to the pipeline; its
+    # keys are spread into each result row at top level.
+    indexed_items = list(indexed_items)
     _get_vectorstore()  # warm before fan-out so all tasks share one instance
     sem = asyncio.Semaphore(LLAMACPP_RAG_CONCURRENCY)
     start_time = time.time()
-    total_tasks = len(indexed_queries) * len(VARIANTS)
+    total_tasks = len(indexed_items) * len(VARIANTS)
     progress_counter = {"done": 0, "prompt_tokens": 0, "gen_tokens": 0}
 
     print(f"\n{'=' * 80}")
     print(
-        f"Starting RAG batch: {len(indexed_queries)} queries × {len(VARIANTS)} variants "
+        f"Starting RAG batch: {len(indexed_items)} queries × {len(VARIANTS)} variants "
         f"= {total_tasks} tasks  (concurrency={LLAMACPP_RAG_CONCURRENCY})"
     )
     print(f"Variants: {VARIANTS}")
@@ -389,9 +395,9 @@ async def run_rag_pipeline_async(indexed_queries):
     async with aiohttp.ClientSession() as session:
         tasks = [
             process_single_query(
-                session, q, qid, v, sem, total_tasks, progress_counter, start_time
+                session, q, pid, meta, v, sem, total_tasks, progress_counter, start_time
             )
-            for qid, q in indexed_queries
+            for pid, q, meta in indexed_items
             for v in VARIANTS
         ]
         results = await asyncio.gather(*tasks)
