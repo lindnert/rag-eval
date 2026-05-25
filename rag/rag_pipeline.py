@@ -3,6 +3,7 @@ load_dotenv()
 import os
 import asyncio
 import json
+import random
 import time
 from datetime import datetime
 
@@ -10,34 +11,20 @@ from common.json_io import dump as dump_json
 from rag.utils import run_rag_pipeline_async
 from rag.llm_config import LLAMACPP_RAG_CONCURRENCY, LLAMACPP_RAG_MODEL
 
-# outdated function, not used in current pipeline but kept for reference
-""" def evaluate_query(query):
-    sample = run_rag_pipeline(query)
-
-    ragas_scores = run_ragas(sample)
-    deepeval_scores = run_deepeval(sample)
-    custom_scores = run_custom(sample)
-
-    return {
-        **sample,
-        **ragas_scores,
-        **deepeval_scores,
-        **custom_scores
-    } """
-
+from dataset.NGQA.loader import load_ngqa, to_metadata as ngqa_to_metadata
 
 if __name__ == "__main__":
 
-    queries = [
-    "Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?",
-    "Wie kann ich meine Regeneration nach intensivem Training optimieren? Welche Lebensmittel und Timing sind dafür am wichtigsten?",
-    "Ich habe starke Gelenkschmerzen und Entzündungen. Gibt es eine Ernährung, die mir helfen kann, diese zu reduzieren?",
-    "Meine 8-jährige Tochter ist übergewichtig. Welche Ernährungsempfehlungen sind für Kinder mit Übergewicht geeignet?",
-    "Ich bin 65 Jahre alt und möchte meine Knochendichte erhöhen und kognitiven Abbau verhindern. Welche Nährstoffe sind entscheidend?",
-    "Ich bin Veganer und trainiere intensiv 6x pro Woche. Wie stelle ich sicher, dass ich genug Protein und alle essentiellen Aminosäuren bekomme?",
-    "Nach meiner Gallenblasenoperation kann ich viele Lebensmittel nicht mehr essen. Welche Ernährungsstrategie hilft mir, wieder normal zu essen?",
-    "Ich bin 45 Jahre alt, habe ADHS und Schlafprobleme. Kann die richtige Ernährung meine Symptome verbessern?",
-    "Welche Lebensmittel helfen am besten gegen Migräne? Gibt es Trigger, die ich vermeiden sollte?",
+    #queries = [
+    #"Ich bin 29 Jahre alt, 71kg schwer und möchte Muskeln aufbauen. Wie sollte ich mich ernähren? Welche Mikro- und Makronährstoffe sollte ich einnehmen und wieviel?",
+    #"Wie kann ich meine Regeneration nach intensivem Training optimieren? Welche Lebensmittel und Timing sind dafür am wichtigsten?",
+    #"Ich habe starke Gelenkschmerzen und Entzündungen. Gibt es eine Ernährung, die mir helfen kann, diese zu reduzieren?",
+    #"Meine 8-jährige Tochter ist übergewichtig. Welche Ernährungsempfehlungen sind für Kinder mit Übergewicht geeignet?",
+    #"Ich bin 65 Jahre alt und möchte meine Knochendichte erhöhen und kognitiven Abbau verhindern. Welche Nährstoffe sind entscheidend?",
+    #"Ich bin Veganer und trainiere intensiv 6x pro Woche. Wie stelle ich sicher, dass ich genug Protein und alle essentiellen Aminosäuren bekomme?",
+    #"Nach meiner Gallenblasenoperation kann ich viele Lebensmittel nicht mehr essen. Welche Ernährungsstrategie hilft mir, wieder normal zu essen?",
+    #"Ich bin 45 Jahre alt, habe ADHS und Schlafprobleme. Kann die richtige Ernährung meine Symptome verbessern?",
+    #"Welche Lebensmittel helfen am besten gegen Migräne? Gibt es Trigger, die ich vermeiden sollte?",
     #"Mit 22 Jahren und 60 kg fällt es mir schwer zuzunehmen. Welche Ernährungsstrategie hilft mir beim gesunden Gewichtaufbau?",
     #"Als 35-jähriger Büroangestellter mit wenig Bewegung frage ich mich, wie ich meine Ernährung langfristig optimieren kann.",
     #"Regelmäßiges Marathontraining gehört zu meinem Alltag (28 Jahre). Welche Lebensmittel verbessern gezielt meine Ausdauerleistung?",
@@ -69,27 +56,44 @@ if __name__ == "__main__":
     # "In Vorbereitung auf einen Triathlon (32 Jahre) suche ich nach einer optimalen Ernährungsstrategie für Training und Wettkampf.",
     # "Mit 65 Jahren möchte ich mein Immunsystem stärken. Welche Nährstoffe und Lebensmittel spielen dabei eine zentrale Rolle?",
     # "Nach einer Schwangerschaft (35 Jahre) möchte ich wieder fit werden. Welche Ernährung ist sinnvoll?",
-    ]
+    #]
 
-    # Shard the queries across SLURM array tasks. Global ids are assigned
-    # *before* slicing so each shard's outputs carry their original index and
-    # can be re-ordered correctly by rag.merge_shards.
-    indexed_queries = list(enumerate(queries))
+    s1 = load_ngqa(difficulty="easy", has_conflict=False, limit=5)
+    s2 = load_ngqa(difficulty="easy", has_conflict=True, limit=5)
+    s3 = load_ngqa(difficulty="medium", has_conflict=False, limit=5)
+    s4 = load_ngqa(difficulty="medium", has_conflict=True, limit=5)
+    s5 = load_ngqa(difficulty="hard", summary_agrees_with_reference_answer=True, limit=5)
+    s6 = load_ngqa(difficulty="hard", summary_agrees_with_reference_answer=False, limit=5)
+    samples = s1 + s2 + s3 + s4 + s5 + s6
+
+    # Shuffle the combined cross-stratum list with a fixed seed so each shard
+    # gets a representative mix (and so reruns are reproducible).
+    random.Random(0).shuffle(samples)
+
+    # Build (query, metadata) pairs. The metadata dict is opaque to the
+    # pipeline — each dataset's loader defines its own `to_metadata`, and the
+    # fields it returns become top-level keys on every result row.
+    items = [(s["query"], ngqa_to_metadata(s)) for s in samples]
+
+    # Shard across SLURM array tasks. Global pipeline ids are assigned *before*
+    # slicing so each shard's outputs carry their original index and can be
+    # re-ordered correctly by rag.merge_shards.
+    indexed_items = [(pid, q, meta) for pid, (q, meta) in enumerate(items)]
     shard_idx   = int(os.environ.get("RAG_SHARD_INDEX", "0"))
     shard_count = int(os.environ.get("RAG_SHARD_COUNT", "1"))
     shard_tag   = os.environ.get("RAG_SHARD_TAG", "local")
     if shard_count > 1:
-        indexed_queries = indexed_queries[shard_idx::shard_count]
+        indexed_items = indexed_items[shard_idx::shard_count]
 
     print(f"\n{'='*80}")
     print(f"Starting RAG evaluation pipeline")
-    print(f"Shard {shard_idx}/{shard_count}: {len(indexed_queries)} of {len(queries)} queries")
+    print(f"Shard {shard_idx}/{shard_count}: {len(indexed_items)} of {len(items)} queries")
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Model: {LLAMACPP_RAG_MODEL}  (concurrency={LLAMACPP_RAG_CONCURRENCY})")
     print(f"{'='*80}\n", flush=True)
 
     pipeline_start = time.time()
-    results = asyncio.run(run_rag_pipeline_async(indexed_queries))
+    results = asyncio.run(run_rag_pipeline_async(indexed_items))
     pipeline_time = time.time() - pipeline_start
 
     print(f"\n{'='*80}")
