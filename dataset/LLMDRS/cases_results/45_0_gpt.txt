@@ -1,0 +1,79 @@
+Provide dietary recommendation for this patient profile.  Irritable Bowel Syndrome Name: Karlygash Gender: Female Age: 29 Nationality: Kazakhstani Location: Semey, East Kazakhstan region, Kazakhstan Family Information: Marital Status: Married Family Members: Husband, 3-year-old son Occupation: Karlygash: Elementary school teacher Husband: Engineer  Cultural Background: Karlygash and her family follow the religion of Islam and do not consume pork in their diet. They primarily consume Kazakh traditional food with influences from Central Asian and Russian dishes.  Medical Information: Diagnosis: Irritable Bowel Syndrome (IBS) Date of Diagnosis: Approximately 5 years ago Medical History: Karlygash has a history of intermittent abdominal pain, bloating, and alternating diarrhea and constipation. Current Medications: Hyoscyamine - as needed for abdominal pain Probiotics - daily supplement  Diet History: Breakfast: Weekdays: Oatmeal or kasha (porridge) with fruit, bread with honey, black or herbal tea Weekends: Pancakes, yogurt, fruits, herbal tea Mid-morning: Yogurt, fruit or nuts and water or herbal tea at work Lunch: Vegetable-based soups, grilled chicken or fish with quinoa or brown rice, side salad, water, or herbal tea Evening Meal: Rice or pasta dishes with vegetables and a lean protein, shelpek, baursak Herbal tea or water Prefers grilled dishes and fresh salads when dining out  Environmental, Behavioral, and Social Factors: As an elementary school teacher, Karlygash maintains an active lifestyle at work. She is a non-smoker. Karlygash enjoys practicing yoga and walking in her free time.  Assessment: Anthropometry, Body Composition, and Functional: Weight: Current - 57 kg Height: 1.62 m BMI: 21.7 kg/m2  Biochemical and Hematological Markers: Complete blood count: All values within a normal range Blood Pressure: 110/70 mmHg  Additional Information: Karlygash and her family have lived in Semey, East Kazakhstan region for their entire lives. She has been coping with Irritable Bowel Syndrome for the past five years and has found some relief through dietary adjustments, regular physical activity, and stress management techniques such as yoga. Karlygash's job as an elementary school teacher is physically active, with frequent standing and walking. She is supported by her family and colleagues as she manages her condition and adheres to a healthy lifestyle.   Dietary Recommendations for Karlygash:
+
+1. Focus on low-FODMAP foods: Karlygash should choose foods low in fermentable oligosaccharides, disaccharides, monosaccharides, and polyols (FODMAPs) to help manage her IBS symptoms. These include:
+
+- Vegetables: Bell peppers, carrots, cucumbers, lettuce, spinach, zucchini
+- Fruits: Bananas, blueberries, grapes, kiwi, oranges, pineapple
+- Grains: Brown rice, quinoa, gluten-free pasta, oats
+- Proteins: Grilled chicken, fish, tofu, tempeh, eggs
+- Dairy: Lactose-free yogurt, lactose-free milk, hard cheeses like cheddar or Swiss
+- Nuts and seeds: Almonds, macadamia nuts, pumpkin seeds, walnuts
+
+2. Limit high-FODMAP foods: These may trigger IBS symptoms and should be limited or avoided:
+
+- Vegetables: Artichokes, broccoli, cabbage, garlic, onion, mushrooms
+- Fruits: Apples, cherries, mangoes, pears, peaches, plums
+- Grains: Barley, rye, wheat
+- Dairy: Milk, yogurt, soft cheeses like brie or camembert
+- Legumes: Beans, lentils, chickpeas
+- Sweeteners: Honey, agave, high-fructose corn syrup, sugar alcohols such as xylitol and sorbitol
+
+3. Portion size and meal frequency: Instead of three large meals, Karlygash should consume smaller, more frequent meals to reduce the burden on her digestive system.
+
+4. Stay hydrated: Drinking adequate water throughout the day helps promote digestion and prevent constipation.
+
+5. Limit alcohol, caffeine, and carbonated beverages: These can exacerbate IBS symptoms and should be consumed in moderation.
+
+6. Maintain a food diary: Keeping track of which foods trigger IBS symptoms can help Karlygash make personalized adjustments to her diet.
+
+7. Incorporate stress reduction techniques: As stress can contribute to IBS symptoms, Karlygash should continue practicing yoga and exploring other stress-reducing activities.
+
+Sample Daily Meal Plan:
+
+Breakfast:
+- Oatmeal topped with sliced banana and blueberries
+- Lactose-free yogurt
+- Herbal tea
+
+Mid-morning:
+- A handful of almonds
+- Water or herbal tea
+
+Lunch:
+- Vegetable soup with carrots, spinach, and bell peppers
+- Grilled chicken with quinoa and a side salad
+- Water or herbal tea
+
+Evening Meal:
+- Gluten-free pasta with zucchini and grilled fish
+- Shelpek or baursak made with gluten-free flour (if possible)
+- Herbal tea or water Give a specific diet plan for the day based on the patient profile using Central Asian food.Sample Daily Meal Plan with Central Asian Influence:
+
+Breakfast:
+- Sorpa (rice porridge) cooked in lactose-free milk, topped with sliced banana and blueberries
+- Lactose-free yogurt or suzma (strained yogurt)
+- Herbal tea
+
+Mid-morning:
+- A handful of mixed nuts (almonds, walnuts, macadamia nuts)
+- Water or herbal tea
+
+Lunch:
+- Laghman soup (using gluten-free noodles) with carrots, bell peppers, and tomatoes
+- Grilled fish with a side of quinoa and a simple salad (lettuce, cucumbers, tomatoes, olive oil, lemon juice)
+- Water or herbal tea
+
+Afternoon Snack:
+- Sliced pineapple or grapes
+- Water or herbal tea
+
+Evening Meal:
+- Kabuli pulao (using brown rice) with raisins, carrots, and lean protein choice (chicken or tofu)
+- Steamed vegetables (zucchini, spinach, green beans)
+- Gluten-free shelpek or baursak made with gluten-free flour (if possible)
+- Herbal tea or water
+
+Before Bed:
+- Lactose-free kefir (fermented milk drink) or a cup of herbal tea (peppermint or chamomile)
+
+Note: Be mindful of high-FODMAP ingredients used in traditional Central Asian dishes and make adjustments accordingly, e.g., replacing onions and garlic with chives and garlic-infused oil.

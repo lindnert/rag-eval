@@ -1,0 +1,47 @@
+Provide dietary recommendation for this patient profile.  Food Allergy Name: Rahim Gender: Male Age: 35 Nationality: Uygur Location: Almaty region, Kazakhstan Occupation: Construction worker Medical Information: Diagnosis: Nut allergy (childhood), recent allergic reactions to vegetables Medical History: Experienced allergic reaction to nuts in the past, resulting in difficulty breathing, hives, and swelling Avoids nuts in his diet Recent symptoms of itchiness in the mouth after consuming certain vegetables like tomatoes Visited the ER due to breathing issues after attending a wedding Diet History: Avoids foods with nuts No serious allergic reactions for the past 1.5 years prior to the ER visit Diet on the day of ER visit: Breakfast: 2 fried eggs with sausages, bread with jam, tea with cow milk Lunch (at work): Borsch, goulash with mashed potatoes, bread, vegetable salad, tea Evening (at wedding): Vegetable salad, beshbarmak (with beef, lamb, and horse meat), kazy, coke, baursak, cake Anthropometry, Body Composition, and Functional: Weight: 76 kg Height: 1.80 m Biochemical and Hematological Markers: Skin prick testing results: Positive (≥3 mm): Tomatoes (4 mm), bell pepper (5 mm), eggplant (4 mm), eggs (5 mm), fresh banana (4 mm), almonds (5 mm), nuts (5 mm) Negative: Soybean (1 mm), shrimp (0 mm), chicken (0 mm), wheat (1 mm), cucumber (0 mm) Specific IgE blood tests: Positive (≥0.35 IU/mL): Eggs (0.42 IU/mL), almonds (0.58 IU/mL), tomato (0.38 IU/mL) Negative: Soybean (<0.35 IU/mL), shrimp (<0.35 IU/mL), chicken (0.12 IU/mL), wheat (<0.351 IU/mL), cucumber (<0.35 IU/mL) Clinical: Medication: None Family History: Mother has seasonal allergy to pollen Allergy History: Nut allergy from childhood, recent symptoms of itchiness in the mouth after consuming vegetables Environmental, Behavioral, and Social Factors: Does not cook himself, eats homemade food and occasionally eats out with friends Does not consume alcohol Smoker Works in construction and exposed to dust regularly                                 Based on the patient profile, the following dietary recommendations can be made:
+
+1. Continue avoiding foods containing nuts, almonds, and any nut-based products, as Rahim has a known allergy to these foods and they can cause severe allergic reactions. 
+
+2. Eliminate or minimize consumption of eggs, tomatoes, bell peppers, and eggplants in the diet. Rahim tested positive for specific IgE blood tests and skin prick testing in these foods, which might trigger allergic reactions. Experiment with alternative fruits and vegetables and monitor for any signs of allergic reactions.
+
+3. Avoid bananas, as they showed a positive skin prick test result. Try other fruits as alternatives, ensuring they do not cause any allergic reactions.
+
+4. Consume a balanced diet containing a variety of protein sources (excluding eggs and nuts), whole grains, fruits, and vegetables. Consider incorporating lean meats (poultry, fish), legumes, and dairy products to maintain a well-rounded diet.
+
+5. Encourage home-cooked meals as often as possible, as it allows for better control over the ingredients in Rahim's diet. When eating out, be cautious of potential allergens and always inform servers about his food allergies to prevent cross-contamination.
+
+6. Consider discussing with a healthcare professional about possible medication or management strategies for the pollen allergy of his mother, as this might have a genetic component and could impact Rahim as well.
+
+7. Encourage Rahim to quit smoking, as it can exacerbate his allergy symptoms, decrease lung function, and contribute to poor overall health.
+
+8. Consider wearing a mask or other protective gear while working in construction to decrease exposure to dust, which might exacerbate his allergies and respiratory symptoms.
+
+9. Monitor Rahim's symptoms closely, and consider working with a dietitian or allergist to develop a personalized dietary and lifestyle management plan to manage his allergies and overall health effectively.
+
+10. Keep an emergency plan with necessary medications in case of accidental exposure to allergens, and ensure that Rahim and his close contacts are aware of the action plan in case of an allergic reaction. Give a specific diet plan for the day based on the patient profile using Central Asian food.Breakfast:
+- Fried eggs (excluding egg whites, since Rahim tested positive for egg IgE blood test): 1 egg yolk
+- Kazakh yogurt (suzma) with sliced fresh fruit such as apples, pears, or peaches for added nutrients without triggering any allergies
+- A slice of whole grain bread without nuts, served with honey
+- A cup of tea with cow milk
+
+Mid-morning Snack:
+- A small bowl of mixed fruit salad (excluding tomatoes, bananas, and any other allergic fruits)
+
+Lunch:
+- Shalgam (turnip) soup as a substitute for borsch, to avoid tomatoes and bell peppers
+- Beef pilaf without nuts, served with steamed vegetables such as carrots, green beans, and zucchini
+- A slice of whole grain bread
+- A cup of tea
+
+Afternoon Snack:
+- A serving of plain yogurt (tarag) with a drizzle of honey
+
+Dinner:
+- Manti (steamed dumplings) filled with ground meat (such as lamb or beef) and sauteed onions, ensuring that no egg is used in the dough
+- A side of non-allergic vegetable salad including lettuce, cucumber, radishes, and fresh herbs like dill or parsley, dressed with olive oil and a bit of lemon juice
+- A cup of tea
+
+Dessert (optional):
+- Homemade rice pudding (süt helvası) made with rice, cow milk, sugar, and a pinch of cinnamon, ensuring that it does not include almonds or other nuts
+
+It is essential to pay attention to any potential allergens when cooking or buying these dishes. Always inform the servers about Rahim's food allergies when eating out, and encourage him to carry a list of allergens in case it is needed for clarity.
