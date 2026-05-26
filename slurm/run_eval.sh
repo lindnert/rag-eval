@@ -57,6 +57,10 @@ export HF_HOME="${WORKDIR}/.hf_cache"
 export LLAMA_MODELS_DIR="${WORKDIR}/.llamacpp_models"
 mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
 
+# Run Ragas FaithfulnesswithHHEM on CPU — the GPU is fully occupied by the
+# llama-server gen/emb instances, and HHEM (184M params) is fast enough on CPU.
+export HHEM_DEVICE="${HHEM_DEVICE:-cpu}"
+
 GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-E2B-it-GGUF}"
 GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-E2B-it-UD-Q4_K_XL.gguf}"
 EMB_REPO="${LLAMACPP_EMB_REPO:-Qwen/Qwen3-Embedding-0.6B-GGUF}"

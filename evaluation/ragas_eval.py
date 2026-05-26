@@ -1,6 +1,7 @@
 import asyncio
 import contextvars
 import os
+import threading
 from typing import cast
 
 
@@ -10,6 +11,7 @@ from ragas.run_config import RunConfig
 from ragas.dataset_schema import EvaluationResult
 from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
+from ragas.metrics._faithfulness import FaithfulnesswithHHEM
 from datasets import Dataset
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.embeddings import Embeddings
@@ -46,7 +48,26 @@ _retry_state = {"last_primary_n": 0, "retry_idx": 0}
 _prompt_store: dict[int, str] = {}
 _diag_state = {"printed": False, "concurrent_printed": False}
 
+HHEM_DEVICE = os.getenv("HHEM_DEVICE", "cuda")
+HHEM_BATCH_SIZE = int(os.getenv("HHEM_BATCH_SIZE", "16"))
+_hhem_metric: FaithfulnesswithHHEM | None = None
+_hhem_lock = threading.Lock()  # guards lazy init across run_ragas worker threads
+
 _RETRY_PROMPT_MARKER = "The output string did not satisfy"
+
+def _get_hhem_metric() -> FaithfulnesswithHHEM:
+    global _hhem_metric
+    if _hhem_metric is None:
+        with _hhem_lock:
+            if _hhem_metric is None:
+                print(f"[ragas_eval] loading HHEM on {HHEM_DEVICE} (batch_size={HHEM_BATCH_SIZE})", flush=True)
+                _hhem_metric = FaithfulnesswithHHEM(device=HHEM_DEVICE, batch_size=HHEM_BATCH_SIZE)
+    return _hhem_metric
+
+
+# Eagerly load HHEM at import time so the first batch of concurrent samples
+# doesn't race on lazy init (and so download/load failures surface before eval starts).
+_get_hhem_metric()
 
 
 def _build_base_llm() -> ChatOpenAI:
@@ -170,13 +191,14 @@ def run_ragas(sample):
     embeddings = _build_embeddings()
 
     try:
+        hhem = _get_hhem_metric()
         result = cast(
             EvaluationResult,
             evaluate(
                 dataset,
                 llm=ragas_llm,
                 embeddings=embeddings,
-                metrics=[Faithfulness(), AnswerRelevancy(strictness=3)],
+                metrics=[Faithfulness(), AnswerRelevancy(strictness=3), hhem],
                 return_executor=False,
                 raise_exceptions=raise_exceptions,
                 run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=3, max_wait=60),
@@ -185,9 +207,11 @@ def run_ragas(sample):
 
         faith = result["faithfulness"][0]
         relev = result["answer_relevancy"][0]
+        faith_hhem = result["faithfulness_with_hhem"][0]
         return {
             "ragas_faithfulness": faith if faith == faith else None,
             "ragas_answer_relevancy": relev if relev == relev else None,
+            "ragas_faithfulness_with_hhem": faith_hhem if faith_hhem == faith_hhem else None,
         }
 
     except Exception as e:
@@ -202,6 +226,7 @@ def run_ragas(sample):
         return {
             "ragas_faithfulness": None,
             "ragas_answer_relevancy": None,
+            "ragas_faithfulness_with_hhem": None,
             "ragas_error": f"{type(e).__name__}: {e}",
         }
 
