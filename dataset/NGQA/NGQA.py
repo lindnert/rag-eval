@@ -272,7 +272,7 @@ def graph_to_sample(
     user_profile = _verbalize_user(parsed)
 
     return {
-        'id': question_id,
+        'id': f'ngqa_{question_id}',
         'query': _compose_query(question, food_facts, user_profile),
         'context_variants': {
             # Always-provided structured context (not retrieved in a real system)
@@ -361,6 +361,7 @@ def process_csv(
 # Demo
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-   
-    n = process_csv('NGQA.csv', 'NGQA.jsonl')
+    from pathlib import Path
+    _HERE = Path(__file__).parent
+    n = process_csv(str(_HERE / 'NGQA.csv'), str(_HERE / 'NGQA.jsonl'))
     print(f"Processed {n} samples")

@@ -67,7 +67,7 @@ def _parse(text: str, case_id: str) -> dict:
     answer = answer.rstrip()
 
     return {
-        "id": case_id,
+        "id": f"llmdrs_{case_id}",
         "source_dataset": "llmdrs",
         "query": query,
         "gold": {"reference_answer": answer},
