@@ -264,6 +264,7 @@ async def process_single_query(
                     hyde_ctx, hyde_retrieval_scores = await loop.run_in_executor(
                         None, lambda: _retrieve(vectorstore, hyde_text)
                     )
+                    sc_metadata["hyde_retrieval_fake_answer"] = hyde_text
                     sc_metadata["original_contexts"] = list(contexts)
                     sc_metadata["original_retrieval_scores"] = list(retrieval_scores)
                     contexts, retrieval_scores = _merge_and_rerank(
