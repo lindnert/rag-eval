@@ -14,6 +14,7 @@ from rag.llm_config import LLAMACPP_RAG_CONCURRENCY, LLAMACPP_RAG_MODEL
 from dataset.NGQA.loader import load_ngqa, to_metadata as ngqa_to_metadata
 from dataset.LLMDRS.loader import load_llmdrs, to_metadata as llmdrs_to_metadata
 from dataset.MMLU.loader import load_mmlu, to_metadata as mmlu_to_metadata
+from dataset.MEDQA.loader import load_medqa, to_metadata as medqa_to_metadata
 
 if __name__ == "__main__":
 
@@ -77,6 +78,11 @@ if __name__ == "__main__":
     # (choices are hidden from the model). Probes factual recall vs retrieval.
     mmlu_samples = load_mmlu(limit=3)
 
+    # MEDQA — USMLE-style medical Qs used as an out-of-domain rejection probe;
+    # the nutrition corpus shouldn't retrieve anything relevant, so a good RAG
+    # should abstain rather than hallucinate.
+    medqa_samples = load_medqa(limit=3)
+
     # Build (query, metadata) pairs per-dataset since each loader defines its
     # own `to_metadata`. The metadata dict is opaque to the pipeline and its
     # fields become top-level keys on every result row.
@@ -84,6 +90,7 @@ if __name__ == "__main__":
         [(s["query"], ngqa_to_metadata(s)) for s in ngqa_samples]
         + [(s["query"], llmdrs_to_metadata(s)) for s in llmdrs_samples]
         + [(s["query"], mmlu_to_metadata(s)) for s in mmlu_samples]
+        + [(s["query"], medqa_to_metadata(s)) for s in medqa_samples]
     )
 
     # Shuffle the combined cross-dataset/cross-stratum list with a fixed seed
