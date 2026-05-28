@@ -63,9 +63,10 @@ GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/Qwen3.5-4B-GGUF}"
 GEN_FILE="${LLAMACPP_GEN_FILE:-Qwen3.5-4B-UD-Q4_K_XL.gguf}"
 
 # Family-distinct from the gemma judge in evaluation/, avoids self-reference bias.
-# hf download skips re-fetch if --local-dir already contains the file.
+# Use the Python API directly — the `hf` CLI leaks a click.exceptions.Exit(0)
+# on success in some typer/click version combos, which trips `set -e`.
 echo "Downloading gen GGUF (cached in ${LLAMA_MODELS_DIR}/gen)..."
-hf download "${GEN_REPO}" "${GEN_FILE}" --local-dir "${LLAMA_MODELS_DIR}/gen"
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='${GEN_REPO}', filename='${GEN_FILE}', local_dir='${LLAMA_MODELS_DIR}/gen')"
 GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
 echo "Gen GGUF: ${GEN_PATH}"
 
