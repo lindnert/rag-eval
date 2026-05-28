@@ -322,8 +322,7 @@ async def process_single_query(
                     strict_messages,
                     enable_thinking=False,
                 )
-                sc_metadata["answer_thinking"] = regen_answer
-                answer = _strip_thinking(regen_answer)
+                answer = regen_answer
                 gen_logprobs = regen_lp
                 prompt_tokens += p2
                 gen_tokens += g2
