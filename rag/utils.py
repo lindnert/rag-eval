@@ -49,13 +49,15 @@ SYSTEM_PROMPT_NO_RAG = (
 )
 
 # Stricter prompt used by the rag_sc regen path when generation triggers fire.
+# Kept deliberately short and unambiguous: earlier multi-step versions ("first
+# identify, then write…") sent the 4B thinking model into multi-thousand-token
+# meta-loops about how to interpret the instructions instead of answering.
 SYSTEM_PROMPT_RAG_STRICT = (
-    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
-    "Lies den bereitgestellten Kontext sorgfältig. "
-    "Identifiziere zunächst, welche Teile des Kontextes für die Frage relevant sind. "
-    "Schreibe dann deine Antwort ausschließlich auf Basis dieser relevanten Teile. "
-    "Falls der Kontext nicht genügend Informationen enthält, sage dies ausdrücklich. "
-    "Antworte kurz und prägnant (max 3-4 Absätze)."
+    "Du bist ein evidenzbasierter Ernährungsberater. "
+    "Verwende ausschließlich Informationen aus dem Kontext. "
+    "Wenn der Kontext die Frage nicht beantwortet, sage dies in einem Satz und höre auf. "
+    "Andernfalls antworte direkt und in höchstens 3 Absätzen. "
+    "Beginne sofort mit der Antwort."
 )
 
 # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
@@ -184,7 +186,13 @@ async def _generate(
                 answer = f"[LLAMACPP ERROR] {parsed['error']}"
             else:
                 choice = parsed["choices"][0]
-                answer = choice["message"]["content"]
+                # Recent llama.cpp builds split Qwen3's <think>…</think> out of
+                # `content` into a separate `reasoning_content` field. Re-attach
+                # it so _strip_thinking can handle both layouts uniformly.
+                msg = choice["message"]
+                reasoning = msg.get("reasoning_content") or ""
+                content = msg.get("content") or ""
+                answer = f"<think>{reasoning}</think>{content}" if reasoning else content
                 lp = choice.get("logprobs") or {}
                 content = lp.get("content") or []
                 gen_logprobs = [
