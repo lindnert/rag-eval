@@ -1,9 +1,24 @@
 import asyncio
 import contextvars
 import os
+import sys
 import threading
+import types
 from typing import cast
 
+# ragas 0.4.3 eagerly imports `langchain_community.chat_models.vertexai`,
+# which was removed in langchain-community 0.4.x (Vertex now lives in
+# langchain-google-vertexai). Inject a shim module so the import resolves
+# before ragas is loaded. We don't actually call ChatVertexAI anywhere.
+if "langchain_community.chat_models.vertexai" not in sys.modules:
+    _vertex_shim = types.ModuleType("langchain_community.chat_models.vertexai")
+    try:
+        from langchain_google_vertexai import ChatVertexAI as _ChatVertexAI
+    except Exception:  # pragma: no cover — fall back to a stub if pkg missing
+        class _ChatVertexAI:  # type: ignore[no-redef]
+            pass
+    _vertex_shim.ChatVertexAI = _ChatVertexAI
+    sys.modules["langchain_community.chat_models.vertexai"] = _vertex_shim
 
 from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics as _print_gpu_diagnostics
 from ragas import evaluate
