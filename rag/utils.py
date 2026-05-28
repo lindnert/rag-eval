@@ -93,14 +93,21 @@ def _retrieval_correction_triggers(scores):
 
 
 def _logprob_stats(logprobs):
-    """Return (mean, min) of a non-empty logprob list."""
-    return sum(logprobs) / len(logprobs), min(logprobs)
+    """Return {'mean','min','max'} of a non-empty logprob list, or None."""
+    if not logprobs:
+        return None
+    return {
+        "mean": sum(logprobs) / len(logprobs),
+        "min": min(logprobs),
+        "max": max(logprobs),
+    }
 
 
 def _generation_correction_triggers(logprobs):
     if not logprobs:
         return ["empty_logprobs"]
-    mean_lp, min_lp = _logprob_stats(logprobs)
+    stats = _logprob_stats(logprobs)
+    mean_lp, min_lp = stats["mean"], stats["min"]
     triggers = []
     if mean_lp < RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD:
         triggers.append(f"mean={mean_lp:.3f}<{RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD}")
@@ -246,7 +253,7 @@ async def process_single_query(
                 "answer": f"[RETRIEVAL ERROR] {exc}",
                 "contexts": [],
                 "retrieval_scores": [],
-                "gen_logprobs": [],
+                "gen_logprob_stats": None,
             }
 
     # --- SC retrieval pass (budget=1) ----------------------------------------
@@ -292,13 +299,8 @@ async def process_single_query(
                 gen_logprobs
             )
             if sc_metadata["generation_correction_triggers"]:
-                orig_mean, orig_min = (
-                    _logprob_stats(gen_logprobs) if gen_logprobs else (None, None)
-                )
                 sc_metadata["original_answer"] = answer
-                sc_metadata["original_gen_logprobs"] = list(gen_logprobs)
-                sc_metadata["original_mean_logprob"] = orig_mean
-                sc_metadata["original_min_logprob"] = orig_min
+                sc_metadata["original_gen_logprob_stats"] = _logprob_stats(gen_logprobs)
                 strict_messages = [
                     {"role": "system", "content": SYSTEM_PROMPT_RAG_STRICT},
                     {"role": "user", "content": build_user_prompt(query, contexts)},
@@ -317,11 +319,6 @@ async def process_single_query(
                 gen_logprobs = regen_lp
                 prompt_tokens += p2
                 gen_tokens += g2
-                regen_mean, regen_min = (
-                    _logprob_stats(gen_logprobs) if gen_logprobs else (None, None)
-                )
-                sc_metadata["mean_logprob"] = regen_mean
-                sc_metadata["min_logprob"] = regen_min
                 sc_metadata["generation_retried_count"] += 1
 
         task_time = time.time() - task_start
@@ -356,7 +353,7 @@ async def process_single_query(
         "answer": answer,
         "contexts": contexts,
         "retrieval_scores": retrieval_scores,
-        "gen_logprobs": gen_logprobs,
+        "gen_logprob_stats": _logprob_stats(gen_logprobs),
     }
     if sc_metadata is not None:
         result["sc_metadata"] = sc_metadata
