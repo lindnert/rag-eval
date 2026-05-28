@@ -4,6 +4,10 @@ import subprocess
 
 _CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
+# Sentinel written to context-dependent metric fields for the no_rag variant,
+# where running those metrics would be meaningless (no retrieved contexts).
+NO_RAG_SENTINEL = "no rag - no retrieved contexts"
+
 
 def _prompt_to_text(prompt) -> str:
     if hasattr(prompt, "to_string"):

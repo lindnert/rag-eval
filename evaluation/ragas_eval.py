@@ -20,7 +20,14 @@ if "langchain_community.chat_models.vertexai" not in sys.modules:
     _vertex_shim.ChatVertexAI = _ChatVertexAI
     sys.modules["langchain_community.chat_models.vertexai"] = _vertex_shim
 
-from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics as _print_gpu_diagnostics
+import math
+
+from evaluation.utils import (
+    _prompt_to_text,
+    _strip_code_fences,
+    print_gpu_diagnostics as _print_gpu_diagnostics,
+    NO_RAG_SENTINEL,
+)
 from ragas import evaluate
 from ragas.run_config import RunConfig
 from ragas.dataset_schema import EvaluationResult
@@ -248,6 +255,7 @@ class RagasJSONWrapper:
 
 def run_ragas(sample):
     raise_exceptions = EVAL_DEBUG_LLM
+    has_contexts = bool(sample.get("contexts"))
 
     dataset = Dataset.from_dict({
         "question": [sample["query"]],
@@ -259,27 +267,44 @@ def run_ragas(sample):
     embeddings = _build_embeddings()
 
     try:
-        hhem = _get_hhem_metric()
+        # Faithfulness + HHEM require retrieved contexts; for the no_rag
+        # variant we only run AnswerRelevancy and report the rest as None.
+        if has_contexts:
+            metrics = [Faithfulness(), AnswerRelevancy(strictness=3), _get_hhem_metric()]
+        else:
+            metrics = [AnswerRelevancy(strictness=3)]
+
         result = cast(
             EvaluationResult,
             evaluate(
                 dataset,
                 llm=ragas_llm,
                 embeddings=embeddings,
-                metrics=[Faithfulness(), AnswerRelevancy(strictness=3), hhem],
+                metrics=metrics,
                 return_executor=False,
                 raise_exceptions=raise_exceptions,
                 run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=3, max_wait=60),
             ),
         )
 
-        faith = result["faithfulness"][0]
-        relev = result["answer_relevancy"][0]
-        faith_hhem = result["faithfulness_with_hhem"][0]
+        # ragas returns NaN for rows it couldn't score (e.g. empty claims
+        # list); surface those as None so the output stays valid JSON.
+        relev_raw = result["answer_relevancy"][0]
+        relev = None if math.isnan(relev_raw) else relev_raw
+
+        if has_contexts:
+            faith_raw = result["faithfulness"][0]
+            faith_hhem_raw = result["faithfulness_with_hhem"][0]
+            faith_out = None if math.isnan(faith_raw) else faith_raw
+            faith_hhem_out = None if math.isnan(faith_hhem_raw) else faith_hhem_raw
+        else:
+            faith_out = NO_RAG_SENTINEL
+            faith_hhem_out = NO_RAG_SENTINEL
+
         return {
-            "ragas_faithfulness": faith if faith == faith else None,
-            "ragas_answer_relevancy": relev if relev == relev else None,
-            "ragas_faithfulness_with_hhem": faith_hhem if faith_hhem == faith_hhem else None,
+            "ragas_faithfulness": faith_out,
+            "ragas_answer_relevancy": relev,
+            "ragas_faithfulness_with_hhem": faith_hhem_out,
         }
 
     except Exception as e:

@@ -11,7 +11,7 @@ from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric, ContextualRelevancyMetric
 
-from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics
+from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics, NO_RAG_SENTINEL
 from evaluation.eval_config_llamacpp import (
     LLAMACPP_EVAL_MODEL,
     LLAMACPP_GEN_BASE_URL,
@@ -190,7 +190,7 @@ def _metric_reason(metric) -> str:
     return reason
 
 
-def run_deepeval(sample):
+"""def run_deepeval(sample):
     test_case = LLMTestCase(
         input=sample["query"],
         actual_output=sample["answer"],
@@ -219,7 +219,7 @@ def run_deepeval(sample):
             "deepeval_contextual_relevance": None,
             "deepeval_contextual_relevance_reason": _NO_REASON_FALLBACK,
             "deepeval_error": f"{type(e).__name__}: {e}",
-        }
+        } """
 
 
 async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx: int | None = None):
@@ -227,19 +227,14 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
         _current_sample_idx.set(idx)
 
     async def _go():
+        has_contexts = bool(sample.get("contexts"))
         test_case = LLMTestCase(
             input=sample["query"],
             actual_output=sample["answer"],
-            retrieval_context=sample["contexts"],
+            retrieval_context=sample["contexts"] if has_contexts else None,
         )
         eval_model = LlamaCppWrapper(_build_llm())
         faithfulness, relevance, contextual_relevance = _build_metrics(eval_model)
-        outcomes = await asyncio.gather(
-            faithfulness.a_measure(test_case),
-            relevance.a_measure(test_case),
-            contextual_relevance.a_measure(test_case),
-            return_exceptions=True,
-        )
 
         def _pick(metric, outcome, score_key, reason_key):
             if isinstance(outcome, Exception):
@@ -255,13 +250,36 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
                 }
             return {score_key: metric.score, reason_key: _metric_reason(metric)}
 
-        result: dict = {}
-        result.update(_pick(faithfulness, outcomes[0],
-                            "deepeval_faithfulness", "deepeval_faithfulness_reason"))
-        result.update(_pick(relevance, outcomes[1],
+        # Faithfulness + contextual_relevance require retrieved contexts; for
+        # the no_rag variant we only run AnswerRelevancy.
+        if has_contexts:
+            outcomes = await asyncio.gather(
+                faithfulness.a_measure(test_case),
+                relevance.a_measure(test_case),
+                contextual_relevance.a_measure(test_case),
+                return_exceptions=True,
+            )
+            result: dict = {}
+            result.update(_pick(faithfulness, outcomes[0],
+                                "deepeval_faithfulness", "deepeval_faithfulness_reason"))
+            result.update(_pick(relevance, outcomes[1],
+                                "deepeval_relevance", "deepeval_relevance_reason"))
+            result.update(_pick(contextual_relevance, outcomes[2],
+                                "deepeval_contextual_relevance", "deepeval_contextual_relevance_reason"))
+            return result
+
+        outcomes = await asyncio.gather(
+            relevance.a_measure(test_case),
+            return_exceptions=True,
+        )
+        result = {
+            "deepeval_faithfulness": NO_RAG_SENTINEL,
+            "deepeval_faithfulness_reason": NO_RAG_SENTINEL,
+            "deepeval_contextual_relevance": NO_RAG_SENTINEL,
+            "deepeval_contextual_relevance_reason": NO_RAG_SENTINEL,
+        }
+        result.update(_pick(relevance, outcomes[0],
                             "deepeval_relevance", "deepeval_relevance_reason"))
-        result.update(_pick(contextual_relevance, outcomes[2],
-                            "deepeval_contextual_relevance", "deepeval_contextual_relevance_reason"))
         return result
 
     if semaphore is None:
