@@ -67,8 +67,10 @@ EMB_REPO="${LLAMACPP_EMB_REPO:-Qwen/Qwen3-Embedding-0.6B-GGUF}"
 EMB_FILE="${LLAMACPP_EMB_FILE:-Qwen3-Embedding-0.6B-Q8_0.gguf}"
 
 echo "Downloading GGUFs (cached in ${HF_HOME})..."
-hf download "${GEN_REPO}" "${GEN_FILE}" --local-dir "${LLAMA_MODELS_DIR}/gen"
-hf download "${EMB_REPO}" "${EMB_FILE}" --local-dir "${LLAMA_MODELS_DIR}/emb"
+# Use the Python API directly — the `hf` CLI leaks a click.exceptions.Exit(0)
+# on success in some typer/click version combos, which trips `set -e`.
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='${GEN_REPO}', filename='${GEN_FILE}', local_dir='${LLAMA_MODELS_DIR}/gen')"
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='${EMB_REPO}', filename='${EMB_FILE}', local_dir='${LLAMA_MODELS_DIR}/emb')"
 GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
 EMB_PATH="${LLAMA_MODELS_DIR}/emb/${EMB_FILE}"
 echo "Gen GGUF: ${GEN_PATH}"
