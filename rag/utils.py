@@ -11,7 +11,6 @@ from rag.llm_config import (
     LLAMACPP_RAG_ENABLE_THINKING,
     LLAMACPP_RAG_MAX_TOKENS,
     LLAMACPP_RAG_MODEL,
-    LLAMACPP_RAG_REGEN_MAX_TOKENS,
     LLAMACPP_RAG_TEMPERATURE,
     LLAMACPP_RAG_TOP_LOGPROBS,
     LLAMACPP_RAG_TOP_P,
@@ -313,14 +312,15 @@ async def process_single_query(
                     {"role": "system", "content": SYSTEM_PROMPT_RAG_STRICT},
                     {"role": "user", "content": build_user_prompt(query, contexts)},
                 ]
-                # Flip thinking on for the regen — Qwen3's reasoning mode buys
-                # an extra "look before you leap" pass over the context. Use a
-                # larger token budget since the <think> trace eats ~1k tokens.
+                # Thinking is disabled on regen: on Qwen3.5-4B-Q4 the reasoning
+                # trace consistently loops on self-doubt ("Wait, let me check
+                # again…") and either burns the full budget or leaves an empty
+                # post-think answer. The stricter system prompt alone is what
+                # actually improves the regen output.
                 regen_answer, regen_lp, p2, g2 = await _generate(
                     session,
                     strict_messages,
-                    enable_thinking=True,
-                    max_tokens=LLAMACPP_RAG_REGEN_MAX_TOKENS,
+                    enable_thinking=False,
                 )
                 sc_metadata["answer_thinking"] = regen_answer
                 answer = _strip_thinking(regen_answer)
