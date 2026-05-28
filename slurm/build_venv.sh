@@ -21,6 +21,12 @@ pip install --upgrade pip
 sed -i '/pywin32/d' requirements.txt
 sed -i 's/==/>=/g' requirements.txt
 
+# Install CPU-only torch first — HHEM runs on CPU, so we don't need the
+# ~750 MB CUDA-bundled wheel that the default PyPI index ships. The
+# subsequent `pip install -r requirements.txt` sees torch satisfied and
+# skips re-downloading it.
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+
 pip install -r requirements.txt
 
 # ---------------------------------------------------------------------------
