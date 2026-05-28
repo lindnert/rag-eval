@@ -65,18 +65,71 @@ _diag_state = {"printed": False, "concurrent_printed": False}
 
 HHEM_DEVICE = os.getenv("HHEM_DEVICE", "cuda")
 HHEM_BATCH_SIZE = int(os.getenv("HHEM_BATCH_SIZE", "16"))
-_hhem_metric: FaithfulnesswithHHEM | None = None
+
+
+class FaithfulnesswithHHEMPerChunk(FaithfulnesswithHHEM):
+    """HHEM faithfulness with per-(claim, chunk) scoring and max-aggregation.
+
+    HHEM-2.1-Open has a hard 512-token input limit. The stock ragas
+    implementation concatenates all retrieved contexts into a single
+    premise; when that exceeds 512 tokens the tokenizer silently truncates
+    from the right, so HHEM only sees the first ~third of the context and
+    scores get biased toward 0.
+
+    Instead: score each claim against each chunk individually (each pair
+    fits comfortably in 512 tokens), take the MAX across chunks per claim
+    (a claim is supported iff any single chunk supports it), then MEAN
+    over claims. The final averaging step matches the stock metric.
+    """
+
+    name: str = "faithfulness_with_hhem"
+
+    async def _ascore(self, row, callbacks) -> float:
+        import numpy as np
+
+        assert self.llm is not None, "LLM is not set"
+        statements = await self._create_statements(row, callbacks)
+        statements = statements.statements
+        if not statements:
+            return float("nan")
+
+        contexts = row.get("retrieved_contexts") or []
+        if not contexts:
+            return float("nan")
+
+        pairs: list[tuple[str, str]] = []
+        owners: list[int] = []
+        for claim_idx, claim in enumerate(statements):
+            for chunk in contexts:
+                pairs.append((chunk, claim))
+                owners.append(claim_idx)
+
+        raw_scores: list[float] = []
+        for batch in self._create_batch(pairs):
+            preds = self.nli_classifier.predict(batch).cpu().detach()
+            raw_scores.extend(preds.tolist())
+
+        per_claim_max = [-1.0] * len(statements)
+        for s, owner in zip(raw_scores, owners):
+            if s > per_claim_max[owner]:
+                per_claim_max[owner] = s
+
+        rounded = [round(s) for s in per_claim_max]
+        return float(np.mean(rounded))
+
+
+_hhem_metric: FaithfulnesswithHHEMPerChunk | None = None
 _hhem_lock = threading.Lock()  # guards lazy init across run_ragas worker threads
 
 _RETRY_PROMPT_MARKER = "The output string did not satisfy"
 
-def _get_hhem_metric() -> FaithfulnesswithHHEM:
+def _get_hhem_metric() -> FaithfulnesswithHHEMPerChunk:
     global _hhem_metric
     if _hhem_metric is None:
         with _hhem_lock:
             if _hhem_metric is None:
-                print(f"[ragas_eval] loading HHEM on {HHEM_DEVICE} (batch_size={HHEM_BATCH_SIZE})", flush=True)
-                _hhem_metric = FaithfulnesswithHHEM(device=HHEM_DEVICE, batch_size=HHEM_BATCH_SIZE)
+                print(f"[ragas_eval] loading HHEM on {HHEM_DEVICE} (batch_size={HHEM_BATCH_SIZE}, per-chunk max-agg)", flush=True)
+                _hhem_metric = FaithfulnesswithHHEMPerChunk(device=HHEM_DEVICE, batch_size=HHEM_BATCH_SIZE)
     return _hhem_metric
 
 
