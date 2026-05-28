@@ -184,7 +184,13 @@ async def _generate(
                 answer = f"[LLAMACPP ERROR] {parsed['error']}"
             else:
                 choice = parsed["choices"][0]
-                answer = choice["message"]["content"]
+                # Recent llama.cpp builds split Qwen3's <think>…</think> out of
+                # `content` into a separate `reasoning_content` field. Re-attach
+                # it so _strip_thinking can handle both layouts uniformly.
+                msg = choice["message"]
+                reasoning = msg.get("reasoning_content") or ""
+                content = msg.get("content") or ""
+                answer = f"<think>{reasoning}</think>{content}" if reasoning else content
                 lp = choice.get("logprobs") or {}
                 content = lp.get("content") or []
                 gen_logprobs = [
