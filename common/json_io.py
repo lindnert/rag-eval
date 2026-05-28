@@ -2,12 +2,9 @@ import json
 import re
 
 # Fields whose values are flat numeric arrays we want collapsed onto one line
-# in the dumped JSON — keeps full precision but avoids long scroll walls in
-# the result files (gen_logprobs is typically hundreds of tokens per sample).
+# in the dumped JSON — keeps full precision but avoids long scroll walls.
 _COMPACT_ARRAY_FIELDS = (
-    "gen_logprobs",
     "retrieval_scores",
-    "original_gen_logprobs",
     "original_retrieval_scores",
 )
 

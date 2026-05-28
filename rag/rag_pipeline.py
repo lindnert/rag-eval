@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 import asyncio
+import json
 import time
 from datetime import datetime
 
@@ -97,8 +98,7 @@ if __name__ == "__main__":
 
     for idx, result in enumerate(results, 1):
         print(f"\n[Result {idx}/{len(results)}]")
-        for k, v in result.items():
-            print(f"{k}: {v}")
+        print(json.dumps(result, indent=2, ensure_ascii=False))
         print(f"-" * 80, flush=True)
 
     results_dir = os.environ.get("RESULTS_DIR", "results")
