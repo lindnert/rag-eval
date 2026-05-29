@@ -17,6 +17,7 @@ def to_metadata(sample: dict) -> dict:
         "source_dataset": "llmdrs",
         "id": sample.get("id"),
         "reference_answer": g.get("reference_answer"),
+        "dataset_metadata": {},
     }
 
 

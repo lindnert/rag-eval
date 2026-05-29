@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from common.json_io import dump as dump_json
+from common.schema import finalize
 from rag.utils import run_rag_pipeline_async
 from rag.llm_config import LLAMACPP_RAG_CONCURRENCY, LLAMACPP_RAG_MODEL
 
@@ -66,8 +67,8 @@ if __name__ == "__main__":
     s2 = load_ngqa(difficulty="easy", has_conflict=True, limit=3)
     s3 = load_ngqa(difficulty="medium", has_conflict=False, limit=3)
     s4 = load_ngqa(difficulty="medium", has_conflict=True, limit=3)
-    s5 = load_ngqa(difficulty="hard", summary_agrees_with_reference_answer=True, limit=3)
-    s6 = load_ngqa(difficulty="hard", summary_agrees_with_reference_answer=False, limit=3)
+    s5 = load_ngqa(difficulty="hard", is_healthy_agrees_with_csv_answer=True, limit=3)
+    s6 = load_ngqa(difficulty="hard", is_healthy_agrees_with_csv_answer=False, limit=3)
     ngqa_samples = s1 + s2 + s3 + s4 + s5 + s6
 
     # LLMDRS — all 50 English patient profiles. Gold is GPT-4 output, used to
@@ -132,7 +133,7 @@ if __name__ == "__main__":
     shard_dir = os.path.join(results_dir, "_shards_rag", shard_tag.split("_")[0])
     os.makedirs(shard_dir, exist_ok=True)
     output_file = os.path.join(shard_dir, f"shard_{shard_tag}.json")
-    dump_json(results, output_file)
+    dump_json([finalize(r) for r in results], output_file)
 
     print(f"\n✓ Shard results saved to {output_file}")
 

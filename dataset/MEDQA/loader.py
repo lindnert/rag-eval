@@ -14,6 +14,7 @@ def to_metadata(sample: dict) -> dict:
         "source_dataset": "medqa",
         "id": sample["id"],
         "reference_answer": sample["gold"]["reference_answer"],
+        "dataset_metadata": {},
     }
 
 

@@ -3,6 +3,7 @@ import time
 import requests
 from datetime import datetime
 from common.json_io import dump as dump_json
+from common.schema import finalize
 from evaluation.ragas_eval import run_ragas_batch
 from evaluation.deepeval_eval import run_deepeval_batch
 from evaluation.custom_eval import run_custom
@@ -48,7 +49,7 @@ def evaluate_results(results, partial_path=None):
         )
         results[idx]['ragas_scores'] = scores
         if partial_path:
-            dump_json(results, partial_path)
+            dump_json([finalize(r) for r in results], partial_path)
 
     try:
         run_ragas_batch(results, on_done=_on_ragas_done)
@@ -89,7 +90,7 @@ def evaluate_results(results, partial_path=None):
         )
         results[idx]['deepeval_scores'] = scores
         if partial_path:
-            dump_json(results, partial_path)
+            dump_json([finalize(r) for r in results], partial_path)
 
     try:
         run_deepeval_batch(results, on_done=_on_deepeval_done)
@@ -116,7 +117,7 @@ def evaluate_results(results, partial_path=None):
 
 def save_evaluated_results(results, output_file="evaluated_results.json"):
     """Save fully evaluated results"""
-    dump_json(results, output_file)
+    dump_json([finalize(r) for r in results], output_file)
     print(f"✓ Evaluated results saved to {output_file}\n", flush=True)
 
 

@@ -155,7 +155,7 @@ def _build_gold(parsed: dict) -> dict:
     Build the gold answer in three granularities:
       - is_healthy: bool, for binary classification metrics
       - conflicts: structured list, for multi-label metrics (matches NGQA -ML task)
-      - summary: natural-language answer, for LLM-as-judge / semantic scoring
+      - reference_answer: natural-language answer, for LLM-as-judge / semantic scoring
     """
     contradictions = parsed['contradictions']
 
@@ -172,22 +172,22 @@ def _build_gold(parsed: dict) -> dict:
         favorable = [humanize_tag(t) for t in parsed['nutrition_tags']
                      if t.startswith('low_') or t in ('high_protein', 'high_fiber')]
         if favorable:
-            summary = (f"This food appears suitable for the user, because "
-                       f"it is {', '.join(favorable)}.")
+            reference_answer = (f"This food appears suitable for the user, because "
+                                f"it is {', '.join(favorable)}.")
         else:
-            summary = "This food appears suitable for the user based on the given profile."
+            reference_answer = "This food appears suitable for the user based on the given profile."
     else:
         phrases = [
             f"the user's {c['condition']} conflicts with the food being "
             f"{humanize_tag(c['nutrient_tag'])}"
             for c in contradictions
         ]
-        summary = "This food is not recommended because " + "; ".join(phrases) + "."
+        reference_answer = "This food is not recommended because " + "; ".join(phrases) + "."
 
     return {
         'is_healthy': len(contradictions) == 0,
         'conflicts': conflicts,
-        'summary': summary,
+        'reference_answer': reference_answer,
     }
 
 
@@ -233,7 +233,7 @@ def graph_to_sample(
     edges: list,
     question: str,
     question_id: Any = None,
-    reference_answer: str | None = None,
+    csv_short_answer: str | None = None,
     difficulty: str | None = None,
 ) -> dict:
     """
@@ -248,7 +248,10 @@ def graph_to_sample(
           * 'user_profile': structured user info (from user profile in production)
           * 'retrieved': None (to be filled by your RAG system at eval time)
       - gold: multi-granularity ground-truth answer
-          * 'reference_answer': the original NGQA answer string, if provided
+          * 'reference_answer': graph-derived natural-language gold (was 'summary')
+          * 'csv_short_answer': NGQA CSV's original short Yes/No answer
+          * 'is_healthy_agrees_with_csv_answer': True if the CSV verdict polarity
+                matches the contradict-derived is_healthy
       - difficulty: difficulty level from the source CSV, if provided
       - knowledge_required: split between food facts and clinical rules;
           clinical_rules are the gold retrieval targets
@@ -256,16 +259,16 @@ def graph_to_sample(
     """
     parsed = _parse_graph(nodes, edges)
     gold = _build_gold(parsed)
-    if reference_answer is not None:
-        gold['reference_answer'] = reference_answer
-        # On the hard split, NGQA's reference_answer judges general nutritional
-        # quality and can disagree with the user-specific is_healthy derived
-        # from contradict edges (~36% of hard samples; always with
-        # is_healthy=False but reference="Yes"). Flag it for downstream filtering.
-        m = re.match(r'^(yes|no)\b', reference_answer.strip().lower())
-        ref_polarity = (m.group(1) == 'yes') if m else None
-        gold['summary_agrees_with_reference_answer'] = (
-            None if ref_polarity is None else ref_polarity == gold['is_healthy']
+    if csv_short_answer is not None:
+        gold['csv_short_answer'] = csv_short_answer
+        # On the hard split, NGQA's CSV answer judges general nutritional quality
+        # and can disagree with the user-specific is_healthy derived from
+        # contradict edges (~36% of hard samples; always with is_healthy=False
+        # but csv_short_answer="Yes"). Flag it for downstream filtering.
+        m = re.match(r'^(yes|no)\b', csv_short_answer.strip().lower())
+        csv_polarity = (m.group(1) == 'yes') if m else None
+        gold['is_healthy_agrees_with_csv_answer'] = (
+            None if csv_polarity is None else csv_polarity == gold['is_healthy']
         )
 
     food_facts = _verbalize_food(parsed)
@@ -349,7 +352,7 @@ def process_csv(
                 edges=_parse_cell(row['edge_list']),
                 question_id=i,
                 question=row['question_hard'].strip(),
-                reference_answer=row['answer_hard'].strip(),
+                csv_short_answer=row['answer_hard'].strip(),
                 difficulty=row['difficulty'].strip()
             )
             fout.write(json.dumps(sample, ensure_ascii=False) + '\n')
