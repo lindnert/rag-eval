@@ -38,7 +38,7 @@ RAG_K = int(os.getenv("RAG_K", "3"))
 # Direction of FAISS similarity_search_with_score values:
 #   "lower"  → L2 distance, smaller = more similar (langchain default)
 #   "higher" → inner-product / cosine, larger = more similar
-RAG_SC_SCORE_DIRECTION = os.getenv("RAG_SC_SCORE_DIRECTION", "lower").lower()
+RAG_SC_SCORE_DIRECTION = os.getenv("RAG_SC_SCORE_DIRECTION", "higher").lower()
 
 # Trigger T: the *best* score in the retrieved set is itself unacceptable.
 #   lower=better → fire if min(scores) > threshold
@@ -49,7 +49,7 @@ RAG_SC_RETRIEVAL_BEST_THRESHOLD = float(
 
 # Trigger Δ: high spread between best and worst → noise mixed in.
 RAG_SC_RETRIEVAL_SPREAD_THRESHOLD = float(
-    os.getenv("RAG_SC_RETRIEVAL_SPREAD_THRESHOLD", "0.05")
+    os.getenv("RAG_SC_RETRIEVAL_SPREAD_THRESHOLD", "0.04")
 )
 
 # Trigger U: mean token logprob below this → low overall confidence.
