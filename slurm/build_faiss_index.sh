@@ -101,7 +101,7 @@ nvidia-smi || true
 # ---------------------------------------------------------------------------
 # 4. Build the index via preprocessing.utils.build_retriever()
 # ---------------------------------------------------------------------------
-export FAISS_INDEX_DIR="${FAISS_INDEX_DIR:-${WORKDIR}/richtlinien/faiss_index_bge_m3}"
+export FAISS_INDEX_DIR="${FAISS_INDEX_DIR:-${WORKDIR}/richtlinien/faiss_index_bge_m3_cosine}"
 echo "Writing index to ${FAISS_INDEX_DIR}"
 
 # build_retriever() short-circuits if the dir exists, so refuse to silently no-op.
