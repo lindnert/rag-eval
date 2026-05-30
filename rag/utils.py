@@ -1,5 +1,6 @@
 import asyncio
 import re
+import statistics
 import time
 from datetime import datetime
 
@@ -99,6 +100,7 @@ def _logprob_stats(logprobs):
         return None
     return {
         "mean": sum(logprobs) / len(logprobs),
+        "median": statistics.median(logprobs),
         "min": min(logprobs),
         "max": max(logprobs),
     }
