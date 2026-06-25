@@ -13,8 +13,8 @@ LLAMACPP_RAG_ENABLE_THINKING = (
     os.getenv("LLAMACPP_RAG_ENABLE_THINKING", "false").lower() == "true"
 )
 
-LLAMACPP_RAG_TEMPERATURE = float(os.getenv("LLAMACPP_RAG_TEMPERATURE", "0.1"))
-LLAMACPP_RAG_TOP_P = float(os.getenv("LLAMACPP_RAG_TOP_P", "0.95"))
+LLAMACPP_RAG_TEMPERATURE = float(os.getenv("LLAMACPP_RAG_TEMPERATURE", "0.0"))
+LLAMACPP_RAG_TOP_P = float(os.getenv("LLAMACPP_RAG_TOP_P", "1.0"))
 
 # Safety cap on completion length, not a target — the system prompt asks for
 # 3-4 paragraphs (~500-800 tokens). Keeps room for the self-correcting variant,
@@ -63,4 +63,4 @@ RAG_SC_GEN_MIN_LOGPROB_THRESHOLD = float(
 )
 
 # HyDE draft is only used to embed-and-retrieve; doesn't need to be long.
-RAG_SC_HYDE_MAX_TOKENS = int(os.getenv("RAG_SC_HYDE_MAX_TOKENS", "256"))
+RAG_SC_HYDE_MAX_TOKENS = int(os.getenv("RAG_SC_HYDE_MAX_TOKENS", "512"))

@@ -70,18 +70,17 @@ _retry_state = {"last_primary_n": 0, "retry_idx": 0}
 _prompt_store: dict[int, str] = {}
 _diag_state = {"printed": False, "concurrent_printed": False}
 
-HHEM_DEVICE = os.getenv("HHEM_DEVICE", "cuda")
+HHEM_DEVICE = os.getenv("HHEM_DEVICE", "cpu") # fallback
 HHEM_BATCH_SIZE = int(os.getenv("HHEM_BATCH_SIZE", "16"))
 
 
 class FaithfulnesswithHHEMPerChunk(FaithfulnesswithHHEM):
     """HHEM faithfulness with per-(claim, chunk) scoring and max-aggregation.
 
-    HHEM-2.1-Open has a hard 512-token input limit. The stock ragas
-    implementation concatenates all retrieved contexts into a single
-    premise; when that exceeds 512 tokens the tokenizer silently truncates
-    from the right, so HHEM only sees the first ~third of the context and
-    scores get biased toward 0.
+    Despite HHEM-2.1-Open having no 512-token input limit (as the old version
+    did - https://huggingface.co/vectara/hallucination_evaluation_model)
+    it was trained on short sequences. The stock ragas implementation
+    concatenates all retrieved contexts into a single premise;
 
     Instead: score each claim against each chunk individually (each pair
     fits comfortably in 512 tokens), take the MAX across chunks per claim

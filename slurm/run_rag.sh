@@ -12,7 +12,7 @@
 #SBATCH --partition=NvidiaAll
 #SBATCH --exclude=adakit
 #SBATCH --exclusive
-#SBATCH --array=0-2
+#SBATCH --array=0-14
 
 ## Submit with: sbatch slurm/run_rag.sh
 ## Override array size (= number of shards / nodes):

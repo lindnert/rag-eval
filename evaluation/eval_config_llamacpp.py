@@ -12,11 +12,11 @@ LLAMACPP_GEN_BASE_URL = os.getenv("LLAMACPP_GEN_BASE_URL", "http://localhost:808
 LLAMACPP_EMB_BASE_URL = os.getenv("LLAMACPP_EMB_BASE_URL", "http://localhost:8081/v1")
 
 LLAMACPP_TEMPERATURE = float(os.getenv("LLAMACPP_TEMPERATURE", "0.0"))
-LLAMACPP_NUM_PREDICT = int(os.getenv("LLAMACPP_NUM_PREDICT", "8192"))
-LLAMACPP_TOP_P = float(os.getenv("LLAMACPP_TOP_P", "0.90"))
+LLAMACPP_NUM_PREDICT = int(os.getenv("LLAMACPP_NUM_PREDICT", "4500"))
+LLAMACPP_TOP_P = float(os.getenv("LLAMACPP_TOP_P", "1.0"))
 LLAMACPP_REPEAT_PENALTY = float(os.getenv("LLAMACPP_REPEAT_PENALTY", "1.1"))
-LLAMACPP_REPEAT_LAST_N = int(os.getenv("LLAMACPP_REPEAT_LAST_N", "512"))
-LLAMACPP_CONTEXT_LENGTH = int(os.getenv("LLAMACPP_CONTEXT_LENGTH", "16384"))
+LLAMACPP_REPEAT_LAST_N = int(os.getenv("LLAMACPP_REPEAT_LAST_N", "16"))
+LLAMACPP_CONTEXT_LENGTH = int(os.getenv("LLAMACPP_CONTEXT_LENGTH", "32768"))
 
 JSON_SYSTEM_PROMPT = (
     "You are a RAG evaluation assistant. Your task is to evaluate the quality of a generated answer based on the question, the answer, and the retrieved contexts. "
