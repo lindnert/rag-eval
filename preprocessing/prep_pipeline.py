@@ -1,15 +1,28 @@
 import os
+import sys
 import json
-import utils
 from pathlib import Path
 
+# Running this file directly puts only preprocessing/ on sys.path (so `import utils`
+# works) but not the project root, so `retrieval` can't be found. Add the root.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import utils
 from retrieval import build_retriever
 
 DATA_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien")
 OUTPUT_DIR = DATA_DIR
 
+# Tables that need a dedicated row-by-row parser instead of generic markdown extraction.
+REFERENCE_TABLE_BUILDERS = {
+    "DGE-Referenzwerte.pdf": utils.build_reference_nodes,
+    "US_intstitute_of_Medicine.pdf": utils.build_iom_nodes,
+}
+
 def process_html(html_path):
-    html = Path(html_path).read_text(encoding="utf-8", errors="ignore")
+    # Read raw bytes so trafilatura/BeautifulSoup can detect the real charset.
+    # (read_text(errors="ignore") silently dropped undecodable bytes -> mojibake.)
+    html = Path(html_path).read_bytes()
     text = utils.clean_webfile(html)
     text = utils.basic_clean(text)
 
@@ -21,7 +34,9 @@ def process_normal_pdf(pdf_path):
     pages = utils.remove_repeated_lines(pages)
     pages = utils.filter_low_content_pages(pages)
 
-    text = "\n".join(pages)
+    # Join with a blank line so page breaks become paragraph boundaries
+    # (the splitter prefers to break there, not mid-sentence).
+    text = "\n\n".join(pages)
     text = utils.basic_clean(text)
 
     metadata = utils.build_metadata(pdf_path, "normal")
@@ -67,6 +82,15 @@ def generate_chunks():
 
             elif doc_type == "PDF_table":
                 if not file.endswith(".pdf"):
+                    continue
+                if file in REFERENCE_TABLE_BUILDERS:
+                    metadata = utils.build_metadata(path, "table")
+                    metadata["doc_type"] = doc_type
+                    metadata["source"] = file
+                    ref_nodes = REFERENCE_TABLE_BUILDERS[file](path, metadata)
+                    if not ref_nodes:
+                        print(f"  Warning: no reference rows parsed from {file}")
+                    all_nodes.extend(ref_nodes)
                     continue
                 text, metadata = process_table_pdf(path)
 
