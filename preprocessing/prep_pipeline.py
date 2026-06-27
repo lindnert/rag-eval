@@ -116,4 +116,3 @@ def generate_chunks():
 
 if __name__ == "__main__":
     generate_chunks()
-    build_retriever()
