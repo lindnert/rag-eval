@@ -568,6 +568,29 @@ def build_iom_nodes(pdf_path: str, metadata: dict) -> List[TextNode]:
 
 ## ---------------------- For all ------------------------
 
+def detect_lang(text):
+    """Best-effort language tag in {'en', 'de'} for a chunk.
+
+    Used only for per-language analysis in evaluation (slicing metrics by
+    document language), not for retrieval. Restricted to the two languages
+    present in the corpus. Falls back to a German-cue heuristic if py3langid
+    isn't installed."""
+    sample = (text or "").strip()
+    if not sample:
+        return "unknown"
+    try:
+        import py3langid
+
+        py3langid.set_languages(["en", "de"])
+        return py3langid.classify(sample)[0]
+    except Exception:
+        lowered = f" {sample.lower()} "
+        de_cues = (
+            "ä", "ö", "ü", "ß", " der ", " die ", " und ", " für "
+        )
+        return "de" if any(cue in lowered for cue in de_cues) else "en"
+
+
 def build_metadata(doc_path, doc_type):
     root_dir = Path(__file__).resolve().parent.parent
     folder_path = Path(doc_path).resolve().parent.relative_to(root_dir)

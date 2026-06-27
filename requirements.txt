@@ -115,6 +115,7 @@ pluggy==1.6.0
 portalocker==3.2.0
 posthog==5.4.0
 propcache==0.4.1
+py3langid==0.3.0
 pyarrow==23.0.1
 pycparser==3.0
 pydantic==2.12.5
@@ -136,6 +137,7 @@ pytz==2026.1.post1
 pywin32==311
 PyYAML==6.0.3
 ragas==0.4.3
+rank-bm25==0.2.2
 regex==2026.3.32
 requests==2.33.0
 requests-toolbelt==1.0.0

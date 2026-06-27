@@ -99,18 +99,18 @@ echo "Embedding server warmed up"
 nvidia-smi || true
 
 # ---------------------------------------------------------------------------
-# 4. Build the index via preprocessing.utils.build_retriever()
+# 4. Build (and save) the FAISS index via retrieval.build_vectorstore()
 # ---------------------------------------------------------------------------
 export FAISS_INDEX_DIR="${FAISS_INDEX_DIR:-${WORKDIR}/richtlinien/faiss_index_bge_m3_cosine}"
 echo "Writing index to ${FAISS_INDEX_DIR}"
 
-# build_retriever() short-circuits if the dir exists, so refuse to silently no-op.
+# build_vectorstore() short-circuits if the dir exists, so refuse to silently no-op.
 if [ -d "${FAISS_INDEX_DIR}" ]; then
   echo "ERROR: ${FAISS_INDEX_DIR} already exists. Remove it or set FAISS_INDEX_DIR to a fresh path." >&2
   exit 1
 fi
 
-python -c "from retrieval import build_retriever; build_retriever()"
+python -c "from retrieval import build_vectorstore; build_vectorstore()"
 
 echo "==== Done at $(date) ===="
 ls -lh "${FAISS_INDEX_DIR}"

@@ -8,7 +8,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import utils
-from retrieval import build_retriever
 
 DATA_DIR = str(Path(__file__).resolve().parent.parent / "richtlinien")
 OUTPUT_DIR = DATA_DIR
@@ -99,6 +98,11 @@ def generate_chunks():
 
             nodes = utils.chunk_text(text, metadata)
             all_nodes.extend(nodes)
+
+    # Tag each chunk with its detected language for per-language analysis in
+    # evaluation (not used by retrieval — see retrieval/hybrid.py).
+    for n in all_nodes:
+        n.metadata["lang"] = utils.detect_lang(n.text)
 
     serialized = [
         {

@@ -6,10 +6,14 @@ from retrieval.embeddings import (
     EMB_BATCH_SIZE,
     get_embeddings,
 )
+from retrieval.hybrid import (
+    HybridRetriever,
+    bm25_tokenize,
+)
 from retrieval.retriever import (
     CHUNKS_PATH,
     FAISS_INDEX_DIR,
-    build_retriever,
+    build_hybrid_retriever,
     build_vectorstore,
 )
 
@@ -22,6 +26,8 @@ __all__ = [
     "get_embeddings",
     "CHUNKS_PATH",
     "FAISS_INDEX_DIR",
-    "build_retriever",
     "build_vectorstore",
+    "build_hybrid_retriever",
+    "HybridRetriever",
+    "bm25_tokenize",
 ]

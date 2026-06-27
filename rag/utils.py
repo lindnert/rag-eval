@@ -15,6 +15,7 @@ from rag.llm_config import (
     LLAMACPP_RAG_TEMPERATURE,
     LLAMACPP_RAG_TOP_LOGPROBS,
     LLAMACPP_RAG_TOP_P,
+    RAG_HYBRID_ALPHA,
     RAG_K,
     RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD,
     RAG_SC_GEN_MIN_LOGPROB_THRESHOLD,
@@ -23,19 +24,19 @@ from rag.llm_config import (
     RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
     RAG_SC_SCORE_DIRECTION,
 )
-from retrieval import QUERY_PREFIX, build_vectorstore
+from retrieval import build_hybrid_retriever
 
 VARIANTS = ("no_rag", "rag", "rag_sc")
 _RAG_VARIANTS = {"rag", "rag_sc"}
 
-_vectorstore = None
+_retriever = None
 
 
-def _get_vectorstore():
-    global _vectorstore
-    if _vectorstore is None:
-        _vectorstore = build_vectorstore()
-    return _vectorstore
+def _get_retriever():
+    global _retriever
+    if _retriever is None:
+        _retriever = build_hybrid_retriever(RAG_HYBRID_ALPHA)
+    return _retriever
 
 
 SYSTEM_PROMPT_RAG = (
@@ -148,11 +149,9 @@ def build_user_prompt(query, contexts):
     return "\n".join(lines)
 
 
-def _retrieve(vectorstore, query, k=RAG_K):
-    # QUERY_PREFIX is "" for bge-m3 but kept for symmetry with E5/Qwen3.
-    docs_with_scores = vectorstore.similarity_search_with_score(
-        QUERY_PREFIX + query, k=k
-    )
+def _retrieve(retriever, query, k=RAG_K):
+    # The hybrid retriever handles QUERY_PREFIX and dense+BM25 fusion internally.
+    docs_with_scores = retriever.search_with_score(query, k=k)
     contexts = [doc.page_content for doc, _ in docs_with_scores]
     scores = [float(score) for _, score in docs_with_scores]
     return contexts, scores
@@ -249,10 +248,10 @@ async def process_single_query(
     sc_metadata = None  # only populated for variant == "rag_sc"
 
     if variant in _RAG_VARIANTS:
-        vectorstore = _get_vectorstore()
+        retriever = _get_retriever()
         try:
             contexts, retrieval_scores = await loop.run_in_executor(
-                None, lambda: _retrieve(vectorstore, query)
+                None, lambda: _retrieve(retriever, query)
             )
         except Exception as exc:
             return {
@@ -279,7 +278,7 @@ async def process_single_query(
             if hyde_text.strip():
                 try:
                     hyde_ctx, hyde_retrieval_scores = await loop.run_in_executor(
-                        None, lambda: _retrieve(vectorstore, hyde_text)
+                        None, lambda: _retrieve(retriever, hyde_text)
                     )
                     sc_metadata["hyde_retrieval_fake_answer"] = hyde_text
                     sc_metadata["original_contexts"] = list(contexts)
@@ -379,7 +378,7 @@ async def run_rag_pipeline_async(indexed_items):
     # and can be re-merged in order. `metadata` is opaque to the pipeline; its
     # keys are spread into each result row at top level.
     indexed_items = list(indexed_items)
-    _get_vectorstore()  # warm before fan-out so all tasks share one instance
+    _get_retriever()  # warm before fan-out so all tasks share one instance
     sem = asyncio.Semaphore(LLAMACPP_RAG_CONCURRENCY)
     start_time = time.time()
     total_tasks = len(indexed_items) * len(VARIANTS)

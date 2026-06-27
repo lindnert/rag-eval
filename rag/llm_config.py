@@ -31,6 +31,13 @@ LLAMACPP_RAG_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "6"))
 RAG_K = int(os.getenv("RAG_K", "3"))
 
 # ---------------------------------------------------------------------------
+# Hybrid retrieval (dense + BM25 lexical). Ranking score, higher = better:
+#   fused = alpha * cosine + (1 - alpha) * (bm25 / max_bm25)
+# alpha=1.0 → pure dense (previous behaviour); alpha=0.0 → pure lexical.
+# ---------------------------------------------------------------------------
+RAG_HYBRID_ALPHA = float(os.getenv("RAG_HYBRID_ALPHA", "0.75"))
+
+# ---------------------------------------------------------------------------
 # Self-correction (rag_sc variant). Thresholds are placeholders — tune once
 # we have logprob and retrieval-score distributions from the baseline runs.
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
 
 from retrieval.embeddings import PASSAGE_PREFIX, get_embeddings
+from retrieval.hybrid import HybridRetriever
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -48,7 +49,6 @@ def build_vectorstore(chunks_path=CHUNKS_PATH, index_dir=FAISS_INDEX_DIR):
     return vectorstore
 
 
-def build_retriever(chunks_path=CHUNKS_PATH, index_dir=FAISS_INDEX_DIR, k=3):
-    return build_vectorstore(chunks_path, index_dir).as_retriever(
-        search_kwargs={"k": k}
-    )
+def build_hybrid_retriever(alpha, chunks_path=CHUNKS_PATH, index_dir=FAISS_INDEX_DIR):
+    """Load the FAISS store and wrap it in a dense + BM25 HybridRetriever."""
+    return HybridRetriever(build_vectorstore(chunks_path, index_dir), alpha)
