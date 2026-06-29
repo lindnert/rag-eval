@@ -25,6 +25,7 @@ from rag.llm_config import (
     RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
     RAG_SC_SCORE_DIRECTION,
 )
+from common.constants import REJECTION_ANSWER
 from retrieval import build_hybrid_retriever
 
 VARIANTS = ("no_rag", "rag", "rag_sc")
@@ -40,16 +41,13 @@ def _get_retriever():
     return _retriever
 
 
-# Canonical abstention string. The model is instructed to emit this verbatim
-# when the context is insufficient, and the pipeline substitutes it whenever a
-# generation produces no answer text (the thinking-looped regen — see
-# _finalize_answer). Having a single fixed sentence makes rejection a clean,
+# REJECTION_ANSWER (the canonical abstention string) lives in common.constants
+# so the dataset and evaluation layers can share it without importing this
+# module's heavy generation/retrieval deps. The model is instructed to emit it
+# verbatim when the context is insufficient, and the pipeline substitutes it
+# whenever a generation produces no answer text (the thinking-looped regen —
+# see _finalize_answer). A single fixed sentence makes rejection a clean,
 # countable event downstream instead of a fuzzy family of "I don't know" phrasings.
-REJECTION_ANSWER = (
-    "Die bereitgestellten Kontextinformationen enthalten keine ausreichenden "
-    "Informationen, um diese Frage zu beantworten."
-)
-
 _REJECTION_INSTRUCTION = (
     "Wenn der Kontext die zur Beantwortung nötigen Informationen nicht enthält, "
     "antworte ausschließlich mit exakt diesem Satz und füge nichts hinzu: "
