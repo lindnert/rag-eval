@@ -17,6 +17,7 @@ CANONICAL_ORDER = (
     "query",
     "reference_answer",
     "answer",
+    "rejected",
     "contexts",
     "retrieval_scores",
     "gen_logprob_stats",

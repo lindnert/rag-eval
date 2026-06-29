@@ -113,9 +113,20 @@ export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v
 # Match the embedding model used at index build time (bge-m3, CLS pooling, no prefixes).
 export LLAMACPP_EMB_MODEL="${LLAMACPP_EMB_MODEL:-lm-kit/bge-m3-gguf:Q4_K_M}"
 
-CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-16384}"
-GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-6}"
-echo "GEN_PARALLEL=${GEN_PARALLEL}, GEN_CTX=${CONTEXT_LENGTH}"
+# llama.cpp divides --ctx-size evenly across the --parallel slots, so the
+# per-request window is CONTEXT_LENGTH / GEN_PARALLEL. With a ~2250-token RAG
+# prompt and a 3072-token completion budget (thinking + answer, see
+# RAG_SC_REGEN_MAX_TOKENS), each slot needs ~5322 tokens. 21600/4 = 5400/slot
+# clears that. Concurrency is dropped 6→4 to buy the bigger per-slot window
+# without growing total KV-cache VRAM (KV scales with CONTEXT_LENGTH, shared
+# across slots — fewer slots means each gets a larger share at the same cost).
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-21600}"
+GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-4}"
+# Keep the client's in-flight request cap in lockstep with the server's slot
+# count so we don't queue requests server-side (LLM_CONCURRENCY drives
+# LLAMACPP_RAG_CONCURRENCY in rag/llm_config.py).
+export LLM_CONCURRENCY="${LLM_CONCURRENCY:-${GEN_PARALLEL}}"
+echo "GEN_PARALLEL=${GEN_PARALLEL}, GEN_CTX=${CONTEXT_LENGTH}, LLM_CONCURRENCY=${LLM_CONCURRENCY}"
 
 pkill -f "llama-server" || true
 sleep 2

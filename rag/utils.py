@@ -20,6 +20,7 @@ from rag.llm_config import (
     RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD,
     RAG_SC_GEN_MIN_LOGPROB_THRESHOLD,
     RAG_SC_HYDE_MAX_TOKENS,
+    RAG_SC_REGEN_MAX_TOKENS,
     RAG_SC_RETRIEVAL_BEST_THRESHOLD,
     RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
     RAG_SC_SCORE_DIRECTION,
@@ -39,9 +40,26 @@ def _get_retriever():
     return _retriever
 
 
+# Canonical abstention string. The model is instructed to emit this verbatim
+# when the context is insufficient, and the pipeline substitutes it whenever a
+# generation produces no answer text (the thinking-looped regen — see
+# _finalize_answer). Having a single fixed sentence makes rejection a clean,
+# countable event downstream instead of a fuzzy family of "I don't know" phrasings.
+REJECTION_ANSWER = (
+    "Die bereitgestellten Kontextinformationen enthalten keine ausreichenden "
+    "Informationen, um diese Frage zu beantworten."
+)
+
+_REJECTION_INSTRUCTION = (
+    "Wenn der Kontext die zur Beantwortung nötigen Informationen nicht enthält, "
+    "antworte ausschließlich mit exakt diesem Satz und füge nichts hinzu: "
+    f"\"{REJECTION_ANSWER}\" "
+)
+
 SYSTEM_PROMPT_RAG = (
     "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
-    "Antworte kurz und prägnant (max 3-4 Absätze). Verwende nur Informationen aus dem Kontext."
+    "Antworte kurz und prägnant (max 3-4 Absätze). Verwende nur Informationen aus dem Kontext. "
+    + _REJECTION_INSTRUCTION
 )
 
 SYSTEM_PROMPT_NO_RAG = (
@@ -56,8 +74,8 @@ SYSTEM_PROMPT_NO_RAG = (
 SYSTEM_PROMPT_RAG_STRICT = (
     "Du bist ein evidenzbasierter Ernährungsberater. "
     "Verwende ausschließlich Informationen aus dem Kontext. "
-    "Wenn der Kontext die Frage nicht beantwortet, sage dies in einem Satz und höre auf. "
-    "Andernfalls antworte direkt und in höchstens 3 Absätzen. "
+    + _REJECTION_INSTRUCTION
+    + "Andernfalls antworte direkt und in höchstens 3 Absätzen. "
     "Beginne sofort mit der Antwort."
 )
 
@@ -75,6 +93,34 @@ _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
 def _strip_thinking(text):
     return _THINK_BLOCK.sub("", text or "").lstrip()
+
+
+def _finalize_answer(answer, *, is_rag):
+    """Map a raw completion onto either a clean answer or the canonical
+    rejection. Returns (final_answer, rejection_reason | None).
+
+    Both RAG variants share the same abstention string so rejection is one
+    countable outcome, via two paths:
+
+      - "model_rejected": the model followed the prompt and emitted
+        REJECTION_ANSWER itself. This is the only rejection signal the
+        thinking-off `rag` baseline has.
+      - "empty": no answer text survives after the <think> block is stripped.
+        This is what a runaway rag_sc regen looks like — the loop spends the
+        whole budget *thinking* and never emits a real text response. Note we
+        key on empty content, NOT on truncation: a generation that hit
+        max_tokens but did write an answer is a long answer, not an abstention.
+
+    no_rag has no context to be "insufficient", so it never abstains here.
+    """
+    stripped = _strip_thinking(answer).strip()
+    if not is_rag:
+        return stripped, None
+    if not stripped:
+        return REJECTION_ANSWER, "empty"
+    if stripped.rstrip(".").strip() == REJECTION_ANSWER.rstrip("."):
+        return REJECTION_ANSWER, "model_rejected"
+    return stripped, None
 
 
 def _retrieval_correction_triggers(scores):
@@ -175,6 +221,7 @@ async def _generate(
     gen_logprobs = []
     prompt_tokens = 0
     gen_tokens = 0
+    finish_reason = None
     try:
         async with session.post(
             f"{LLAMACPP_GEN_BASE_URL}/chat/completions",
@@ -186,6 +233,9 @@ async def _generate(
                 answer = f"[LLAMACPP ERROR] {parsed['error']}"
             else:
                 choice = parsed["choices"][0]
+                # "length" => the model hit max_tokens without emitting a stop
+                # token, i.e. it kept reasoning/searching and never converged.
+                finish_reason = choice.get("finish_reason")
                 # Recent llama.cpp builds split Qwen3's <think>…</think> out of
                 # `content` into a separate `reasoning_content` field. Re-attach
                 # it so _strip_thinking can handle both layouts uniformly.
@@ -207,7 +257,7 @@ async def _generate(
         answer = f"[LLAMACPP HTTP ERROR] {exc}"
     except Exception as exc:
         answer = f"[LLAMACPP ERROR] {exc}"
-    return answer, gen_logprobs, prompt_tokens, gen_tokens
+    return answer, gen_logprobs, prompt_tokens, gen_tokens, finish_reason
 
 
 async def _generate_hyde(session, sem, query):
@@ -298,7 +348,7 @@ async def process_single_query(
 
     async with sem:
         task_start = time.time()
-        answer, gen_logprobs, prompt_tokens, gen_tokens = await _generate(
+        answer, gen_logprobs, prompt_tokens, gen_tokens, finish_reason = await _generate(
             session, messages
         )
 
@@ -314,21 +364,37 @@ async def process_single_query(
                     {"role": "system", "content": SYSTEM_PROMPT_RAG_STRICT},
                     {"role": "user", "content": build_user_prompt(query, contexts)},
                 ]
-                # Thinking is disabled on regen: on Qwen3.5-4B-Q4 the reasoning
-                # trace consistently loops on self-doubt ("Wait, let me check
-                # again…") and either burns the full budget or leaves an empty
-                # post-think answer. The stricter system prompt alone is what
-                # actually improves the regen output.
-                regen_answer, regen_lp, p2, g2 = await _generate(
+                # Thinking is re-enabled on the regen so the model can actually
+                # reason over the context, with a larger budget so a genuine
+                # trace+answer finishes. When Qwen3.5-4B-Q4 instead loops on
+                # self-doubt ("Wait, let me check again…") it burns the whole
+                # budget thinking and emits no answer text — _finalize_answer
+                # catches that empty result and substitutes REJECTION_ANSWER.
+                regen_answer, regen_lp, p2, g2, finish_reason = await _generate(
                     session,
                     strict_messages,
-                    enable_thinking=False,
+                    enable_thinking=True,
+                    max_tokens=RAG_SC_REGEN_MAX_TOKENS,
                 )
                 answer = regen_answer
                 gen_logprobs = regen_lp
                 prompt_tokens += p2
                 gen_tokens += g2
                 sc_metadata["generation_retried_count"] += 1
+
+        # Normalise the final completion: an empty (thinking-looped) generation
+        # and the model's own abstention both collapse onto the exact
+        # REJECTION_ANSWER so rejection is a single countable outcome downstream.
+        answer, rejection_reason = _finalize_answer(
+            answer, is_rag=variant in _RAG_VARIANTS
+        )
+        if sc_metadata is not None:
+            # finish_reason of whatever produced the final answer (regen if it
+            # ran, else the first pass). An "empty" rejection paired with
+            # "length" here is the regen-looped-on-thinking case.
+            sc_metadata["finish_reason"] = finish_reason
+            if rejection_reason is not None:
+                sc_metadata["rejection_reason"] = rejection_reason
 
         task_time = time.time() - task_start
 
@@ -363,6 +429,7 @@ async def process_single_query(
         "query": query,
         "variant": variant,
         "answer": answer,
+        "rejected": answer == REJECTION_ANSWER,
         "contexts": contexts,
         "retrieval_scores": retrieval_scores,
         "gen_logprob_stats": _logprob_stats(gen_logprobs),

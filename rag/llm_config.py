@@ -71,3 +71,13 @@ RAG_SC_GEN_MIN_LOGPROB_THRESHOLD = float(
 
 # HyDE draft is only used to embed-and-retrieve; doesn't need to be long.
 RAG_SC_HYDE_MAX_TOKENS = int(os.getenv("RAG_SC_HYDE_MAX_TOKENS", "512"))
+
+# Combined thinking+answer budget for the thinking-enabled rag_sc regen. Larger
+# than the baseline (LLAMACPP_RAG_MAX_TOKENS) so a *genuine* reasoning trace
+# plus a 3-paragraph answer can finish with finish_reason=="stop". The gen
+# server's per-slot context (slurm/run_rag.sh: ctx-size / parallel) is sized to
+# hold the ~2250-token RAG prompt plus this budget, so the regen is bounded by
+# this number rather than being silently clipped by the context window
+# mid-reasoning (which is what previously starved the loop into emitting no
+# answer at all).
+RAG_SC_REGEN_MAX_TOKENS = int(os.getenv("RAG_SC_REGEN_MAX_TOKENS", "3072"))
