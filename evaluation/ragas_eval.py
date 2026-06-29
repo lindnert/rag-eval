@@ -35,6 +35,7 @@ from ragas.dataset_schema import EvaluationResult
 from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from ragas.metrics._faithfulness import FaithfulnesswithHHEM
+from ragas.metrics._nv_metrics import AnswerAccuracy
 from datasets import Dataset
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.embeddings import Embeddings
@@ -260,11 +261,21 @@ def run_ragas(sample):
     # is meaningless, so we skip it and report REJECTED_SENTINEL. Faithfulness /
     # HHEM still run (a rejection grounded in the contexts is a valid signal).
     is_rejected = bool(sample.get("rejected"))
+    # AnswerAccuracy compares the response against the gold reference answer.
+    # All loaders surface `reference_answer` at the top level of the row; for
+    # MEDQA it is the canonical REJECTION_ANSWER, so a well-behaved abstention
+    # scores high and a confident hallucination scores low. Guard against rows
+    # with no reference so the metric is only requested when it can be scored.
+    reference_answer = sample.get("reference_answer")
+    has_reference_answer = reference_answer is not None and str(reference_answer).strip() != ""
 
     dataset = Dataset.from_dict({
         "question": [sample["query"]],
         "answer": [sample["answer"]],
         "contexts": [sample["contexts"]],
+        # Legacy ragas HF column name that maps to the schema `reference` field
+        # (same backward-compat mapping that makes question/answer/contexts work).
+        "ground_truth": [reference_answer if has_reference_answer else ""],
     })
 
     ragas_llm = LangchainLLMWrapper(RagasJSONWrapper(_build_base_llm()))
@@ -279,14 +290,21 @@ def run_ragas(sample):
             metrics += [Faithfulness(), _get_hhem_metric()]
         if not is_rejected:
             metrics.append(AnswerRelevancy(strictness=3))
+        # AnswerAccuracy is independent of contexts and of rejection: scoring an
+        # abstention against the (REJECTION_ANSWER) gold is exactly the correctness
+        # signal we want, so it runs whenever a reference answer is available.
+        if has_reference_answer:
+            metrics.append(AnswerAccuracy())
 
-        # Nothing left to score (only reachable for a rejected row that also has
-        # no contexts; no_rag never rejects, so it always runs relevancy).
+        # Nothing left to score (only reachable for a rejected row that has no
+        # contexts and no reference; no_rag never rejects, so it always runs
+        # relevancy).
         if not metrics:
             return {
                 "ragas_faithfulness": None,
                 "ragas_answer_relevancy": REJECTED_SENTINEL,
                 "ragas_faithfulness_with_hhem": None,
+                "ragas_answer_accuracy": None,
             }
 
         result = cast(
@@ -320,10 +338,19 @@ def run_ragas(sample):
             faith_out = NO_RAG_SENTINEL
             faith_hhem_out = NO_RAG_SENTINEL
 
+        # AnswerAccuracy is keyed "nv_accuracy" in ragas. None when no reference
+        # was available (metric not requested) or when ragas returned NaN.
+        if has_reference_answer:
+            acc_raw = result["nv_accuracy"][0]
+            acc_out = None if math.isnan(acc_raw) else acc_raw
+        else:
+            acc_out = None
+
         return {
             "ragas_faithfulness": faith_out,
             "ragas_answer_relevancy": relev,
             "ragas_faithfulness_with_hhem": faith_hhem_out,
+            "ragas_answer_accuracy": acc_out,
         }
 
     except Exception as e:
@@ -339,6 +366,7 @@ def run_ragas(sample):
             "ragas_faithfulness": None,
             "ragas_answer_relevancy": None,
             "ragas_faithfulness_with_hhem": None,
+            "ragas_answer_accuracy": None,
             "ragas_error": f"{type(e).__name__}: {e}",
         }
 
