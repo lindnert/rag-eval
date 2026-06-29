@@ -11,7 +11,7 @@ from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric, ContextualRelevancyMetric
 
-from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics, NO_RAG_SENTINEL
+from evaluation.utils import _prompt_to_text, _strip_code_fences, print_gpu_diagnostics, NO_RAG_SENTINEL, REJECTED_SENTINEL
 from evaluation.eval_config_llamacpp import (
     LLAMACPP_EVAL_MODEL,
     LLAMACPP_GEN_BASE_URL,
@@ -228,6 +228,10 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
 
     async def _go():
         has_contexts = bool(sample.get("contexts"))
+        # Abstentions: relevance of the canonical REJECTION_ANSWER to the
+        # question is meaningless, so skip it and report REJECTED_SENTINEL.
+        # Faithfulness / contextual_relevance still run.
+        is_rejected = bool(sample.get("rejected"))
         test_case = LLMTestCase(
             input=sample["query"],
             actual_output=sample["answer"],
@@ -251,21 +255,27 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
             return {score_key: metric.score, reason_key: _metric_reason(metric)}
 
         # Faithfulness + contextual_relevance require retrieved contexts; for
-        # the no_rag variant we only run AnswerRelevancy.
+        # the no_rag variant we only run AnswerRelevancy. AnswerRelevancy is
+        # also skipped for rejected rows (relevance of an abstention is moot).
         if has_contexts:
-            outcomes = await asyncio.gather(
+            coros = [
                 faithfulness.a_measure(test_case),
-                relevance.a_measure(test_case),
                 contextual_relevance.a_measure(test_case),
-                return_exceptions=True,
-            )
+            ]
+            if not is_rejected:
+                coros.append(relevance.a_measure(test_case))
+            outcomes = await asyncio.gather(*coros, return_exceptions=True)
             result: dict = {}
             result.update(_pick(faithfulness, outcomes[0],
                                 "deepeval_faithfulness", "deepeval_faithfulness_reason"))
-            result.update(_pick(relevance, outcomes[1],
-                                "deepeval_relevance", "deepeval_relevance_reason"))
-            result.update(_pick(contextual_relevance, outcomes[2],
+            result.update(_pick(contextual_relevance, outcomes[1],
                                 "deepeval_contextual_relevance", "deepeval_contextual_relevance_reason"))
+            if is_rejected:
+                result["deepeval_relevance"] = REJECTED_SENTINEL
+                result["deepeval_relevance_reason"] = REJECTED_SENTINEL
+            else:
+                result.update(_pick(relevance, outcomes[2],
+                                    "deepeval_relevance", "deepeval_relevance_reason"))
             return result
 
         outcomes = await asyncio.gather(

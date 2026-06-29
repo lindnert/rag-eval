@@ -8,6 +8,13 @@ _CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTA
 # where running those metrics would be meaningless (no retrieved contexts).
 NO_RAG_SENTINEL = "no rag - no retrieved contexts"
 
+# Sentinel written to answer-relevancy fields when the generation abstained
+# (row["rejected"] is True). Relevancy of the canonical REJECTION_ANSWER to the
+# question is meaningless and would otherwise drag the metric down, so we skip
+# scoring it. Distinct from None (genuine NaN/error) so the aggregation layer
+# can filter abstentions out and analyse them as a separate outcome class.
+REJECTED_SENTINEL = "rejected - answer relevancy not scored"
+
 
 def _prompt_to_text(prompt) -> str:
     if hasattr(prompt, "to_string"):

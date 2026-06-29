@@ -27,6 +27,7 @@ from evaluation.utils import (
     _strip_code_fences,
     print_gpu_diagnostics as _print_gpu_diagnostics,
     NO_RAG_SENTINEL,
+    REJECTED_SENTINEL,
 )
 from ragas import evaluate
 from ragas.run_config import RunConfig
@@ -255,6 +256,10 @@ class RagasJSONWrapper:
 def run_ragas(sample):
     raise_exceptions = EVAL_DEBUG_LLM
     has_contexts = bool(sample.get("contexts"))
+    # Abstentions: relevancy of the canonical REJECTION_ANSWER to the question
+    # is meaningless, so we skip it and report REJECTED_SENTINEL. Faithfulness /
+    # HHEM still run (a rejection grounded in the contexts is a valid signal).
+    is_rejected = bool(sample.get("rejected"))
 
     dataset = Dataset.from_dict({
         "question": [sample["query"]],
@@ -268,10 +273,21 @@ def run_ragas(sample):
     try:
         # Faithfulness + HHEM require retrieved contexts; for the no_rag
         # variant we only run AnswerRelevancy and report the rest as None.
+        # AnswerRelevancy is dropped entirely for rejected rows.
+        metrics = []
         if has_contexts:
-            metrics = [Faithfulness(), AnswerRelevancy(strictness=3), _get_hhem_metric()]
-        else:
-            metrics = [AnswerRelevancy(strictness=3)]
+            metrics += [Faithfulness(), _get_hhem_metric()]
+        if not is_rejected:
+            metrics.append(AnswerRelevancy(strictness=3))
+
+        # Nothing left to score (only reachable for a rejected row that also has
+        # no contexts; no_rag never rejects, so it always runs relevancy).
+        if not metrics:
+            return {
+                "ragas_faithfulness": None,
+                "ragas_answer_relevancy": REJECTED_SENTINEL,
+                "ragas_faithfulness_with_hhem": None,
+            }
 
         result = cast(
             EvaluationResult,
@@ -287,9 +303,13 @@ def run_ragas(sample):
         )
 
         # ragas returns NaN for rows it couldn't score (e.g. empty claims
-        # list); surface those as None so the output stays valid JSON.
-        relev_raw = result["answer_relevancy"][0]
-        relev = None if math.isnan(relev_raw) else relev_raw
+        # list); surface those as None so the output stays valid JSON. Rejected
+        # rows didn't run relevancy at all → REJECTED_SENTINEL.
+        if is_rejected:
+            relev = REJECTED_SENTINEL
+        else:
+            relev_raw = result["answer_relevancy"][0]
+            relev = None if math.isnan(relev_raw) else relev_raw
 
         if has_contexts:
             faith_raw = result["faithfulness"][0]
