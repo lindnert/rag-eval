@@ -93,6 +93,73 @@ def _strip_thinking(text):
     return _THINK_BLOCK.sub("", text or "").lstrip()
 
 
+# Captures the *inner* reasoning of <think>…</think> blocks (vs _THINK_BLOCK,
+# which strips them). Used to surface the rag_sc regen's reasoning trace so the
+# thinking-looped (empty-answer) case is inspectable without re-running.
+_THINK_CAPTURE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+
+def _extract_thinking(text):
+    if not text:
+        return ""
+    return "\n".join(m.strip() for m in _THINK_CAPTURE.findall(text)).strip()
+
+
+# --- Conservative abstention detection -------------------------------------
+# The model is told to emit REJECTION_ANSWER verbatim, but in practice it
+# paraphrases by a word or two ("Die vorliegenden …" vs "Die bereitgestellten
+# …") or appends an explanation after the rejection sentence. We still want
+# those counted as one rejection outcome, without misclassifying a substantive
+# answer that merely notes the context is partly insufficient somewhere in the
+# middle. So we look only at the *first sentence* and accept it only if it is a
+# near-exact (≤2 word edits) match of REJECTION_ANSWER.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _words(text):
+    return _WORD_RE.findall((text or "").lower())
+
+
+def _word_levenshtein(a, b):
+    """Token-level edit distance between two word lists."""
+    prev = list(range(len(b) + 1))
+    for i, wa in enumerate(a, 1):
+        cur = [i]
+        for j, wb in enumerate(b, 1):
+            cur.append(min(
+                prev[j] + 1,                 # deletion
+                cur[j - 1] + 1,              # insertion
+                prev[j - 1] + (wa != wb),    # substitution
+            ))
+        prev = cur
+    return prev[-1]
+
+
+_REJECTION_WORDS = _words(REJECTION_ANSWER)
+
+
+def _is_near_rejection(stripped, max_word_diff=2):
+    """True if the answer *opens* with (a near-paraphrase of) REJECTION_ANSWER.
+
+    Conservative by design — matches only when the first sentence is within
+    ``max_word_diff`` word-level edits of REJECTION_ANSWER, so it catches:
+      - exact emissions (distance 0),
+      - one/two-word paraphrases ("Die vorliegenden …"),
+      - REJECTION_ANSWER followed by an appended explanation (first sentence
+        is the rejection),
+    but not an answer that merely mentions mid-text that the context is
+    incomplete. The "keine"/"informationen" anchor tokens guard against an
+    affirmative near-miss ("… enthält genug Informationen …") matching on edit
+    distance alone.
+    """
+    first = _SENTENCE_SPLIT.split(stripped, maxsplit=1)[0]
+    words = _words(first)
+    if "keine" not in words or "informationen" not in words:
+        return False
+    return _word_levenshtein(words, _REJECTION_WORDS) <= max_word_diff
+
+
 def _finalize_answer(answer, *, is_rag):
     """Map a raw completion onto either a clean answer or the canonical
     rejection. Returns (final_answer, rejection_reason | None).
@@ -100,9 +167,10 @@ def _finalize_answer(answer, *, is_rag):
     Both RAG variants share the same abstention string so rejection is one
     countable outcome, via two paths:
 
-      - "model_rejected": the model followed the prompt and emitted
-        REJECTION_ANSWER itself. This is the only rejection signal the
-        thinking-off `rag` baseline has.
+      - "model_rejected": the model abstained — its answer *opens* with the
+        canonical REJECTION_ANSWER, allowing a one/two-word paraphrase and any
+        appended explanation (see _is_near_rejection). This is the only
+        rejection signal the thinking-off `rag` baseline has.
       - "empty": no answer text survives after the <think> block is stripped.
         This is what a runaway rag_sc regen looks like — the loop spends the
         whole budget *thinking* and never emits a real text response. Note we
@@ -116,7 +184,7 @@ def _finalize_answer(answer, *, is_rag):
         return stripped, None
     if not stripped:
         return REJECTION_ANSWER, "empty"
-    if stripped.rstrip(".").strip() == REJECTION_ANSWER.rstrip("."):
+    if _is_near_rejection(stripped):
         return REJECTION_ANSWER, "model_rejected"
     return stripped, None
 
@@ -374,6 +442,9 @@ async def process_single_query(
                     enable_thinking=True,
                     max_tokens=RAG_SC_REGEN_MAX_TOKENS,
                 )
+                # Surface the regen's reasoning trace so the thinking-looped
+                # (empty-answer) case is inspectable without re-running.
+                sc_metadata["regen_thinking"] = _extract_thinking(regen_answer)
                 answer = regen_answer
                 gen_logprobs = regen_lp
                 prompt_tokens += p2
