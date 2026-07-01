@@ -36,6 +36,7 @@ from ragas.metrics._faithfulness import Faithfulness
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from ragas.metrics._faithfulness import FaithfulnesswithHHEM
 from ragas.metrics._nv_metrics import AnswerAccuracy
+from ragas.metrics._answer_correctness import AnswerCorrectness
 from datasets import Dataset
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.embeddings import Embeddings
@@ -290,11 +291,15 @@ def run_ragas(sample):
             metrics += [Faithfulness(), _get_hhem_metric()]
         if not is_rejected:
             metrics.append(AnswerRelevancy(strictness=3))
-        # AnswerAccuracy is independent of contexts and of rejection: scoring an
-        # abstention against the (REJECTION_ANSWER) gold is exactly the correctness
-        # signal we want, so it runs whenever a reference answer is available.
+        # AnswerAccuracy and AnswerCorrectness are independent of contexts and of
+        # rejection: scoring an abstention against the (REJECTION_ANSWER) gold is
+        # exactly the correctness signal we want, so they run whenever a reference
+        # answer is available. AnswerAccuracy is the NVIDIA dual-judge metric;
+        # AnswerCorrectness is the classic factual-F1 + semantic-similarity metric
+        # (needs both the LLM and embeddings, both already passed to evaluate()).
         if has_reference_answer:
             metrics.append(AnswerAccuracy())
+            metrics.append(AnswerCorrectness())
 
         # Nothing left to score (only reachable for a rejected row that has no
         # contexts and no reference; no_rag never rejects, so it always runs
@@ -305,6 +310,7 @@ def run_ragas(sample):
                 "ragas_answer_relevancy": REJECTED_SENTINEL,
                 "ragas_faithfulness_with_hhem": None,
                 "ragas_answer_accuracy": None,
+                "ragas_answer_correctness": None,
             }
 
         result = cast(
@@ -338,19 +344,24 @@ def run_ragas(sample):
             faith_out = NO_RAG_SENTINEL
             faith_hhem_out = NO_RAG_SENTINEL
 
-        # AnswerAccuracy is keyed "nv_accuracy" in ragas. None when no reference
-        # was available (metric not requested) or when ragas returned NaN.
+        # AnswerAccuracy is keyed "nv_accuracy" and AnswerCorrectness
+        # "answer_correctness" in ragas. Both are None when no reference was
+        # available (metrics not requested) or when ragas returned NaN.
         if has_reference_answer:
             acc_raw = result["nv_accuracy"][0]
             acc_out = None if math.isnan(acc_raw) else acc_raw
+            corr_raw = result["answer_correctness"][0]
+            corr_out = None if math.isnan(corr_raw) else corr_raw
         else:
             acc_out = None
+            corr_out = None
 
         return {
             "ragas_faithfulness": faith_out,
             "ragas_answer_relevancy": relev,
             "ragas_faithfulness_with_hhem": faith_hhem_out,
             "ragas_answer_accuracy": acc_out,
+            "ragas_answer_correctness": corr_out,
         }
 
     except Exception as e:
@@ -367,6 +378,7 @@ def run_ragas(sample):
             "ragas_answer_relevancy": None,
             "ragas_faithfulness_with_hhem": None,
             "ragas_answer_accuracy": None,
+            "ragas_answer_correctness": None,
             "ragas_error": f"{type(e).__name__}: {e}",
         }
 
