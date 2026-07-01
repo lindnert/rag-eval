@@ -8,28 +8,94 @@ from rank_bm25 import BM25Okapi
 from retrieval.embeddings import PASSAGE_PREFIX, QUERY_PREFIX
 
 # Tokenizer for the lexical (BM25) channel. We want to match on content
-# keywords ("calcium"), not numbers or measurement units: digits ("1000",
-# "1,5") and units ("mg", "kcal") appear in almost every nutrition chunk, so
-# matching on them would pull in irrelevant documents. So we keep only
-# letter-runs ([^\W\d_]+ drops digits and underscores) and then filter out a
-# small unit stopword set. No stemming: it's language-specific and we have
-# mixed German/English. NFKC + lowercase fold case and unicode width so the
-# query and the corpus tokenise identically.
+# keywords ("calcium"), not on tokens that carry no topical signal. We keep
+# only letter-runs ([^\W\d_]+ drops digits and underscores, so "1000"/"1,5"
+# never become tokens) and then drop two stopword layers (see below). No
+# stemming: it's language-specific and we have mixed German/English. NFKC +
+# lowercase fold case and unicode width so the query and the corpus tokenise
+# identically.
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
-# Measurement units / non-topical tokens excluded from lexical matching.
+
+def _normalize_tokens(text):
+    return _WORD_RE.findall(unicodedata.normalize("NFKC", text or "").lower())
+
+
+# Layer 1 — measurement units / dosage words. Domain-specific: these are
+# frequent enough in a nutrition corpus to pull in irrelevant chunks.
 # (After NFKC the micro sign µ becomes Greek μ, hence "μg".)
-_STOPWORDS = frozenset({
+_UNIT_STOPWORDS = frozenset({
     "mg", "g", "kg", "µg", "μg", "ug", "mcg", "ng", "ml", "l", "dl", "cl",
     "kcal", "kj", "iu", "ie",
     # period words from dosage expressions ("mg/Tag", "per day")
-    "tag", "tage", "day", "days",
+    "tag", "tage", "täglich", "day", "days", "daily", "per", "pro", "je",
 })
 
 
+# Layer 2 — English + German function words ("and", "der", ...) with no
+# topical meaning. BM25's IDF already down-weights them, but rank_bm25 floors
+# the negative IDF of very-common terms to a small positive value, so they
+# still add uniform noise and inflate document length. Vendored from NLTK's
+# english + german stopword lists, already run through _normalize_tokens (NFKC
+# + lowercase + letter-runs) so they line up with corpus tokens and the code
+# needs no NLTK data download at runtime. Regenerate with:
+#   sorted({t for w in stopwords.words("english") + stopwords.words("german")
+#           for t in _normalize_tokens(w)})
+_LANGUAGE_STOPWORDS = frozenset({
+    'a', 'aber', 'about', 'above', 'after', 'again', 'against', 'ain',
+    'all', 'alle', 'allem', 'allen', 'aller', 'alles', 'als', 'also', 'am',
+    'an', 'and', 'ander', 'andere', 'anderem', 'anderen', 'anderer',
+    'anderes', 'anderm', 'andern', 'anderr', 'anders', 'any', 'are', 'aren',
+    'as', 'at', 'auch', 'auf', 'aus', 'be', 'because', 'been', 'before',
+    'bei', 'being', 'below', 'between', 'bin', 'bis', 'bist', 'both', 'but',
+    'by', 'can', 'couldn', 'd', 'da', 'damit', 'dann', 'das', 'dass',
+    'dasselbe', 'dazu', 'daß', 'dein', 'deine', 'deinem', 'deinen',
+    'deiner', 'deines', 'dem', 'demselben', 'den', 'denn', 'denselben',
+    'der', 'derer', 'derselbe', 'derselben', 'des', 'desselben', 'dessen',
+    'dich', 'did', 'didn', 'die', 'dies', 'diese', 'dieselbe', 'dieselben',
+    'diesem', 'diesen', 'dieser', 'dieses', 'dir', 'do', 'doch', 'does',
+    'doesn', 'doing', 'don', 'dort', 'down', 'du', 'durch', 'during',
+    'each', 'ein', 'eine', 'einem', 'einen', 'einer', 'eines', 'einig',
+    'einige', 'einigem', 'einigen', 'einiger', 'einiges', 'einmal', 'er',
+    'es', 'etwas', 'euch', 'euer', 'eure', 'eurem', 'euren', 'eurer',
+    'eures', 'few', 'for', 'from', 'further', 'für', 'gegen', 'gewesen',
+    'hab', 'habe', 'haben', 'had', 'hadn', 'has', 'hasn', 'hat', 'hatte',
+    'hatten', 'have', 'haven', 'having', 'he', 'her', 'here', 'hers',
+    'herself', 'hier', 'him', 'himself', 'hin', 'hinter', 'his', 'how', 'i',
+    'ich', 'if', 'ihm', 'ihn', 'ihnen', 'ihr', 'ihre', 'ihrem', 'ihren',
+    'ihrer', 'ihres', 'im', 'in', 'indem', 'ins', 'into', 'is', 'isn',
+    'ist', 'it', 'its', 'itself', 'jede', 'jedem', 'jeden', 'jeder',
+    'jedes', 'jene', 'jenem', 'jenen', 'jener', 'jenes', 'jetzt', 'just',
+    'kann', 'kein', 'keine', 'keinem', 'keinen', 'keiner', 'keines',
+    'können', 'könnte', 'll', 'm', 'ma', 'machen', 'man', 'manche',
+    'manchem', 'manchen', 'mancher', 'manches', 'me', 'mein', 'meine',
+    'meinem', 'meinen', 'meiner', 'meines', 'mich', 'mightn', 'mir', 'mit',
+    'more', 'most', 'muss', 'musste', 'mustn', 'my', 'myself', 'nach',
+    'needn', 'nicht', 'nichts', 'no', 'noch', 'nor', 'not', 'now', 'nun',
+    'nur', 'o', 'ob', 'oder', 'of', 'off', 'ohne', 'on', 'once', 'only',
+    'or', 'other', 'our', 'ours', 'ourselves', 'out', 'over', 'own', 're',
+    's', 'same', 'sehr', 'sein', 'seine', 'seinem', 'seinen', 'seiner',
+    'seines', 'selbst', 'shan', 'she', 'should', 'shouldn', 'sich', 'sie',
+    'sind', 'so', 'solche', 'solchem', 'solchen', 'solcher', 'solches',
+    'soll', 'sollte', 'some', 'sondern', 'sonst', 'such', 't', 'than',
+    'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there',
+    'these', 'they', 'this', 'those', 'through', 'to', 'too', 'um', 'und',
+    'under', 'uns', 'unser', 'unsere', 'unserem', 'unseren', 'unseres',
+    'unter', 'until', 'up', 've', 'very', 'viel', 'vom', 'von', 'vor',
+    'war', 'waren', 'warst', 'was', 'wasn', 'we', 'weg', 'weil', 'weiter',
+    'welche', 'welchem', 'welchen', 'welcher', 'welches', 'wenn', 'werde',
+    'werden', 'were', 'weren', 'what', 'when', 'where', 'which', 'while',
+    'who', 'whom', 'why', 'wie', 'wieder', 'will', 'wir', 'wird', 'wirst',
+    'with', 'wo', 'wollen', 'wollte', 'won', 'wouldn', 'während', 'würde',
+    'würden', 'y', 'you', 'your', 'yours', 'yourself', 'yourselves', 'zu',
+    'zum', 'zur', 'zwar', 'zwischen', 'über',
+})
+
+_STOPWORDS = _UNIT_STOPWORDS | _LANGUAGE_STOPWORDS
+
+
 def bm25_tokenize(text):
-    tokens = _WORD_RE.findall(unicodedata.normalize("NFKC", text or "").lower())
-    return [t for t in tokens if t not in _STOPWORDS]
+    return [t for t in _normalize_tokens(text) if t not in _STOPWORDS]
 
 
 def _strip_prefix(text, prefix):
