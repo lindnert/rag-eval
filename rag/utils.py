@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import statistics
 import time
@@ -49,15 +50,19 @@ def _get_retriever():
 # see _finalize_answer). A single fixed sentence makes rejection a clean,
 # countable event downstream instead of a fuzzy family of "I don't know" phrasings.
 _REJECTION_INSTRUCTION = (
-    "Wenn der Kontext die zur Beantwortung nötigen Informationen nicht enthält, "
+    "Wenn der Kontext die zur Beantwortung nötigen Informationen nicht einmal teilweise, sondern gar nicht, enthält, "
     "antworte ausschließlich mit exakt diesem Satz und füge nichts hinzu: "
     f"\"{REJECTION_ANSWER}\" "
 )
 
 SYSTEM_PROMPT_RAG = (
     "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
-    "Antworte kurz und prägnant (max 3-4 Absätze). Verwende nur Informationen aus dem Kontext. "
+    "Wenn der Kontext für die Frage relevante Informationen enthält, beantworte "
+    "die Frage auf deren Grundlage und gib wieder, was der Kontext dazu aussagt – "
+    "auch wenn er die Frage nur teilweise abdeckt. "
     + _REJECTION_INSTRUCTION
+    + "Andernfalls antworte direkt und in höchstens 3 Absätzen. "
+
 )
 
 SYSTEM_PROMPT_NO_RAG = (
@@ -70,8 +75,10 @@ SYSTEM_PROMPT_NO_RAG = (
 # identify, then write…") sent the 4B thinking model into multi-thousand-token
 # meta-loops about how to interpret the instructions instead of answering.
 SYSTEM_PROMPT_RAG_STRICT = (
-    "Du bist ein evidenzbasierter Ernährungsberater. "
-    "Verwende ausschließlich Informationen aus dem Kontext. "
+    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
+    "Wenn der Kontext für die Frage relevante Informationen enthält, beantworte "
+    "die Frage auf deren Grundlage und gib wieder, was der Kontext dazu aussagt – "
+    "auch wenn er die Frage nur teilweise abdeckt. "
     + _REJECTION_INSTRUCTION
     + "Andernfalls antworte direkt und in höchstens 3 Absätzen. "
     "Beginne sofort mit der Antwort."
@@ -294,7 +301,11 @@ async def _generate(
             json=payload,
             timeout=aiohttp.ClientTimeout(total=600),
         ) as response:
-            parsed = await response.json()
+            # Force UTF-8. aiohttp's response.json() sniffs the charset from the
+            # Content-Type header; when llama.cpp omits one it can guess Latin-1
+            # and mojibake UTF-8 German (ü -> Ã¼). json.loads on raw bytes always
+            # decodes UTF-8 per RFC 8259.
+            parsed = json.loads(await response.read())
             if "error" in parsed:
                 answer = f"[LLAMACPP ERROR] {parsed['error']}"
             else:
@@ -347,7 +358,8 @@ async def _generate_hyde(session, sem, query):
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=300),
             ) as response:
-                parsed = await response.json()
+                # Force UTF-8 (see note on the generation call above).
+                parsed = json.loads(await response.read())
                 if "error" in parsed:
                     return ""
                 return parsed["choices"][0]["message"].get("content") or ""
