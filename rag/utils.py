@@ -76,11 +76,12 @@ SYSTEM_PROMPT_NO_RAG = (
 # meta-loops about how to interpret the instructions instead of answering.
 SYSTEM_PROMPT_RAG_STRICT = (
     "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
-    "Wenn der Kontext für die Frage relevante Informationen enthält, beantworte "
-    "die Frage auf deren Grundlage und gib wieder, was der Kontext dazu aussagt – "
-    "auch wenn er die Frage nur teilweise abdeckt. "
-    + _REJECTION_INSTRUCTION
-    + "Andernfalls antworte direkt und in höchstens 3 Absätzen. "
+    "Beantworte die Frage ausschließlich auf Grundlage des bereitgestellten Kontexts. "
+    "Wenn der Kontext relevante Informationen enthält – auch wenn er die Frage nur "
+    "teilweise abdeckt –, beantworte die Frage in höchstens 3 Absätzen und stütze dich "
+    "dabei ausschließlich auf den Kontext. "
+    + _REJECTION_INSTRUCTION +  # "...sonst antworte ausschließlich mit exakt diesem Satz: '...'"
+    "Triff diese Entscheidung genau einmal und revidiere sie nicht. "
     "Beginne sofort mit der Antwort."
 )
 
