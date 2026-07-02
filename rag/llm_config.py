@@ -61,12 +61,12 @@ RAG_SC_RETRIEVAL_SPREAD_THRESHOLD = float(
 
 # Trigger U: mean token logprob below this → low overall confidence.
 RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD = float(
-    os.getenv("RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD", "-0.4")
+    os.getenv("RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD", "-0.35")
 )
 
 # Trigger V: some token's logprob below this → at least one very uncertain step.
 RAG_SC_GEN_MIN_LOGPROB_THRESHOLD = float(
-    os.getenv("RAG_SC_GEN_MIN_LOGPROB_THRESHOLD", "-3.0")
+    os.getenv("RAG_SC_GEN_MIN_LOGPROB_THRESHOLD", "-2.2")
 )
 
 # HyDE draft is only used to embed-and-retrieve; doesn't need to be long.
