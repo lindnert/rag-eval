@@ -50,24 +50,35 @@ def _get_retriever():
 # see _finalize_answer). A single fixed sentence makes rejection a clean,
 # countable event downstream instead of a fuzzy family of "I don't know" phrasings.
 _REJECTION_INSTRUCTION = (
-    "Wenn der Kontext die zur Beantwortung nötigen Informationen nicht einmal teilweise, sondern gar nicht, enthält, "
-    "antworte ausschließlich mit exakt diesem Satz und füge nichts hinzu: "
+    "If neither the question nor the context provides the information needed to "
+    "answer — not even partially — respond with exactly this sentence and add "
+    "nothing else: "
     f"\"{REJECTION_ANSWER}\" "
 )
 
-SYSTEM_PROMPT_RAG = (
-    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
-    "Wenn der Kontext für die Frage relevante Informationen enthält, beantworte "
-    "die Frage auf deren Grundlage und gib wieder, was der Kontext dazu aussagt – "
-    "auch wenn er die Frage nur teilweise abdeckt. "
-    + _REJECTION_INSTRUCTION
-    + "Andernfalls antworte direkt und in höchstens 3 Absätzen. "
+# Names the two information sources the model sees so it stops re-litigating what
+# counts as "the context": the question may itself carry the facts needed to
+# answer, while the "Context:" section holds the retrieved passages. Both are
+# usable; abstention keys on neither providing enough (see _REJECTION_INSTRUCTION).
+# Without this, the 4B model abstains on questions it could answer from their own
+# stated facts whenever the retrieved passages don't restate them.
+_SOURCES_CLAUSE = (
+    "You have two sources of information: the question, which may itself state "
+    "relevant facts, and the section labelled \"Context\", which holds retrieved "
+    "passages. Use both together. "
+)
 
+SYSTEM_PROMPT_RAG = (
+    "You are a helpful nutrition advisor who gives evidence-based recommendations. "
+    + _SOURCES_CLAUSE
+    + "If relevant information is available — even if it only partially covers the "
+    "question — answer in at most 3 paragraphs, grounded in that material. "
+    + _REJECTION_INSTRUCTION
 )
 
 SYSTEM_PROMPT_NO_RAG = (
-    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
-    "Antworte kurz und prägnant (max 3-4 Absätze)."
+    "You are a helpful nutrition advisor who gives evidence-based recommendations. "
+    "Answer briefly and concisely in at most 3 paragraphs."
 )
 
 # Stricter prompt used by the rag_sc regen path when generation triggers fire.
@@ -75,21 +86,21 @@ SYSTEM_PROMPT_NO_RAG = (
 # identify, then write…") sent the 4B thinking model into multi-thousand-token
 # meta-loops about how to interpret the instructions instead of answering.
 SYSTEM_PROMPT_RAG_STRICT = (
-    "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
-    "Beantworte die Frage ausschließlich auf Grundlage des bereitgestellten Kontexts. "
-    "Wenn der Kontext relevante Informationen enthält – auch wenn er die Frage nur "
-    "teilweise abdeckt –, beantworte die Frage in höchstens 3 Absätzen und stütze dich "
-    "dabei ausschließlich auf den Kontext. "
-    + _REJECTION_INSTRUCTION +  # "...sonst antworte ausschließlich mit exakt diesem Satz: '...'"
-    "Triff diese Entscheidung genau einmal und revidiere sie nicht. "
-    "Beginne sofort mit der Antwort."
+    "You are a helpful nutrition advisor who gives evidence-based recommendations. "
+    + _SOURCES_CLAUSE
+    + "If relevant information is available — even if it only partially covers the "
+    "question — answer in at most 3 paragraphs, grounded solely in the question and "
+    "the context. "
+    + _REJECTION_INSTRUCTION +  # "...otherwise respond with exactly this sentence: '...'"
+    "Make this decision exactly once and do not revise it, "
+    "but begin writing the answer immediately after making the decision. "
 )
 
 # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
 SYSTEM_PROMPT_HYDE = (
-    "Du bist ein Ernährungsberater. Schreibe eine kurze, plausible Beispiel-Antwort "
-    "auf die folgende Frage (3-5 Sätze). Diese hypothetische Antwort dient nur dazu, "
-    "passende Quellen zu finden — sachliche Korrektheit ist nicht erforderlich."
+    "You are a nutrition advisor. Write a short, plausible example answer to the "
+    "following question (3-5 sentences). This hypothetical answer serves only to "
+    "find matching sources — factual correctness is not required."
 )
 
 # Qwen3 emits its reasoning as <think>…</think> at the start of content when
@@ -115,8 +126,8 @@ def _extract_thinking(text):
 
 # --- Conservative abstention detection -------------------------------------
 # The model is told to emit REJECTION_ANSWER verbatim, but in practice it
-# paraphrases by a word or two ("Die vorliegenden …" vs "Die bereitgestellten
-# …") or appends an explanation after the rejection sentence. We still want
+# paraphrases by a word or two ("The retrieved context …" vs "The provided
+# context …") or appends an explanation after the rejection sentence. We still want
 # those counted as one rejection outcome, without misclassifying a substantive
 # answer that merely notes the context is partly insufficient somewhere in the
 # middle. So we look only at the *first sentence* and accept it only if it is a
@@ -153,17 +164,17 @@ def _is_near_rejection(stripped, max_word_diff=2):
     Conservative by design — matches only when the first sentence is within
     ``max_word_diff`` word-level edits of REJECTION_ANSWER, so it catches:
       - exact emissions (distance 0),
-      - one/two-word paraphrases ("Die vorliegenden …"),
+      - one/two-word paraphrases ("The retrieved context …"),
       - REJECTION_ANSWER followed by an appended explanation (first sentence
         is the rejection),
     but not an answer that merely mentions mid-text that the context is
-    incomplete. The "keine"/"informationen" anchor tokens guard against an
-    affirmative near-miss ("… enthält genug Informationen …") matching on edit
+    incomplete. The "not"/"information" anchor tokens guard against an
+    affirmative near-miss ("… contains enough information …") matching on edit
     distance alone.
     """
     first = _SENTENCE_SPLIT.split(stripped, maxsplit=1)[0]
     words = _words(first)
-    if "keine" not in words or "informationen" not in words:
+    if "not" not in words or "information" not in words:
         return False
     return _word_levenshtein(words, _REJECTION_WORDS) <= max_word_diff
 
@@ -262,8 +273,8 @@ def _merge_and_rerank(ctx_orig, retr_scores_orig, ctx_hyde, retr_scores_hyde, k=
 
 def build_user_prompt(query, contexts):
     if not contexts:
-        return f"Frage: {query}"
-    lines = [f"Frage: {query}", "", "Kontextinformationen:"]
+        return f"Question: {query}"
+    lines = [f"Question: {query}", "", "Context:"]
     for i, c in enumerate(contexts, start=1):
         lines.append(f"{i}. {c}")
     return "\n".join(lines)

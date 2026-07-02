@@ -11,6 +11,6 @@ pulling in heavy generation/retrieval dependencies.
 # phrasings. The out-of-domain MEDQA probe also uses it as its gold answer, so
 # a well-behaved abstention scores as correct (see dataset/MEDQA/loader.py).
 REJECTION_ANSWER = (
-    "Die bereitgestellten Kontextinformationen enthalten keine ausreichenden "
-    "Informationen, um diese Frage zu beantworten."
+    "The provided context does not contain sufficient information to answer "
+    "this question."
 )
