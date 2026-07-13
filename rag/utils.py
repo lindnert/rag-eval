@@ -8,6 +8,7 @@ from datetime import datetime
 import aiohttp
 
 from rag.llm_config import (
+    LLAMACPP_GEN_API_KEY,
     LLAMACPP_GEN_BASE_URL,
     LLAMACPP_RAG_CONCURRENCY,
     LLAMACPP_RAG_ENABLE_THINKING,
@@ -27,10 +28,17 @@ from rag.llm_config import (
     RAG_SC_SCORE_DIRECTION,
 )
 from common.constants import RAG_LANG, REJECTION_ANSWER
-from retrieval import build_hybrid_retriever
 
 VARIANTS = ("no_rag", "rag", "rag_sc")
 _RAG_VARIANTS = {"rag", "rag_sc"}
+
+# Bearer auth for the generation endpoint, added to every chat-completions POST.
+# Empty when LLAMACPP_GEN_API_KEY is unset (local llama-server) → no header sent;
+# populated when pointing at an authenticated node (e.g. Ollama). Built once so
+# both _generate and _generate_hyde share it.
+_GEN_HEADERS = (
+    {"Authorization": f"Bearer {LLAMACPP_GEN_API_KEY}"} if LLAMACPP_GEN_API_KEY else {}
+)
 
 _retriever = None
 
@@ -38,6 +46,13 @@ _retriever = None
 def _get_retriever():
     global _retriever
     if _retriever is None:
+        # Imported lazily (not at module top) so the generation helpers in this
+        # module can be imported without the retrieval stack (rank_bm25, faiss,
+        # …) installed — e.g. by test_single_query.py, which injects fixed
+        # contexts and never retrieves. Any real rag/rag_sc run still calls this
+        # during warm-up, so the retriever is built exactly as before.
+        from retrieval import build_hybrid_retriever
+
         _retriever = build_hybrid_retriever(RAG_HYBRID_ALPHA)
     return _retriever
 
@@ -378,6 +393,7 @@ async def _generate(
         async with session.post(
             f"{LLAMACPP_GEN_BASE_URL}/chat/completions",
             json=payload,
+            headers=_GEN_HEADERS,
             timeout=aiohttp.ClientTimeout(total=600),
         ) as response:
             # Force UTF-8. aiohttp's response.json() sniffs the charset from the
@@ -435,6 +451,7 @@ async def _generate_hyde(session, sem, query):
             async with session.post(
                 f"{LLAMACPP_GEN_BASE_URL}/chat/completions",
                 json=payload,
+                headers=_GEN_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=300),
             ) as response:
                 # Force UTF-8 (see note on the generation call above).

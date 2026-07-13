@@ -108,8 +108,8 @@ export HF_HOME="${WORKDIR}/.hf_cache"
 export LLAMA_MODELS_DIR="${WORKDIR}/.llamacpp_models"
 mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
 
-GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/Qwen3.5-4B-GGUF}"
-GEN_FILE="${LLAMACPP_GEN_FILE:-Qwen3.5-4B-UD-Q4_K_XL.gguf}"
+GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-12b-it-GGUF}"
+GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-12b-it-UD-Q4_K_XL.gguf}"
 
 # Family-distinct from the gemma judge in evaluation/, avoids self-reference bias.
 # Use the Python API directly — the `hf` CLI leaks a click.exceptions.Exit(0)

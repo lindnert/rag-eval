@@ -6,6 +6,15 @@ LLAMACPP_RAG_MODEL = os.getenv(
     "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
 )
 
+# Optional Bearer token for the generation endpoint. Empty by default so the
+# local SLURM llama-server path sends no Authorization header (unchanged). Set
+# it to point the pipeline at an authenticated OpenAI-compatible node instead,
+# e.g. an Ollama server at https://<host>/ollama/v1:
+#   export LLAMACPP_GEN_BASE_URL="https://<host>/ollama/v1"
+#   export LLAMACPP_RAG_MODEL="qwen3.5:32b"
+#   export LLAMACPP_GEN_API_KEY="<token>"
+LLAMACPP_GEN_API_KEY = os.getenv("LLAMACPP_GEN_API_KEY", "")
+
 # Qwen3-family chat template emits <think>…</think> blocks by default; we
 # disable thinking on the baseline so gen_logprobs reflect only the answer.
 # Step 4 (self-correction) will flip this on for the rag_sc regen.
