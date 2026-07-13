@@ -66,7 +66,7 @@ RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD = float(
 
 # Trigger V: some token's logprob below this → at least one very uncertain step.
 RAG_SC_GEN_MIN_LOGPROB_THRESHOLD = float(
-    os.getenv("RAG_SC_GEN_MIN_LOGPROB_THRESHOLD", "-2.2")
+    os.getenv("RAG_SC_GEN_MIN_LOGPROB_THRESHOLD", "-2.3")
 )
 
 # HyDE draft is only used to embed-and-retrieve; doesn't need to be long.
