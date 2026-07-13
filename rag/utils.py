@@ -41,14 +41,6 @@ def _get_retriever():
         _retriever = build_hybrid_retriever(RAG_HYBRID_ALPHA)
     return _retriever
 
-
-# REJECTION_ANSWER (the canonical abstention string) lives in common.constants
-# so the dataset and evaluation layers can share it without importing this
-# module's heavy generation/retrieval deps. The model is instructed to emit it
-# verbatim when the context is insufficient, and the pipeline substitutes it
-# whenever a generation produces no answer text (the thinking-looped regen —
-# see _finalize_answer). A single fixed sentence makes rejection a clean,
-# countable event downstream instead of a fuzzy family of "I don't know" phrasings.
 _REJECTION_INSTRUCTION = (
     "If neither the question nor the context provides the information needed to "
     "answer — not even partially — respond with exactly this sentence and add "
@@ -56,14 +48,9 @@ _REJECTION_INSTRUCTION = (
     f"\"{REJECTION_ANSWER}\" "
 )
 
-# Names the two information sources the model sees so it stops re-litigating what
-# counts as "the context": the question may itself carry the facts needed to
-# answer, while the "Context:" section holds the retrieved passages. Both are
-# usable; abstention keys on neither providing enough (see _REJECTION_INSTRUCTION).
-# Without this, the 4B model abstains on questions it could answer from their own
-# stated facts whenever the retrieved passages don't restate them.
 _SOURCES_CLAUSE = (
-    "You have two sources of information: the question, which may itself state "
+    "You have two sources of information: the question (including for example "
+     "'Food information' and 'User profile'), which may itself state "
     "relevant facts, and the section labelled \"Context\", which holds retrieved "
     "passages. Use both together. "
 )
@@ -72,24 +59,20 @@ SYSTEM_PROMPT_RAG = (
     "You are a helpful nutrition advisor who gives evidence-based recommendations. "
     + _SOURCES_CLAUSE
     + "If relevant information is available — even if it only partially covers the "
-    "question — answer in at most 3 paragraphs, grounded in that material. "
+    "question — answer briefly and concisely, grounded in that material. "
     + _REJECTION_INSTRUCTION
 )
 
 SYSTEM_PROMPT_NO_RAG = (
     "You are a helpful nutrition advisor who gives evidence-based recommendations. "
-    "Answer briefly and concisely in at most 3 paragraphs."
+    "Answer briefly and concisely."
 )
 
-# Stricter prompt used by the rag_sc regen path when generation triggers fire.
-# Kept deliberately short and unambiguous: earlier multi-step versions ("first
-# identify, then write…") sent the 4B thinking model into multi-thousand-token
-# meta-loops about how to interpret the instructions instead of answering.
 SYSTEM_PROMPT_RAG_STRICT = (
     "You are a helpful nutrition advisor who gives evidence-based recommendations. "
     + _SOURCES_CLAUSE
     + "If relevant information is available — even if it only partially covers the "
-    "question — answer in at most 3 paragraphs, grounded solely in the question and "
+    "question — answer briefly and concisely, grounded solely in the question and "
     "the context. "
     + _REJECTION_INSTRUCTION +  # "...otherwise respond with exactly this sentence: '...'"
     "Make this decision exactly once and do not revise it, "
