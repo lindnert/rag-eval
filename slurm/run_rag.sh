@@ -14,19 +14,68 @@
 #SBATCH --exclusive
 #SBATCH --array=0-14
 
-## Submit with: sbatch slurm/run_rag.sh
-## Override array size (= number of shards / nodes):
-##   sbatch --array=0-5 slurm/run_rag.sh    # 6 shards
-##   sbatch --array=0   slurm/run_rag.sh    # single shard (no sharding)
+## This script is dual-mode (see the SLURM_JOB_ID branch below).
+## Run it directly on the login node — it submits the array job(s) for you:
+##   ./slurm/run_rag.sh          # both languages (default)
+##   ./slurm/run_rag.sh de       # one language (en | de)
+## Direct sbatch still works (defaults to RAG_LANG=en, uses the --array above):
+##   RAG_LANG=de sbatch slurm/run_rag.sh
+## Override shards per language: ARRAY_MAX=9 ./slurm/run_rag.sh   # 10 shards
 
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Dual-mode entry point.
+#   - On the LOGIN NODE (no SLURM_JOB_ID) this acts as a *submitter*: it
+#     sbatch-es one array job per language and exits, so you never type
+#     sbatch/--export yourself. Languages come from the args (default: both).
+#   - Under SLURM (SLURM_JOB_ID set) it falls through to the worker body and
+#     runs the pipeline for the single $RAG_LANG it was submitted with.
+# Array size respects a 30-job cap: 14 shards/lang when both queue together
+# (14 + 14 + 2 dependency-held merge jobs = 30), 15 for a single language.
+# Override with ARRAY_MAX=<n> (array is 0..n, i.e. n+1 shards).
+# ---------------------------------------------------------------------------
+if [ -z "${SLURM_JOB_ID:-}" ]; then
+  LANGS=("$@")
+  if [ ${#LANGS[@]} -eq 0 ]; then
+    LANGS=(en de)
+  fi
+  for lang in "${LANGS[@]}"; do
+    if [ "${lang}" != "en" ] && [ "${lang}" != "de" ]; then
+      echo "ERROR: unknown language '${lang}' (expected 'en' or 'de')" >&2
+      exit 1
+    fi
+  done
+  if [ -z "${ARRAY_MAX:-}" ]; then
+    if [ ${#LANGS[@]} -ge 2 ]; then ARRAY_MAX=13; else ARRAY_MAX=14; fi
+  fi
+  # Resolve absolute paths so submission is independent of the cwd the user
+  # launched from. This script lives in <repo>/slurm/, so REPO_ROOT is its
+  # parent dir. cd there before sbatch so the array job's SLURM_SUBMIT_DIR
+  # (which the worker body uses as WORKDIR) is pinned to the repo root.
+  SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  cd "${REPO_ROOT}"
+  for lang in "${LANGS[@]}"; do
+    echo "Submitting RAG_LANG=${lang}  --array=0-${ARRAY_MAX} ($((ARRAY_MAX + 1)) shards) from ${REPO_ROOT}"
+    sbatch --array="0-${ARRAY_MAX}" --export=ALL,RAG_LANG="${lang}" "${SELF}"
+  done
+  exit 0
+fi
 
 WORKDIR="${SLURM_SUBMIT_DIR:-$PWD}"
 ERR_LOG="${WORKDIR}/logs/rag.${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}.$(hostname).err"
 exec 2> >(tee -a "${ERR_LOG}" >&2)
 
-export RESULTS_DIR="${WORKDIR}/results"
+# Run language: selects the prompt bundle (rag/utils.py) and abstention string
+# (common/constants.py), and keeps each language's results in its own tree so
+# the two runs never collide. Submit one job per language:
+#   sbatch --export=ALL,RAG_LANG=en slurm/run_rag.sh
+#   sbatch --export=ALL,RAG_LANG=de slurm/run_rag.sh
+export RAG_LANG="${RAG_LANG:-en}"
+export RESULTS_DIR="${WORKDIR}/results/${RAG_LANG}"
 mkdir -p "${RESULTS_DIR}" "${WORKDIR}/logs"
+echo "RAG_LANG=${RAG_LANG}  RESULTS_DIR=${RESULTS_DIR}"
 
 # First-firing task schedules the merge job; --dependency=afterok holds it
 # until all shards in the array finish successfully.
@@ -180,9 +229,14 @@ wait_ready "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}" "llama-server (emb
 # 5. Warm-up
 # ---------------------------------------------------------------------------
 echo "Warming up models..."
+if [ "${RAG_LANG}" = "de" ]; then
+  WARMUP_PROMPT="Sag Hallo in einem Wort."
+else
+  WARMUP_PROMPT="Say hello in one word."
+fi
 curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1/chat/completions" \
   -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Sag Hallo in einem Wort."}],"max_tokens":8,"temperature":0}' >/dev/null
+  -d "{\"messages\":[{\"role\":\"user\",\"content\":\"${WARMUP_PROMPT}\"}],\"max_tokens\":8,\"temperature\":0}" >/dev/null
 curl -sf "http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1/embeddings" \
   -H "Content-Type: application/json" \
   -d '{"input":"warmup"}' >/dev/null

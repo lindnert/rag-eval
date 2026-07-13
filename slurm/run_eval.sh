@@ -12,21 +12,71 @@
 #SBATCH --partition=NvidiaAll
 #SBATCH --array=0-14
 
-## Submit with: sbatch slurm/run_eval.sh
-## Optionally: sbatch --dependency=afterok:<rag_jobid> slurm/run_eval.sh
-## Optionally override input: RAG_RESULTS_FILE=/path/to/rag_results_YYYYMMDD.json sbatch --export=ALL slurm/run_eval.sh
-## Override array size (= number of shards / nodes):
-##   sbatch --array=0-5 slurm/run_eval.sh   # 6 shards
-##   sbatch --array=0   slurm/run_eval.sh   # single shard (no sharding)
+## This script is dual-mode (see the SLURM_JOB_ID branch below).
+## Run it directly on the login node — it submits the array job(s) for you and
+## reads each language's RAG results from results/<lang>/:
+##   ./slurm/run_eval.sh          # both languages (default)
+##   ./slurm/run_eval.sh de       # one language (en | de)
+## Direct sbatch still works (defaults to RAG_LANG=en):
+##   RAG_LANG=de sbatch slurm/run_eval.sh
+##   sbatch --dependency=afterok:<rag_jobid> --export=ALL,RAG_LANG=de slurm/run_eval.sh
+## Optionally override input: RAG_RESULTS_FILE=/path/to/rag_results_YYYYMMDD.json ./slurm/run_eval.sh de
+## Override shards per language: ARRAY_MAX=9 ./slurm/run_eval.sh   # 10 shards
 
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Dual-mode entry point (mirrors slurm/run_rag.sh).
+#   - On the LOGIN NODE (no SLURM_JOB_ID) this acts as a *submitter*: it
+#     sbatch-es one array job per language and exits. Languages come from the
+#     args (default: both).
+#   - Under SLURM (SLURM_JOB_ID set) it falls through to the worker body and
+#     evaluates the single $RAG_LANG it was submitted with, reading that
+#     language's rag_results from results/<lang>/.
+# Array size respects a 30-job cap: 14 shards/lang when both queue together
+# (14 + 14 + 2 dependency-held merge jobs = 30), 15 for a single language.
+# Override with ARRAY_MAX=<n> (array is 0..n, i.e. n+1 shards).
+# ---------------------------------------------------------------------------
+if [ -z "${SLURM_JOB_ID:-}" ]; then
+  LANGS=("$@")
+  if [ ${#LANGS[@]} -eq 0 ]; then
+    LANGS=(en de)
+  fi
+  for lang in "${LANGS[@]}"; do
+    if [ "${lang}" != "en" ] && [ "${lang}" != "de" ]; then
+      echo "ERROR: unknown language '${lang}' (expected 'en' or 'de')" >&2
+      exit 1
+    fi
+  done
+  if [ -z "${ARRAY_MAX:-}" ]; then
+    if [ ${#LANGS[@]} -ge 2 ]; then ARRAY_MAX=13; else ARRAY_MAX=14; fi
+  fi
+  # Resolve absolute paths so submission is independent of the cwd the user
+  # launched from. This script lives in <repo>/slurm/, so REPO_ROOT is its
+  # parent dir. cd there before sbatch so the array job's SLURM_SUBMIT_DIR
+  # (which the worker body uses as WORKDIR) is pinned to the repo root.
+  SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  cd "${REPO_ROOT}"
+  for lang in "${LANGS[@]}"; do
+    echo "Submitting eval RAG_LANG=${lang}  --array=0-${ARRAY_MAX} ($((ARRAY_MAX + 1)) shards) from ${REPO_ROOT}"
+    sbatch --array="0-${ARRAY_MAX}" --export=ALL,RAG_LANG="${lang}" "${SELF}"
+  done
+  exit 0
+fi
 
 WORKDIR="${SLURM_SUBMIT_DIR:-$PWD}"
 ERR_LOG="${WORKDIR}/logs/eval.${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}.$(hostname).err"
 exec 2> >(tee -a "${ERR_LOG}" >&2)
 
-export RESULTS_DIR="${WORKDIR}/results"
+# Language of the run: selects which results/<lang>/ tree we read the RAG
+# results from and write evaluated_results into. The evaluation Python itself
+# is language-agnostic (abstention travels in the `rejected` flag and
+# `reference_answer` already baked into the RAG results).
+export RAG_LANG="${RAG_LANG:-en}"
+export RESULTS_DIR="${WORKDIR}/results/${RAG_LANG}"
 mkdir -p "${RESULTS_DIR}" "${WORKDIR}/logs"
+echo "RAG_LANG=${RAG_LANG}  RESULTS_DIR=${RESULTS_DIR}"
 
 # log the merge job as a dependent job that runs after all shards are done; if this is the last shard (task_id=0), it will trigger the merge job.
 if [ "${SLURM_ARRAY_TASK_ID:-0}" = "0" ]; then

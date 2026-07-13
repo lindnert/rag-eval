@@ -26,7 +26,7 @@ from rag.llm_config import (
     RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
     RAG_SC_SCORE_DIRECTION,
 )
-from common.constants import REJECTION_ANSWER
+from common.constants import RAG_LANG, REJECTION_ANSWER
 from retrieval import build_hybrid_retriever
 
 VARIANTS = ("no_rag", "rag", "rag_sc")
@@ -41,50 +41,117 @@ def _get_retriever():
         _retriever = build_hybrid_retriever(RAG_HYBRID_ALPHA)
     return _retriever
 
-_REJECTION_INSTRUCTION = (
-    "If neither the question nor the context provides the information needed to "
-    "answer — not even partially — respond with exactly this sentence and add "
-    "nothing else: "
-    f"\"{REJECTION_ANSWER}\" "
-)
+# --- Language-dependent prompt bundle --------------------------------------
+# All model-facing prompt text is selected by RAG_LANG (see common.constants) so
+# a single `export RAG_LANG=de` flips the system prompts, the user-prompt labels,
+# and the abstention string coherently for a run. German runs answer the
+# (English) dataset queries in German. The field labels 'Food information' and
+# 'User profile' stay English in every bundle because they appear verbatim in the
+# NGQA query text (see dataset/NGQA/NGQA.py) — the prompt points the model at the
+# labels as they actually occur, not a translation of them.
 
-_SOURCES_CLAUSE = (
-    "You have two sources of information: the question (including for example "
-     "'Food information' and 'User profile'), which may itself state "
-    "relevant facts, and the section labelled \"Context\", which holds retrieved "
-    "passages. Use both together. "
-)
 
-SYSTEM_PROMPT_RAG = (
-    "You are a helpful nutrition advisor who gives evidence-based recommendations. "
-    + _SOURCES_CLAUSE
-    + "If relevant information is available — even if it only partially covers the "
-    "question — answer briefly and concisely, grounded in that material. "
-    + _REJECTION_INSTRUCTION
-)
+def _en_bundle():
+    rejection = (
+        "If neither the question nor the context provides the information needed to "
+        "answer — not even partially — respond with exactly this sentence and add "
+        "nothing else: "
+        f"\"{REJECTION_ANSWER}\" "
+    )
+    sources = (
+        "You have two sources of information: the question (including for example "
+        "'Food information' and 'User profile'), which may itself state "
+        "relevant facts, and the section labelled \"Context\", which holds retrieved "
+        "passages. Use both together. "
+    )
+    return {
+        "no_rag": (
+            "You are a helpful nutrition advisor who gives evidence-based recommendations. "
+            "Answer briefly and concisely."
+        ),
+        "rag": (
+            "You are a helpful nutrition advisor who gives evidence-based recommendations. "
+            + sources
+            + "If relevant information is available — even if it only partially covers the "
+            "question — answer briefly and concisely, grounded in that material. "
+            + rejection
+        ),
+        "rag_strict": (
+            "You are a helpful nutrition advisor who gives evidence-based recommendations. "
+            + sources
+            + "If relevant information is available — even if it only partially covers the "
+            "question — answer briefly and concisely, grounded solely in the question and "
+            "the context. "
+            + rejection
+            + "Make this decision exactly once and do not revise it, "
+            "but begin writing the answer immediately after making the decision. "
+        ),
+        # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
+        "hyde": (
+            "You are a nutrition advisor. Write a short, plausible example answer to the "
+            "following question (3-5 sentences). Factual correctness is not required."
+        ),
+        "question_label": "Question",
+        "context_label": "Context",
+    }
 
-SYSTEM_PROMPT_NO_RAG = (
-    "You are a helpful nutrition advisor who gives evidence-based recommendations. "
-    "Answer briefly and concisely."
-)
 
-SYSTEM_PROMPT_RAG_STRICT = (
-    "You are a helpful nutrition advisor who gives evidence-based recommendations. "
-    + _SOURCES_CLAUSE
-    + "If relevant information is available — even if it only partially covers the "
-    "question — answer briefly and concisely, grounded solely in the question and "
-    "the context. "
-    + _REJECTION_INSTRUCTION +  # "...otherwise respond with exactly this sentence: '...'"
-    "Make this decision exactly once and do not revise it, "
-    "but begin writing the answer immediately after making the decision. "
-)
+def _de_bundle():
+    rejection = (
+        "Wenn weder die Frage noch der Kontext die zur Beantwortung nötigen "
+        "Informationen liefert — nicht einmal teilweise —, antworte mit exakt "
+        "diesem Satz und füge nichts hinzu: "
+        f"\"{REJECTION_ANSWER}\" "
+    )
+    sources = (
+        "Dir stehen zwei Informationsquellen zur Verfügung: die Frage "
+        "(einschließlich zum Beispiel 'Food information' und 'User profile'), die "
+        "selbst relevante Fakten enthalten kann, und der Abschnitt mit der "
+        "Bezeichnung \"Kontext\", der die abgerufenen Passagen enthält. Nutze beide "
+        "zusammen. "
+    )
+    return {
+        "no_rag": (
+            "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
+            "Antworte kurz und prägnant."
+        ),
+        "rag": (
+            "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
+            + sources
+            + "Wenn relevante Informationen verfügbar sind — auch wenn sie die Frage nur "
+            "teilweise abdecken —, antworte kurz und prägnant auf Grundlage dieses "
+            "Materials. "
+            + rejection
+        ),
+        "rag_strict": (
+            "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
+            + sources
+            + "Wenn relevante Informationen verfügbar sind — auch wenn sie die Frage nur "
+            "teilweise abdecken —, antworte kurz und prägnant, ausschließlich gestützt "
+            "auf die Frage und den Kontext. "
+            + rejection
+            + "Triff diese Entscheidung genau einmal und revidiere sie nicht, "
+            "beginne aber unmittelbar nach der Entscheidung mit dem Schreiben der Antwort. "
+        ),
+        # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
+        "hyde": (
+            "Du bist ein Ernährungsberater. Schreibe eine kurze, plausible Beispiel-Antwort "
+            "auf die folgende Frage (3-5 Sätze). Sachliche Korrektheit ist nicht erforderlich."
+        ),
+        "question_label": "Frage",
+        "context_label": "Kontext",
+    }
 
-# HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
-SYSTEM_PROMPT_HYDE = (
-    "You are a nutrition advisor. Write a short, plausible example answer to the "
-    "following question (3-5 sentences). This hypothetical answer serves only to "
-    "find matching sources — factual correctness is not required."
-)
+
+_BUNDLES = {"en": _en_bundle, "de": _de_bundle}
+_bundle = _BUNDLES[RAG_LANG]()
+
+SYSTEM_PROMPT_RAG = _bundle["rag"]
+SYSTEM_PROMPT_NO_RAG = _bundle["no_rag"]
+SYSTEM_PROMPT_RAG_STRICT = _bundle["rag_strict"]
+SYSTEM_PROMPT_HYDE = _bundle["hyde"]
+_QUESTION_LABEL = _bundle["question_label"]
+_CONTEXT_LABEL = _bundle["context_label"]
 
 # Qwen3 emits its reasoning as <think>…</think> at the start of content when
 # enable_thinking=true; strip it so the stored answer isn't polluted.
@@ -140,6 +207,16 @@ def _word_levenshtein(a, b):
 
 _REJECTION_WORDS = _words(REJECTION_ANSWER)
 
+# Anchor tokens that a near-rejection first sentence must contain: a negation
+# and an "information" noun. Unioned across EN and DE so one code path serves
+# both language bundles — the language-specific edit-distance gate below already
+# forces a near-exact match to the active REJECTION_ANSWER, so the anchors are
+# only a cheap guard against an affirmative near-miss ("… contains enough
+# information …") and don't need to be language-partitioned. ("keine" is the
+# negation in the German rejection sentence, not "nicht".)
+_NEGATION_ANCHORS = {"not", "nicht", "keine"}
+_INFORMATION_ANCHORS = {"information", "informationen"}
+
 
 def _is_near_rejection(stripped, max_word_diff=2):
     """True if the answer *opens* with (a near-paraphrase of) REJECTION_ANSWER.
@@ -151,13 +228,14 @@ def _is_near_rejection(stripped, max_word_diff=2):
       - REJECTION_ANSWER followed by an appended explanation (first sentence
         is the rejection),
     but not an answer that merely mentions mid-text that the context is
-    incomplete. The "not"/"information" anchor tokens guard against an
+    incomplete. The negation/information anchor tokens guard against an
     affirmative near-miss ("… contains enough information …") matching on edit
     distance alone.
     """
     first = _SENTENCE_SPLIT.split(stripped, maxsplit=1)[0]
     words = _words(first)
-    if "not" not in words or "information" not in words:
+    word_set = set(words)
+    if not (word_set & _NEGATION_ANCHORS) or not (word_set & _INFORMATION_ANCHORS):
         return False
     return _word_levenshtein(words, _REJECTION_WORDS) <= max_word_diff
 
@@ -256,8 +334,8 @@ def _merge_and_rerank(ctx_orig, retr_scores_orig, ctx_hyde, retr_scores_hyde, k=
 
 def build_user_prompt(query, contexts):
     if not contexts:
-        return f"Question: {query}"
-    lines = [f"Question: {query}", "", "Context:"]
+        return f"{_QUESTION_LABEL}: {query}"
+    lines = [f"{_QUESTION_LABEL}: {query}", "", f"{_CONTEXT_LABEL}:"]
     for i, c in enumerate(contexts, start=1):
         lines.append(f"{i}. {c}")
     return "\n".join(lines)
