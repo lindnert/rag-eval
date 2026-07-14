@@ -80,11 +80,13 @@ def _en_bundle():
             "You are a helpful nutrition advisor who gives evidence-based recommendations. "
             + sources
             + "If relevant information is available — even if it only partially covers the "
-            "question — answer briefly and concisely, grounded solely in the question and "
-            "the context. "
+            "question — answer briefly and concisely, grounded in the question and the "
+            "context. You may reason over the facts they state to reach a conclusion, but do "
+            "not introduce facts that neither the question nor the context provides. "
             + rejection
-            + "Make this decision exactly once and do not revise it, "
-            "but begin writing the answer immediately after making the decision. "
+            + "Once you have judged whether the information suffices, commit to that "
+            "judgement and begin writing your final answer directly, without weighing the "
+            "choice back and forth. "
         ),
         # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
         "hyde": (
@@ -127,11 +129,14 @@ def _de_bundle():
             "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
             + sources
             + "Wenn relevante Informationen verfügbar sind — auch wenn sie die Frage nur "
-            "teilweise abdecken —, antworte kurz und prägnant, ausschließlich gestützt "
-            "auf die Frage und den Kontext. "
+            "teilweise abdecken —, antworte kurz und prägnant, gestützt auf die Frage und "
+            "den Kontext. Du darfst über die dort genannten Fakten schlussfolgern, um zu "
+            "einer Antwort zu gelangen, aber führe keine Fakten ein, die weder die Frage "
+            "noch der Kontext liefert. "
             + rejection
-            + "Triff diese Entscheidung genau einmal und revidiere sie nicht, "
-            "beginne aber unmittelbar nach der Entscheidung mit dem Schreiben der Antwort. "
+            + "Sobald du beurteilt hast, ob die Informationen ausreichen, halte an dieser "
+            "Beurteilung fest und beginne unmittelbar mit dem Schreiben deiner endgültigen "
+            "Antwort, ohne die Entscheidung hin und her abzuwägen. "
         ),
         # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
         "hyde": (
