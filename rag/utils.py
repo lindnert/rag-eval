@@ -80,13 +80,14 @@ def _en_bundle():
             "You are a helpful nutrition advisor who gives evidence-based recommendations. "
             + sources
             + "If relevant information is available — even if it only partially covers the "
-            "question — answer briefly and concisely, grounded in the question and the "
-            "context. You may reason over the facts they state to reach a conclusion, but do "
-            "not introduce facts that neither the question nor the context provides. "
+            "question — answer briefly and concisely. State only what the question and the "
+            "context support, and make no claim they do not back up; if they support only "
+            "part of an answer, give that part and leave the rest unanswered. "
             + rejection
-            + "Once you have judged whether the information suffices, commit to that "
-            "judgement and begin writing your final answer directly, without weighing the "
-            "choice back and forth. "
+            + "Judge once whether the information suffices and what your answer is, then "
+            "state it directly. Do not reconsider or re-weigh — your first reasoned "
+            "conclusion is final. When the evidence is mixed, name the trade-off in one "
+            "sentence and stop. "
         ),
         # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
         "hyde": (
@@ -129,14 +130,14 @@ def _de_bundle():
             "Du bist ein hilfreicher Ernährungsberater, der evidenzbasierte Empfehlungen gibt. "
             + sources
             + "Wenn relevante Informationen verfügbar sind — auch wenn sie die Frage nur "
-            "teilweise abdecken —, antworte kurz und prägnant, gestützt auf die Frage und "
-            "den Kontext. Du darfst über die dort genannten Fakten schlussfolgern, um zu "
-            "einer Antwort zu gelangen, aber führe keine Fakten ein, die weder die Frage "
-            "noch der Kontext liefert. "
+            "teilweise abdecken —, antworte kurz und prägnant. Nenne nur, was die Frage und "
+            "der Kontext stützen, und triff keine Aussage, die sie nicht belegen; wenn sie "
+            "nur einen Teil einer Antwort stützen, gib diesen Teil und lasse den Rest offen. "
             + rejection
-            + "Sobald du beurteilt hast, ob die Informationen ausreichen, halte an dieser "
-            "Beurteilung fest und beginne unmittelbar mit dem Schreiben deiner endgültigen "
-            "Antwort, ohne die Entscheidung hin und her abzuwägen. "
+            + "Entscheide einmal, ob die Informationen ausreichen und wie deine Antwort "
+            "lautet, und formuliere sie dann direkt. Überdenke oder gewichte nichts noch "
+            "einmal — deine erste begründete Schlussfolgerung ist endgültig. Wenn die Belege "
+            "gemischt sind, benenne den Zielkonflikt in einem Satz und höre auf. "
         ),
         # HyDE: a short, plausible draft answer used only for re-embedding/retrieval.
         "hyde": (
