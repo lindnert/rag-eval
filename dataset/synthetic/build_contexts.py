@@ -99,13 +99,6 @@ def _verify_alignment(vs, chunks) -> None:
             )
 
 
-def _cosine_scores(index, dists: np.ndarray) -> np.ndarray:
-    if index.metric_type == faiss.METRIC_INNER_PRODUCT:
-        return dists  # unit vectors -> inner product == cosine
-    # L2 on unit vectors: d^2 = 2 - 2*cos
-    return 1.0 - dists / 2.0
-
-
 def build_contexts(chunks, vs) -> list[dict]:
     rng = random.Random(SYNTH_SEED)
     de_ids = [i for i, c in enumerate(chunks) if c["metadata"].get("lang") == "de"]
@@ -114,6 +107,17 @@ def build_contexts(chunks, vs) -> list[dict]:
     print(f"{len(de_ids)} German chunks, targeting {SYNTH_MAX_CONTEXTS} contexts")
     rng.shuffle(de_ids)
 
+    # Exact de->en scoring over the full vector matrix. An ANN top-k search is
+    # useless here: the German DGE table chunks are near-duplicates of each
+    # other, so a German chunk's top-100 neighbours are almost all German.
+    # Vectors are unit-normalized at index build, so dot product == cosine
+    # regardless of the index's metric type.
+    all_vecs = vs.index.reconstruct_n(0, vs.index.ntotal)
+    en_ids = np.array(
+        [i for i, c in enumerate(chunks) if c["metadata"].get("lang") == "en"]
+    )
+    en_mat = all_vecs[en_ids]
+
     en_use_count: dict[int, int] = {}
     contexts: list[dict] = []
     skipped_low_sim = 0
@@ -121,22 +125,18 @@ def build_contexts(chunks, vs) -> list[dict]:
     for de_id in de_ids:
         if len(contexts) >= SYNTH_MAX_CONTEXTS:
             break
-        vec = vs.index.reconstruct(de_id).reshape(1, -1)
-        dists, ids = vs.index.search(vec, 100)
-        sims = _cosine_scores(vs.index, dists[0])
+        sims = en_mat @ all_vecs[de_id]
+        order = np.argsort(-sims)
 
         partners: list[tuple[int, float]] = []
-        for pos, sim in zip(ids[0], sims):
-            pos = int(pos)
-            if pos < 0 or pos == de_id:
-                continue
-            if chunks[pos]["metadata"].get("lang") != "en":
-                continue
+        for j in order:
+            pos = int(en_ids[j])
+            sim = float(sims[j])
+            if sim < SYNTH_MIN_PAIR_SIM:
+                break  # sorted descending; nothing better follows
             if en_use_count.get(pos, 0) >= SYNTH_MAX_EN_REUSE:
                 continue
-            if float(sim) < SYNTH_MIN_PAIR_SIM:
-                break  # results are sorted; nothing better follows
-            partners.append((pos, float(sim)))
+            partners.append((pos, sim))
             if len(partners) == SYNTH_EN_PARTNERS:
                 break
 

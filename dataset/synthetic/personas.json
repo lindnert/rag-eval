@@ -1,0 +1,42 @@
+[
+  {
+    "id": "persona_00",
+    "text": "The user has the following health conditions: obesity, opioid_misuse, diabetes, Low fat/Low cholesterol diet, Low salt/Low sodium diet. Their dietary habits include: Drinks lots of milk; Eats little or no shellfish; Eats little to no frozen food; Eats few to no ready to eat meals; Takes more supplements; Uses little to no salt in preparation; Ate more food than usual; Ate less food than usual; Eats weight loss diet; Eats low fat diet."
+  },
+  {
+    "id": "persona_01",
+    "text": "The user has the following health conditions: opioid_misuse, hypertension, diabetes, Diabetic diet. Their dietary habits include: Drinks lots of milk; Light cigarette smoker; Drinks Alcohol less than average; Eats little to no fast food; Eats little to no frozen food; Eats few to no ready to eat meals; Takes more supplements; Eats organic food more often; Claims to have a good diet; Ate more food than usual; Ate less food than usual; Eats high fiber diet."
+  },
+  {
+    "id": "persona_02",
+    "text": "The user has the following health conditions: obesity, diabetes, Renal/Kidney diet. Their dietary habits include: Drinks Alcohol less than average; Eats little to no fast food; Eats little to no frozen food; Eats few to no ready to eat meals; Takes few or no supplements; Uses little to no salt in preparation; Claims to have a good diet; Ate more food than usual; Ate less food than usual; Eats low carb diet."
+  },
+  {
+    "id": "persona_03",
+    "text": "The user has the following health conditions: Low salt/Low sodium diet, Diabetic diet. Their dietary habits include: Eats little or no shellfish; Drinks Alcohol less than average; Eats little to no frozen food; Eats few to no ready to eat meals; Takes few or no supplements; Uses little to no salt in preparation; Ate more food than usual; Ate less food than usual; Eats low fat diet; Eats high fiber diet."
+  },
+  {
+    "id": "persona_04",
+    "text": "The user has the following health conditions: hypertension, diabetes, Low fat/Low cholesterol diet. Their dietary habits include: Drinks lots of milk; Eats little or no shellfish; Eats little or no fish; Adds little to no salt at table; Drinks Alcohol less than average; Eats little to no fast food; Eats little to no frozen food; Eats few to no ready to eat meals; Takes few or no supplements; Uses lots of salt in preparation; Drinks lots of water; Claims to have a poor diet; Ate more food than usual; Ate less food than usual; Eats weight loss diet."
+  },
+  {
+    "id": "persona_05",
+    "text": "The user has the following health conditions: Low salt/Low sodium diet. Their dietary habits include: Drinks lots of milk; Eats lots of shellfish; Eats lots of fish; Drinks Alcohol less than average; Eats little to no frozen food; Eats few to no meals outside home; Eats few to no ready to eat meals; Often check nutrition labels; Uses lots of salt in preparation; Ate more food than usual; Ate less food than usual; Eats low fat diet."
+  },
+  {
+    "id": "persona_06",
+    "text": "The user has the following health conditions: obesity, diabetes, Weight loss/Low calorie diet, Low fat/Low cholesterol diet. Their dietary habits include: Eats little or no shellfish; Adds little to no salt at table; Drinks Alcohol less than average; Eats little to no frozen food; Eats few to no meals outside home; Eats few to no ready to eat meals; Uses lots of salt in preparation; Claims to have a good diet; Ate more food than usual; Ate less food than usual; Eats weight loss diet."
+  },
+  {
+    "id": "persona_07",
+    "text": "The user has the following health conditions: obesity, Weight loss/Low calorie diet, Sugar free/Low sugar diet, Low carbohydrate diet. Their dietary habits include: Drinks lots of milk; Drinks Alcohol less than average; Eats little to no fast food; Eats little to no frozen food; Eats few to no ready to eat meals; Uses lots of salt in preparation; Claims to have a good diet; Ate more food than usual; Ate less food than usual; Eats low salt diet; Eats high protein diet."
+  },
+  {
+    "id": "persona_08",
+    "text": "The user has the following health conditions: obesity, hypertension, Diabetic diet. Their dietary habits include: Adds little to no salt at table; Eats little to no frozen food; Eats few to no ready to eat meals; Uses little to no salt in preparation; Claims to have a poor diet; Ate more food than usual; Ate less food than usual; Eats high fiber diet."
+  },
+  {
+    "id": "persona_09",
+    "text": "The user has the following health conditions: opioid_misuse, hypertension, Low fat/Low cholesterol diet. Their dietary habits include: Drinks little or no milk; Eats little or no shellfish; Eats little to no fast food; Eats many ready to eat meals; Often check nutrition labels; Ate more food than usual; Ate less food than usual; Eats weight loss diet."
+  }
+]
