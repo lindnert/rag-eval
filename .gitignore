@@ -217,6 +217,7 @@ richtlinien/CSV/
 richtlinien/HTML/
 richtlinien/PDF/
 richtlinien/PDF_table/
+richtlinien/faiss_index*/
 
 # Logs
 logs/
