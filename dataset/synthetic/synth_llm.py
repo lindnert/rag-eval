@@ -9,6 +9,17 @@ Two instances are used:
 """
 
 import json
+import os
+import re
+
+from dotenv import load_dotenv
+
+# Pick up the repo .env (external Ollama node URL + API key) BEFORE
+# eval_config_llamacpp reads LLAMACPP_GEN_BASE_URL at import time. load_dotenv
+# never overrides variables already in the environment, so SLURM runs (which
+# export the localhost llama-server URL explicitly) are unaffected — and .env
+# is gitignored, so it doesn't exist on the cluster anyway.
+load_dotenv()
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -37,6 +48,25 @@ SYNTH_SYSTEM_PROMPT = (
 
 _MAX_SCHEMA_RETRIES = 3
 
+# Bearer token for the generation endpoint. Unset -> llama-server placeholder
+# (no auth needed); set (directly, or via OLLAMA_API_KEY in .env) -> the
+# authenticated external Ollama node. Same env vars as rag/llm_config.py.
+SYNTH_API_KEY = (
+    os.getenv("LLAMACPP_GEN_API_KEY")
+    or os.getenv("OLLAMA_API_KEY")
+    or "sk-no-key-required"
+)
+
+# gemma4 via Ollama's /v1 emits <think> blocks inline in content even when
+# thinking is toggled off (verified 2026-07-13 on gemma4:12b); llama-server
+# keeps them in a separate reasoning_content field. Strip them defensively so
+# JSON parsing works against either backend.
+_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+
+def _clean_response(text: str) -> str:
+    return _strip_code_fences(_THINK_RE.sub("", text or "").strip())
+
 
 def _coerce_to_schema(text: str, schema):
     cleaned = _strip_code_fences(text or "").strip() or "{}"
@@ -51,6 +81,17 @@ def _coerce_to_schema(text: str, schema):
             return schema(**data)
         return schema.model_validate(data)
     except Exception as e:
+        # Single-field schemas: deepeval's evolution step expects
+        # Response(response=...) but its prompt never names the JSON key, so
+        # local models answer with keys like "rewritten_input". When both the
+        # schema and the reply have exactly one field, the mapping is
+        # unambiguous — remap instead of burning retries on a key name.
+        fields = getattr(schema, "model_fields", {})
+        if isinstance(data, dict) and len(data) == 1 and len(fields) == 1:
+            try:
+                return schema(**{next(iter(fields)): next(iter(data.values()))})
+            except Exception:
+                pass
         raise ValueError(
             f"LLM JSON did not match schema {schema.__name__}: {e}\n"
             f"--PARSED-- {data}\n--RAW-- {text}"
@@ -64,7 +105,7 @@ class SynthLlamaCppWrapper(DeepEvalBaseLLM):
         self.llm = ChatOpenAI(
             model=LLAMACPP_EVAL_MODEL,
             base_url=LLAMACPP_GEN_BASE_URL,
-            api_key=SecretStr("sk-no-key-required"),
+            api_key=SecretStr(SYNTH_API_KEY),
             temperature=temperature,
             top_p=LLAMACPP_TOP_P,
             max_completion_tokens=LLAMACPP_NUM_PREDICT,
@@ -88,7 +129,7 @@ class SynthLlamaCppWrapper(DeepEvalBaseLLM):
     def generate(self, prompt, schema=None, **kwargs):
         last_err: Exception | None = None
         for attempt in range(1, _MAX_SCHEMA_RETRIES + 1):
-            response = _strip_code_fences(self.llm.invoke(self._messages(prompt)).content or "")
+            response = _clean_response(self.llm.invoke(self._messages(prompt)).content or "")
             if schema is None:
                 return response
             try:
@@ -108,7 +149,7 @@ class SynthLlamaCppWrapper(DeepEvalBaseLLM):
         last_err: Exception | None = None
         for attempt in range(1, _MAX_SCHEMA_RETRIES + 1):
             result = await self.llm.ainvoke(self._messages(prompt))
-            response = _strip_code_fences((result.content if result is not None else "") or "")
+            response = _clean_response((result.content if result is not None else "") or "")
             if schema is None:
                 return response
             try:

@@ -1,0 +1,228 @@
+[
+  {
+    "context_id": "ctx_ref_000",
+    "context_type": "reference",
+    "context_lang": "mixed",
+    "dge_age_band": "65-120+",
+    "iom_age_band": "70-120+",
+    "iom_table_type": "Recommended Dietary Allowances (RDA) and Adequate Intakes (AI), Vitamins",
+    "shared_nutrients": [
+      "vitamin a",
+      "vitamin b12",
+      "vitamin b6",
+      "vitamin c",
+      "vitamin d",
+      "vitamin e"
+    ],
+    "question_langs": [
+      "en",
+      "de"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2320,
+        "text": "DGE/ÖGE-Referenzwerte für die Nährstoffzufuhr — Altersgruppe: 65 Jahre und älter.\n- Vitamin A (65 Jahre und älter, Frauen): 700 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin B12 (Cobalamine) (65 Jahre und älter, Männer): 4,0 µg/Tag (Schätzwert).\n- Vitamin B12 (Cobalamine) (65 Jahre und älter, Frauen): 4,0 µg/Tag (Schätzwert).\n- Vitamin B6 (65 Jahre und älter, Männer): 1,6 mg/Tag (Empfohlene Zufuhr).\n- Vitamin B6 (65 Jahre und älter, Frauen): 1,4 mg/Tag (Empfohlene Zufuhr).\n- Vitamin C (65 Jahre und älter, Männer): 110 mg/Tag (Empfohlene Zufuhr).\n- Vitamin C (65 Jahre und älter, Frauen): 95 mg/Tag (Empfohlene Zufuhr).\n- Vitamin D (65 Jahre und älter, Männer): 20 µg/Tag (Schätzwert).\n- Vitamin D (65 Jahre und älter, Frauen): 20 µg/Tag (Schätzwert).\n- Vitamin E (65 Jahre und älter, Männer): 8 mg/Tag (Schätzwert).\n- Vitamin E (65 Jahre und älter, Frauen): 8 mg/Tag (Schätzwert).",
+        "source": "DGE-Referenzwerte.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "de",
+        "pair_sim": 1.0
+      },
+      {
+        "chunk_id": 2443,
+        "text": "Dietary Reference Intakes (DRIs) — Recommended Dietary Allowances (RDA) and Adequate Intakes (AI), Vitamins. Life-stage group: Males, > 70 y.\n- Vitamin A: 900 µg/d (RDA).\n- Vitamin C: 90 mg/d (RDA).\n- Vitamin D: 20 µg/d (RDA).\n- Vitamin E: 15 mg/d (RDA).\n- Vitamin K: 120 µg/d (AI).\n- Thiamin: 1.2 mg/d (RDA).\n- Riboflavin: 1.3 mg/d (RDA).\n- Niacin: 16 mg/d (RDA).\n- Vitamin B6: 1.7 mg/d (RDA).\n- Folate: 400 µg/d (RDA).\n- Vitamin B12: 2.4 µg/d (RDA).\n- Pantothenic Acid: 5 mg/d (AI).\n- Biotin: 30 µg/d (AI).\n- Choline: 550 mg/d (AI).",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.8123
+      },
+      {
+        "chunk_id": 2449,
+        "text": "Dietary Reference Intakes (DRIs) — Recommended Dietary Allowances (RDA) and Adequate Intakes (AI), Vitamins. Life-stage group: Females, > 70 y.\n- Vitamin A: 700 µg/d (RDA).\n- Vitamin C: 75 mg/d (RDA).\n- Vitamin D: 20 µg/d (RDA).\n- Vitamin E: 15 mg/d (RDA).\n- Vitamin K: 90 µg/d (AI).\n- Thiamin: 1.1 mg/d (RDA).\n- Riboflavin: 1.1 mg/d (RDA).\n- Niacin: 14 mg/d (RDA).\n- Vitamin B6: 1.5 mg/d (RDA).\n- Folate: 400 µg/d (RDA).\n- Vitamin B12: 2.4 µg/d (RDA).\n- Pantothenic Acid: 5 mg/d (AI).\n- Biotin: 30 µg/d (AI).\n- Choline: 425 mg/d (AI).",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.8145
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_ref_001",
+    "context_type": "reference",
+    "context_lang": "mixed",
+    "dge_age_band": "51-65",
+    "iom_age_band": "51-70",
+    "iom_table_type": "Estimated Average Requirements (EAR)",
+    "shared_nutrients": [
+      "selenium",
+      "thiamin",
+      "vitamin a",
+      "vitamin b12",
+      "vitamin b6"
+    ],
+    "question_langs": [
+      "en",
+      "de"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2311,
+        "text": "DGE/ÖGE-Referenzwerte für die Nährstoffzufuhr — Altersgruppe: 51 bis unter 65 Jahre.\n- Selen (51 bis unter 65 Jahre, Männer): 70 µg/Tag (Schätzwert).\n- Selen (51 bis unter 65 Jahre, Frauen): 60 µg/Tag (Schätzwert).\n- Thiamin (51 bis unter 65 Jahre, Männer): 1,2 mg/Tag (Empfohlene Zufuhr).\n- Thiamin (51 bis unter 65 Jahre, Frauen): 1,0 mg/Tag (Empfohlene Zufuhr).\n- Vitamin A (51 bis unter 65 Jahre, Männer): 850 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin A (51 bis unter 65 Jahre, Frauen): 700 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin B12 (Cobalamine) (51 bis unter 65 Jahre, Männer): 4,0 µg/Tag (Schätzwert).\n- Vitamin B12 (Cobalamine) (51 bis unter 65 Jahre, Frauen): 4,0 µg/Tag (Schätzwert).\n- Vitamin B6 (51 bis unter 65 Jahre, Männer): 1,6 mg/Tag (Empfohlene Zufuhr).\n- Vitamin B6 (51 bis unter 65 Jahre, Frauen): 1,4 mg/Tag (Empfohlene Zufuhr).",
+        "source": "DGE-Referenzwerte.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "de",
+        "pair_sim": 1.0
+      },
+      {
+        "chunk_id": 2420,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Males, 51–70 y.\n- Calcium: 800 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.66 g/kg/d.\n- Vitamin A: 625 µg/d.\n- Vitamin C: 75 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 1.0 mg/d.\n- Riboflavin: 1.1 mg/d.\n- Niacin: 12 mg/d.\n- Vitamin B6: 1.4 mg/d.\n- Folate: 320 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 700 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 6 mg/d.\n- Magnesium: 350 mg/d.\n- Molybdenum: 34 µg/d.\n- Phosphorus: 580 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 9.4 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.7955
+      },
+      {
+        "chunk_id": 2426,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Females, 51–70 y.\n- Calcium: 1,000 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.66 g/kg/d.\n- Vitamin A: 500 µg/d.\n- Vitamin C: 60 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 0.9 mg/d.\n- Riboflavin: 0.9 mg/d.\n- Niacin: 11 mg/d.\n- Vitamin B6: 1.3 mg/d.\n- Folate: 320 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 700 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 5 mg/d.\n- Magnesium: 265 mg/d.\n- Molybdenum: 34 µg/d.\n- Phosphorus: 580 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 6.8 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.7879
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_ref_002",
+    "context_type": "reference",
+    "context_lang": "mixed",
+    "dge_age_band": "25-51",
+    "iom_age_band": "31-50",
+    "iom_table_type": "Estimated Average Requirements (EAR)",
+    "shared_nutrients": [
+      "selenium",
+      "thiamin",
+      "vitamin a",
+      "vitamin b12",
+      "vitamin b6"
+    ],
+    "question_langs": [
+      "en",
+      "de"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2302,
+        "text": "DGE/ÖGE-Referenzwerte für die Nährstoffzufuhr — Altersgruppe: 25 bis unter 51 Jahre.\n- Selen (25 bis unter 51 Jahre, Männer): 70 µg/Tag (Schätzwert).\n- Selen (25 bis unter 51 Jahre, Frauen): 60 µg/Tag (Schätzwert).\n- Thiamin (25 bis unter 51 Jahre, Männer): 1,2 mg/Tag (Empfohlene Zufuhr).\n- Thiamin (25 bis unter 51 Jahre, Frauen): 1,0 mg/Tag (Empfohlene Zufuhr).\n- Vitamin A (25 bis unter 51 Jahre, Männer): 850 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin A (25 bis unter 51 Jahre, Frauen): 700 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin B12 (Cobalamine) (25 bis unter 51 Jahre, Männer): 4,0 µg/Tag (Schätzwert).\n- Vitamin B12 (Cobalamine) (25 bis unter 51 Jahre, Frauen): 4,0 µg/Tag (Schätzwert).\n- Vitamin B6 (25 bis unter 51 Jahre, Männer): 1,6 mg/Tag (Empfohlene Zufuhr).\n- Vitamin B6 (25 bis unter 51 Jahre, Frauen): 1,4 mg/Tag (Empfohlene Zufuhr).",
+        "source": "DGE-Referenzwerte.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "de",
+        "pair_sim": 1.0
+      },
+      {
+        "chunk_id": 2419,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Males, 31–50 y.\n- Calcium: 800 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.66 g/kg/d.\n- Vitamin A: 625 µg/d.\n- Vitamin C: 75 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 1.0 mg/d.\n- Riboflavin: 1.1 mg/d.\n- Niacin: 12 mg/d.\n- Vitamin B6: 1.1 mg/d.\n- Folate: 320 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 700 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 6 mg/d.\n- Magnesium: 350 mg/d.\n- Molybdenum: 34 µg/d.\n- Phosphorus: 580 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 9.4 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.8005
+      },
+      {
+        "chunk_id": 2425,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Females, 31–50 y.\n- Calcium: 800 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.66 g/kg/d.\n- Vitamin A: 500 µg/d.\n- Vitamin C: 60 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 0.9 mg/d.\n- Riboflavin: 0.9 mg/d.\n- Niacin: 11 mg/d.\n- Vitamin B6: 1.1 mg/d.\n- Folate: 320 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 700 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 8.1 mg/d.\n- Magnesium: 265 mg/d.\n- Molybdenum: 34 µg/d.\n- Phosphorus: 580 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 6.8 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.7873
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_ref_003",
+    "context_type": "reference",
+    "context_lang": "mixed",
+    "dge_age_band": "19-25",
+    "iom_age_band": "19-30",
+    "iom_table_type": "Estimated Average Requirements (EAR)",
+    "shared_nutrients": [
+      "selenium",
+      "thiamin",
+      "vitamin a",
+      "vitamin b12",
+      "vitamin b6"
+    ],
+    "question_langs": [
+      "en",
+      "de"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2293,
+        "text": "DGE/ÖGE-Referenzwerte für die Nährstoffzufuhr — Altersgruppe: 19 bis unter 25 Jahre.\n- Selen (19 bis unter 25 Jahre, Männer): 70 µg/Tag (Schätzwert).\n- Selen (19 bis unter 25 Jahre, Frauen): 60 µg/Tag (Schätzwert).\n- Thiamin (19 bis unter 25 Jahre, Männer): 1,3 mg/Tag (Empfohlene Zufuhr).\n- Thiamin (19 bis unter 25 Jahre, Frauen): 1,0 mg/Tag (Empfohlene Zufuhr).\n- Vitamin A (19 bis unter 25 Jahre, Männer): 850 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin A (19 bis unter 25 Jahre, Frauen): 700 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin B12 (Cobalamine) (19 bis unter 25 Jahre, Männer): 4,0 µg/Tag (Schätzwert).\n- Vitamin B12 (Cobalamine) (19 bis unter 25 Jahre, Frauen): 4,0 µg/Tag (Schätzwert).\n- Vitamin B6 (19 bis unter 25 Jahre, Männer): 1,6 mg/Tag (Empfohlene Zufuhr).\n- Vitamin B6 (19 bis unter 25 Jahre, Frauen): 1,4 mg/Tag (Empfohlene Zufuhr).",
+        "source": "DGE-Referenzwerte.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "de",
+        "pair_sim": 1.0
+      },
+      {
+        "chunk_id": 2418,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Males, 19–30 y.\n- Calcium: 800 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.66 g/kg/d.\n- Vitamin A: 625 µg/d.\n- Vitamin C: 75 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 1.0 mg/d.\n- Riboflavin: 1.1 mg/d.\n- Niacin: 12 mg/d.\n- Vitamin B6: 1.1 mg/d.\n- Folate: 320 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 700 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 6 mg/d.\n- Magnesium: 330 mg/d.\n- Molybdenum: 34 µg/d.\n- Phosphorus: 580 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 9.4 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.7985
+      },
+      {
+        "chunk_id": 2424,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Females, 19–30 y.\n- Calcium: 800 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.66 g/kg/d.\n- Vitamin A: 500 µg/d.\n- Vitamin C: 60 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 0.9 mg/d.\n- Riboflavin: 0.9 mg/d.\n- Niacin: 11 mg/d.\n- Vitamin B6: 1.1 mg/d.\n- Folate: 320 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 700 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 8.1 mg/d.\n- Magnesium: 255 mg/d.\n- Molybdenum: 34 µg/d.\n- Phosphorus: 580 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 6.8 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.7913
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_ref_004",
+    "context_type": "reference",
+    "context_lang": "mixed",
+    "dge_age_band": "15-19",
+    "iom_age_band": "14-18",
+    "iom_table_type": "Estimated Average Requirements (EAR)",
+    "shared_nutrients": [
+      "selenium",
+      "thiamin",
+      "vitamin a",
+      "vitamin b12",
+      "vitamin b6"
+    ],
+    "question_langs": [
+      "en",
+      "de"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2284,
+        "text": "DGE/ÖGE-Referenzwerte für die Nährstoffzufuhr — Altersgruppe: 15 bis unter 19 Jahre.\n- Selen (15 bis unter 19 Jahre, Männer): 70 µg/Tag (Schätzwert).\n- Selen (15 bis unter 19 Jahre, Frauen): 60 µg/Tag (Schätzwert).\n- Thiamin (15 bis unter 19 Jahre, Männer): 1,4 mg/Tag (Empfohlene Zufuhr).\n- Thiamin (15 bis unter 19 Jahre, Frauen): 1,1 mg/Tag (Empfohlene Zufuhr).\n- Vitamin A (15 bis unter 19 Jahre, Männer): 950 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin A (15 bis unter 19 Jahre, Frauen): 800 µg-RAE/Tag (Empfohlene Zufuhr).\n- Vitamin B12 (Cobalamine) (15 bis unter 19 Jahre, Männer): 4,0 µg/Tag (Schätzwert).\n- Vitamin B12 (Cobalamine) (15 bis unter 19 Jahre, Frauen): 4,0 µg/Tag (Schätzwert).\n- Vitamin B6 (15 bis unter 19 Jahre, Männer): 1,6 mg/Tag (Empfohlene Zufuhr).\n- Vitamin B6 (15 bis unter 19 Jahre, Frauen): 1,4 mg/Tag (Empfohlene Zufuhr).",
+        "source": "DGE-Referenzwerte.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "de",
+        "pair_sim": 1.0
+      },
+      {
+        "chunk_id": 2417,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Males, 14–18 y.\n- Calcium: 1,100 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.73 g/kg/d.\n- Vitamin A: 630 µg/d.\n- Vitamin C: 63 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 1.0 mg/d.\n- Riboflavin: 1.1 mg/d.\n- Niacin: 12 mg/d.\n- Vitamin B6: 1.1 mg/d.\n- Folate: 330 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 685 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 7.7 mg/d.\n- Magnesium: 340 mg/d.\n- Molybdenum: 33 µg/d.\n- Phosphorus: 1,055 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 8.5 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.7852
+      },
+      {
+        "chunk_id": 2423,
+        "text": "Dietary Reference Intakes (DRIs) — Estimated Average Requirements (EAR). Life-stage group: Females, 14–18 y.\n- Calcium: 1,100 mg/d.\n- Carbohydrate: 100 g/d.\n- Protein: 0.71 g/kg/d.\n- Vitamin A: 485 µg/d.\n- Vitamin C: 56 mg/d.\n- Vitamin D: 10 µg/d.\n- Vitamin E: 12 mg/d.\n- Thiamin: 0.9 mg/d.\n- Riboflavin: 0.9 mg/d.\n- Niacin: 11 mg/d.\n- Vitamin B6: 1.0 mg/d.\n- Folate: 330 µg/d.\n- Vitamin B12: 2.0 µg/d.\n- Copper: 685 µg/d.\n- Iodine: 95 µg/d.\n- Iron: 7.9 mg/d.\n- Magnesium: 300 mg/d.\n- Molybdenum: 33 µg/d.\n- Phosphorus: 1,055 mg/d.\n- Selenium: 45 µg/d.\n- Zinc: 7.3 mg/d.",
+        "source": "US_intstitute_of_Medicine.pdf",
+        "folder": "richtlinien/PDF_table",
+        "lang": "en",
+        "pair_sim": 0.7796
+      }
+    ]
+  }
+]

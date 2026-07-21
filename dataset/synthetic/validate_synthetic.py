@@ -12,8 +12,8 @@ Stages, each recorded in the attrition report:
                    supported by the guideline chunks it was generated from
 
 Outputs:
-  results/synthetic/synthetic_dataset.json    final dataset
-  results/synthetic/validation_report.json    attrition + score histograms
+  dataset/synthetic/generated/synthetic_dataset.json  final dataset
+  dataset/synthetic/generated/validation_report.json  attrition + histograms
 
 Needs the llama-server gen endpoint (same job as generation). Rerun with
 different cutoffs is cheap for stages 1-3; stage 4 scores are cached in the
@@ -45,6 +45,29 @@ _REPORT_FILE = _OUT / "validation_report.json"
 
 def _norm(text: str) -> str:
     return " ".join("".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in text).split())
+
+
+# A faithful reference answer can still be UNANSWERABLE — the generator, told to
+# stay grounded, honestly reports that the context lacks the requested info. The
+# faithfulness metric passes those (the hedge IS supported by the context), so we
+# drop them explicitly: no unanswerable goldens is a hard requirement (other
+# datasets already cover abstention).
+_UNANSWERABLE_MARKERS = (
+    # English
+    "does not offer", "does not provide", "does not contain", "does not specify",
+    "does not include", "does not mention", "does not address", "not provided in the context",
+    "not available in the context", "the context does not", "no specific",
+    "no information", "cannot be determined", "is not specified",
+    # German
+    "enthält keine", "bietet keine", "keine spezifischen", "keine angaben",
+    "nicht im kontext", "der kontext enthält", "lässt sich nicht", "geht nicht auf",
+    "keine informationen", "nicht angegeben", "wird nicht", "liegen keine",
+)
+
+
+def _is_answerable(answer: str) -> bool:
+    low = (answer or "").lower()
+    return not any(m in low for m in _UNANSWERABLE_MARKERS)
 
 
 def _histogram(scores, edges=(0.0, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.01)):
@@ -135,6 +158,15 @@ def main():
         "kept": len(complete),
         "dropped": len(quality_ok) - len(complete),
     }
+
+    # 3b. answerability — drop goldens whose reference answer hedges that the
+    # context lacks the requested info (faithfulness would keep these).
+    answerable = [r for r in complete if _is_answerable(r["reference_answer"])]
+    report["stages"]["answerable"] = {
+        "kept": len(answerable),
+        "dropped": len(complete) - len(answerable),
+    }
+    complete = answerable
 
     # 4. faithfulness of reference_answer vs own context (scores cached)
     if _SCORED_FILE.exists():

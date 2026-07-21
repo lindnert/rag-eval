@@ -221,9 +221,12 @@ richtlinien/faiss_index*/
 
 # Logs
 logs/
+dataset/synthetic/generated*/*
 
 # Results
 results/
+analysis/*.csv
+analysis/*.png
 
 # Models & HF
 .ollama_models/

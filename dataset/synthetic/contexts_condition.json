@@ -1,0 +1,922 @@
+[
+  {
+    "context_id": "ctx_cond_000",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_ckd_predialysis",
+    "conditions": [
+      "kidney"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1250,
+        "text": "Diagnosis of\nmalnutrition requires at least one phenotypic and one etiological\ncriterion. So far, no study has validated the application of these\ncriteria in hospitalized patients with kidney disease. Limitations\nof BMI use in overhydrated patients may also lead to underestimating malnutrition in this setting, and special attention\nshould therefore be paid to the use of this criterion in potential\napplications of the GLIM approach to hospitalized subjects with\nAKI/AKD and/or CKD or CKD with KF.\n3. Indication for medical nutrition treatment\n3.1. Which patients?\n4) Medical nutrition therapy needs may be considered for\nany patient with AKI/AKD, AKI on CKD, CKD with or without KF\nrequiring hospitalization.\n(R1, Grade GPP, strong consensus 100%)\nPatients with CKD, especially in those in the KF stage undergoing or not chronic dialysis, are at high risk of developing nutritional disorders [4]. Progressive depletion of protein and/or energy\nstores is often observed [12], with prevalence rates that increase\nalong with the decline in kidney function [12].",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1251,
+        "text": "Progressive depletion of protein and/or energy\nstores is often observed [12], with prevalence rates that increase\nalong with the decline in kidney function [12]. In a global metaanalysis, the prevalence of malnutrition as defined by subjective\nglobal assessment (SGA) or malnutrition-inflammation score was\nfound to range from 11% to 54% in patients with non-dialysis CKD\nstages 3e5, and between 28 and 54% in patients undergoing\nchronic hemodialysis [13]. Given this high prevalence, we find it\njustified to suggest that all patients admitted to the hospital should\nbe considered at risk of malnutrition.\n5) Medical nutrition therapy should be provided to any patient with AKI/AKD, AKI on CKD, CKD with or without KF staying\nin the ICU for more than 48 h.\n(R2, Grade GPP, strong consensus 100%)\nFor ethical reasons, there are no studies directly addressing the\neffects of starvation on hospitalized patients with KF. The scientific\nliterature regarding nutritional support in AKI is scarce and mainly\nrepresented by low-quality studies from the 1980s that have been\nsummarized in more recent reviews [3,14,15].",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1248,
+        "text": "Most of the\nmechanisms leading to malnutrition can be applied also to acutely\nill hospitalized patients with AKI/AKD on CKD or KF not staying in\nthe ICU. In fact, in renal patients with CKD with or without KF,\nmalnutrition is characterized by loss of protein and energy stores\nassociated with multiple metabolic derangements, most of which\nare peculiar of the syndrome [9]. Apart from an inadequate spontaneous nutrient intake, several other factors such as metabolic\nacidosis, insulin resistance, chronic inflammation, intestinal dysbiosis, infection and oxidative stress are also contributive to\nmalnutrition development. In addition, factors related to CKD\ntreatment itself, such as inappropriate dietary restrictions or hemodialysis procedures, may play a role. The overall effect is the\npersistence of a vicious cycle between malnutrition and its complications [9].\n3) There is no uniform and validated criteria to define\nmalnutrition in hospitalized patients with AKI/AKD and/or CKD\nor CKD with KF. Studies to validate the ESPEN endorsed GLIM\ncriteria in patients with kidney disease should be performed.\n(S3, strong consensus 100%)\nThe International Society of Renal Nutrition and Metabolism\n(ISRNM) [10], introduced the term “protein-energy wasting” to\nindicate “a condition of decreased body stores of protein and energy fuel stores (i.e.",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_001",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_ckd_dialysis",
+    "conditions": [
+      "kidney"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1250,
+        "text": "Diagnosis of\nmalnutrition requires at least one phenotypic and one etiological\ncriterion. So far, no study has validated the application of these\ncriteria in hospitalized patients with kidney disease. Limitations\nof BMI use in overhydrated patients may also lead to underestimating malnutrition in this setting, and special attention\nshould therefore be paid to the use of this criterion in potential\napplications of the GLIM approach to hospitalized subjects with\nAKI/AKD and/or CKD or CKD with KF.\n3. Indication for medical nutrition treatment\n3.1. Which patients?\n4) Medical nutrition therapy needs may be considered for\nany patient with AKI/AKD, AKI on CKD, CKD with or without KF\nrequiring hospitalization.\n(R1, Grade GPP, strong consensus 100%)\nPatients with CKD, especially in those in the KF stage undergoing or not chronic dialysis, are at high risk of developing nutritional disorders [4]. Progressive depletion of protein and/or energy\nstores is often observed [12], with prevalence rates that increase\nalong with the decline in kidney function [12].",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1251,
+        "text": "Progressive depletion of protein and/or energy\nstores is often observed [12], with prevalence rates that increase\nalong with the decline in kidney function [12]. In a global metaanalysis, the prevalence of malnutrition as defined by subjective\nglobal assessment (SGA) or malnutrition-inflammation score was\nfound to range from 11% to 54% in patients with non-dialysis CKD\nstages 3e5, and between 28 and 54% in patients undergoing\nchronic hemodialysis [13]. Given this high prevalence, we find it\njustified to suggest that all patients admitted to the hospital should\nbe considered at risk of malnutrition.\n5) Medical nutrition therapy should be provided to any patient with AKI/AKD, AKI on CKD, CKD with or without KF staying\nin the ICU for more than 48 h.\n(R2, Grade GPP, strong consensus 100%)\nFor ethical reasons, there are no studies directly addressing the\neffects of starvation on hospitalized patients with KF. The scientific\nliterature regarding nutritional support in AKI is scarce and mainly\nrepresented by low-quality studies from the 1980s that have been\nsummarized in more recent reviews [3,14,15].",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1248,
+        "text": "Most of the\nmechanisms leading to malnutrition can be applied also to acutely\nill hospitalized patients with AKI/AKD on CKD or KF not staying in\nthe ICU. In fact, in renal patients with CKD with or without KF,\nmalnutrition is characterized by loss of protein and energy stores\nassociated with multiple metabolic derangements, most of which\nare peculiar of the syndrome [9]. Apart from an inadequate spontaneous nutrient intake, several other factors such as metabolic\nacidosis, insulin resistance, chronic inflammation, intestinal dysbiosis, infection and oxidative stress are also contributive to\nmalnutrition development. In addition, factors related to CKD\ntreatment itself, such as inappropriate dietary restrictions or hemodialysis procedures, may play a role. The overall effect is the\npersistence of a vicious cycle between malnutrition and its complications [9].\n3) There is no uniform and validated criteria to define\nmalnutrition in hospitalized patients with AKI/AKD and/or CKD\nor CKD with KF. Studies to validate the ESPEN endorsed GLIM\ncriteria in patients with kidney disease should be performed.\n(S3, strong consensus 100%)\nThe International Society of Renal Nutrition and Metabolism\n(ISRNM) [10], introduced the term “protein-energy wasting” to\nindicate “a condition of decreased body stores of protein and energy fuel stores (i.e.",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_002",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_ckd_diabetes",
+    "conditions": [
+      "kidney",
+      "diabetes"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1250,
+        "text": "Diagnosis of\nmalnutrition requires at least one phenotypic and one etiological\ncriterion. So far, no study has validated the application of these\ncriteria in hospitalized patients with kidney disease. Limitations\nof BMI use in overhydrated patients may also lead to underestimating malnutrition in this setting, and special attention\nshould therefore be paid to the use of this criterion in potential\napplications of the GLIM approach to hospitalized subjects with\nAKI/AKD and/or CKD or CKD with KF.\n3. Indication for medical nutrition treatment\n3.1. Which patients?\n4) Medical nutrition therapy needs may be considered for\nany patient with AKI/AKD, AKI on CKD, CKD with or without KF\nrequiring hospitalization.\n(R1, Grade GPP, strong consensus 100%)\nPatients with CKD, especially in those in the KF stage undergoing or not chronic dialysis, are at high risk of developing nutritional disorders [4]. Progressive depletion of protein and/or energy\nstores is often observed [12], with prevalence rates that increase\nalong with the decline in kidney function [12].",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2163,
+        "text": "- Eat fruits, vegetables, or a small handful of unsalted nuts instead of chips or candy.\n- To reduce calories, drink water instead of regular soda, sports drinks, or juice.\n- Chew sugar-free gum between meals to help reduce your urge to snack.\n\n- Make a list of what you need before going to the store, and stick to your list.\n- Eat a healthy snack or meal before shopping for food. Don’t shop on an empty stomach.\n- Compare nutrition facts on food labels and choose foods that are lower in calories, saturated fat, trans fats, and sodium.\n- Buy a new fruit or vegetable to try each time you go to the store. Use it to add flavor and color to soups, stews, or salads.\n- Buy reduced-fat or light versions of mayonnaise, cheese, and salad dressing.\n- Buy fat-free, low-fat, or soy milk instead of whole milk.",
+        "source": "US_NIH_NIDDK_prevent_type2_diabetes.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1251,
+        "text": "Progressive depletion of protein and/or energy\nstores is often observed [12], with prevalence rates that increase\nalong with the decline in kidney function [12]. In a global metaanalysis, the prevalence of malnutrition as defined by subjective\nglobal assessment (SGA) or malnutrition-inflammation score was\nfound to range from 11% to 54% in patients with non-dialysis CKD\nstages 3e5, and between 28 and 54% in patients undergoing\nchronic hemodialysis [13]. Given this high prevalence, we find it\njustified to suggest that all patients admitted to the hospital should\nbe considered at risk of malnutrition.\n5) Medical nutrition therapy should be provided to any patient with AKI/AKD, AKI on CKD, CKD with or without KF staying\nin the ICU for more than 48 h.\n(R2, Grade GPP, strong consensus 100%)\nFor ethical reasons, there are no studies directly addressing the\neffects of starvation on hospitalized patients with KF. The scientific\nliterature regarding nutritional support in AKI is scarce and mainly\nrepresented by low-quality studies from the 1980s that have been\nsummarized in more recent reviews [3,14,15].",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_003",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_liver_cirrhosis",
+    "conditions": [
+      "liver"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1015,
+        "text": "10. Clinical nutrition in liver cirrhosis part 1 (LC, liver cirrhosis).\n3541\n\nhigher risk of dying after transplantation. In a small retrospective\nseries, overweight patients were found more susceptible to ALF\n[61].\n2.2.1.2. Oral nutrition and ONS\n16) Patients suffering from only mild hepatic encephalopathy\ncan be fed orally as long as cough and swallow reflexes are\nintact. (Recommendation 9, grade GPP, strong consensus\n100%)\nThere are no data from controlled clinical trials in ALF to inform\nthis recommendation.\n17) In patients with mild hepatic encephalopathy oral nutritional supplements (ONS) should be used when feeding\ngoals\ncannot\nattained\nby\noral\nnutrition\nalone.\n(Recommendation 10, grade GPP, consensus 85%)\nThere are no data from controlled clinical trials in ALF to inform\nthis recommendation.\n18) In patients with severe hyper-acute disease with hepatic\nencephalopathy and highly elevated arterial ammonia\nwho are at risk of cerebral edema, nutritional protein\nsupport can be deferred for 24e48 h until hyperammonemia is controlled. When protein administration\nis commenced, arterial ammonia should be monitored to\nensure no pathological elevation occurs.",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_liver_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1020,
+        "text": "In the majority of patients\nwith ALF it is practical and safe to use EN, and formulas can be\ndelivered in amounts comparable to other critical illness. As\nFig. 12. Clinical nutrition in liver cirrhosis part 3 (EN, enteral nutrition; LC, liver cirrhosis; PEG, percutaneous endoscopic gastrostomy; PN, parenteral nutrition).\n3543\n\ndocumented above (see point 22) a small subgroup of hyper-acute\npatients may be at transient risk of worsening hyper-ammonemia\nat high protein loads and thus may be intolerant of full dose EN\nin the early phase of their illness. In other critically ill patients who\nrequire nutrition support therapy, PN carries no clear advantage\nover EN and may increase infectious complications: the same may\nbe the case in ALF.\n2.2.2. Alcoholic steatohepatitis (ASH) (Figs. 6 and 7)\n2.2.2.1. Oral nutrition\n2.2.2.1.1. All patients\n26) In the management of severely malnourished ASH patients, a poorer survival compared to non-malnourished\nshall\nexpected.\n(Statement\n8,\nUndernourished ASH patients had a higher rate of morbidity\nand mortality in the reports of the combined data from the\nAmerican Veteran Affairs study [67e69].",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_liver_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1026,
+        "text": "14. Clinical nutrition in liver transplantation and surgery part 2 (BCAA, branched chain amino acids; EN, enteral nutrition; ICU, intensive care unit; LTx, liver transplantation; PN,\nparenteral nutrition).\n3545\n\nbeen consistently reported. However, these data are to be tempered\nby consistent reports that caloric intake <21.5 kcal$kg\u00011$d\u00011 was\nassociated with higher mortality [70], there is strong consensus\namong experts that nutritional supplementation in those patients\nwith poor oral intake should be offered and may provide a survival\nadvantage(80).\n32) ONS shall be used as first line therapy when feeding goals\ncannot be attained by oral nutrition alone and should be\ngiven\nas\nlate\nevening\nnocturnal\nsupplement.\n(Recommendation 24, grade GPP, strong consensus 100%)\nReduced oral intake is associated with higher mortality and\nnutritional supplementation is likely to result in more rapid resolution of hepatic encephalopathy and elevated serum bilirubin and\nlower infection risk, and severe ASH is also a hyper-metabolic state.\nThese data support the use of adequate calorie and protein intake\nby supplementation. Since compelling data for a late evening snack\nhave been reported in liver cirrhosis including alcoholic cirrhosis\n[83], it is reasonable to extend these data to support the use of a late\nevening or nocturnal supplements to reduce the duration of\nstarvation.",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_liver_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_004",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_liver_nafld",
+    "conditions": [
+      "liver"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1015,
+        "text": "10. Clinical nutrition in liver cirrhosis part 1 (LC, liver cirrhosis).\n3541\n\nhigher risk of dying after transplantation. In a small retrospective\nseries, overweight patients were found more susceptible to ALF\n[61].\n2.2.1.2. Oral nutrition and ONS\n16) Patients suffering from only mild hepatic encephalopathy\ncan be fed orally as long as cough and swallow reflexes are\nintact. (Recommendation 9, grade GPP, strong consensus\n100%)\nThere are no data from controlled clinical trials in ALF to inform\nthis recommendation.\n17) In patients with mild hepatic encephalopathy oral nutritional supplements (ONS) should be used when feeding\ngoals\ncannot\nattained\nby\noral\nnutrition\nalone.\n(Recommendation 10, grade GPP, consensus 85%)\nThere are no data from controlled clinical trials in ALF to inform\nthis recommendation.\n18) In patients with severe hyper-acute disease with hepatic\nencephalopathy and highly elevated arterial ammonia\nwho are at risk of cerebral edema, nutritional protein\nsupport can be deferred for 24e48 h until hyperammonemia is controlled. When protein administration\nis commenced, arterial ammonia should be monitored to\nensure no pathological elevation occurs.",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_liver_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1020,
+        "text": "In the majority of patients\nwith ALF it is practical and safe to use EN, and formulas can be\ndelivered in amounts comparable to other critical illness. As\nFig. 12. Clinical nutrition in liver cirrhosis part 3 (EN, enteral nutrition; LC, liver cirrhosis; PEG, percutaneous endoscopic gastrostomy; PN, parenteral nutrition).\n3543\n\ndocumented above (see point 22) a small subgroup of hyper-acute\npatients may be at transient risk of worsening hyper-ammonemia\nat high protein loads and thus may be intolerant of full dose EN\nin the early phase of their illness. In other critically ill patients who\nrequire nutrition support therapy, PN carries no clear advantage\nover EN and may increase infectious complications: the same may\nbe the case in ALF.\n2.2.2. Alcoholic steatohepatitis (ASH) (Figs. 6 and 7)\n2.2.2.1. Oral nutrition\n2.2.2.1.1. All patients\n26) In the management of severely malnourished ASH patients, a poorer survival compared to non-malnourished\nshall\nexpected.\n(Statement\n8,\nUndernourished ASH patients had a higher rate of morbidity\nand mortality in the reports of the combined data from the\nAmerican Veteran Affairs study [67e69].",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_liver_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1026,
+        "text": "14. Clinical nutrition in liver transplantation and surgery part 2 (BCAA, branched chain amino acids; EN, enteral nutrition; ICU, intensive care unit; LTx, liver transplantation; PN,\nparenteral nutrition).\n3545\n\nbeen consistently reported. However, these data are to be tempered\nby consistent reports that caloric intake <21.5 kcal$kg\u00011$d\u00011 was\nassociated with higher mortality [70], there is strong consensus\namong experts that nutritional supplementation in those patients\nwith poor oral intake should be offered and may provide a survival\nadvantage(80).\n32) ONS shall be used as first line therapy when feeding goals\ncannot be attained by oral nutrition alone and should be\ngiven\nas\nlate\nevening\nnocturnal\nsupplement.\n(Recommendation 24, grade GPP, strong consensus 100%)\nReduced oral intake is associated with higher mortality and\nnutritional supplementation is likely to result in more rapid resolution of hepatic encephalopathy and elevated serum bilirubin and\nlower infection risk, and severe ASH is also a hyper-metabolic state.\nThese data support the use of adequate calorie and protein intake\nby supplementation. Since compelling data for a late evening snack\nhave been reported in liver cirrhosis including alcoholic cirrhosis\n[83], it is reasonable to extend these data to support the use of a late\nevening or nocturnal supplements to reduce the duration of\nstarvation.",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_liver_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_005",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_cancer_chemo",
+    "conditions": [
+      "cancer"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2001,
+        "text": "Î Exercise each day. Not only does\nexercise help you burn calories, but\nstudies show that it helps people with\ncancer feel better. Talk with your\ndoctor or nurse about how much\nexercise to do while having\nÎ Talk with your doctor before going\non a diet to lose weight. They can\nhelp figure out why you are gaining\nweight and prescribe medicine (called\na diuretic) if you have fluid retention.\n\n35\nWeight loss\nWeight loss is when you have a decrease in body weight.\nWeight loss can be caused by cancer itself, or by side effects of cancer treatment, such as\nnausea and vomiting. Stress and worry can also cause weight loss. Many people with cancer\nhave weight loss during treatment.\nÎ Eat on a schedule, rather than waiting until you feel hungry. You still need to eat even\nif you do not feel hungry while being treated for cancer.\nÎ Eat 5 or 6 small meals each day instead of 3 large meals. Many people find it easier to\neat smaller amounts more often.\nÎ Eat foods that are high in protein and calories. Do not fill up on low-calorie foods\nor fluids. “Power pack” your diet by adding protein and calories to other foods. Add\ntoppings like peanut butter, olive oil, nuts, seeds, avocado, honey, and jam to all foods.\nTry the recipe for Overnight Oats on page 36.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1999,
+        "text": "33\nWeight gain\nWeight gain occurs when you have an increase in body weight. Many people with\ncancer think they will lose weight and are surprised, and sometimes upset, when they\ngain weight.\nWeight gain can happen for many reasons.\nPeople with certain types of cancer are more likely to gain weight.\nHormone therapy, certain types of chemotherapy, and medicines such as steroids can\ncause weight gain. These treatments can also cause your body to retain water, which\nmakes you gain weight and feel puffy.\nSome treatments can also increase your appetite, so you feel hungry and eat more calories\nthan your body needs.\nCancer and its treatments can cause fatigue and changes in your schedule that may\nlead to a decrease in activity. Being less active can cause weight gain.\nÎ Eat lots of fruits and vegetables.\nThese are high in fiber and low in\ncalories. They can help you feel full\nwithout adding a lot of calories.\nÎ Eat foods that are high in fiber, such\nas cooked beans and peas, whole grain\nbreads, cereals, and pasta. For more\nideas, see the list of high-fiber Foods\non page 46. People with certain types of\ncancer should not eat a lot of fiber, so\ncheck with your doctor before adding\nfiber to your diet.\n\n34\nÎ Choose lean meats, such as lean beef, pork trimmed of fat, fish, or poultry\nwithout skin.\nÎ Choose plant-based proteins, such as beans, nuts, seeds, and tofu.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1971,
+        "text": "10\nAppetite loss\nAppetite loss is when you do not want to eat or do not feel like eating very much. It is a\ncommon problem that occurs with cancer and its treatment. You may have appetite loss\nfor just 1 or 2 days, or throughout your course of treatment.\nThere are many reasons you may have a poor appetite.\nthe cancer itself\nfatigue\npain\nmedicines\nfeelings such as stress, fear, depression, and anxiety\ntreatment side effects such as nausea, vomiting, constipation, or changes in\nhow foods taste or smell\nÎ Drink a protein shake, smoothie or milkshake, when it is hard to eat.\nÎ Eat 5 or 6 smaller meals each day instead of 3 large meals. Many people find it is easier\nto eat smaller amounts more often. Doing so can also keep you from feeling too full.\nÎ Keep snacks nearby for when you feel like eating. Take easy-to-carry snacks such\nas peanut butter crackers, nuts, granola bars, or dried fruit when you go out. You can\nfind more quick and easy snack ideas on page 48.\nÎ Add extra protein and calories to your diet. You can find ways to add protein\non page 49 and calories on page 52.\n\n11\nÎ Drink liquids throughout the day—especially when you do not want to eat. If you\nhave trouble remembering to drink, set a timer to remind you to take frequent sips.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_006",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_cancer_headneck",
+    "conditions": [
+      "cancer"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2001,
+        "text": "Î Exercise each day. Not only does\nexercise help you burn calories, but\nstudies show that it helps people with\ncancer feel better. Talk with your\ndoctor or nurse about how much\nexercise to do while having\nÎ Talk with your doctor before going\non a diet to lose weight. They can\nhelp figure out why you are gaining\nweight and prescribe medicine (called\na diuretic) if you have fluid retention.\n\n35\nWeight loss\nWeight loss is when you have a decrease in body weight.\nWeight loss can be caused by cancer itself, or by side effects of cancer treatment, such as\nnausea and vomiting. Stress and worry can also cause weight loss. Many people with cancer\nhave weight loss during treatment.\nÎ Eat on a schedule, rather than waiting until you feel hungry. You still need to eat even\nif you do not feel hungry while being treated for cancer.\nÎ Eat 5 or 6 small meals each day instead of 3 large meals. Many people find it easier to\neat smaller amounts more often.\nÎ Eat foods that are high in protein and calories. Do not fill up on low-calorie foods\nor fluids. “Power pack” your diet by adding protein and calories to other foods. Add\ntoppings like peanut butter, olive oil, nuts, seeds, avocado, honey, and jam to all foods.\nTry the recipe for Overnight Oats on page 36.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1999,
+        "text": "33\nWeight gain\nWeight gain occurs when you have an increase in body weight. Many people with\ncancer think they will lose weight and are surprised, and sometimes upset, when they\ngain weight.\nWeight gain can happen for many reasons.\nPeople with certain types of cancer are more likely to gain weight.\nHormone therapy, certain types of chemotherapy, and medicines such as steroids can\ncause weight gain. These treatments can also cause your body to retain water, which\nmakes you gain weight and feel puffy.\nSome treatments can also increase your appetite, so you feel hungry and eat more calories\nthan your body needs.\nCancer and its treatments can cause fatigue and changes in your schedule that may\nlead to a decrease in activity. Being less active can cause weight gain.\nÎ Eat lots of fruits and vegetables.\nThese are high in fiber and low in\ncalories. They can help you feel full\nwithout adding a lot of calories.\nÎ Eat foods that are high in fiber, such\nas cooked beans and peas, whole grain\nbreads, cereals, and pasta. For more\nideas, see the list of high-fiber Foods\non page 46. People with certain types of\ncancer should not eat a lot of fiber, so\ncheck with your doctor before adding\nfiber to your diet.\n\n34\nÎ Choose lean meats, such as lean beef, pork trimmed of fat, fish, or poultry\nwithout skin.\nÎ Choose plant-based proteins, such as beans, nuts, seeds, and tofu.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1971,
+        "text": "10\nAppetite loss\nAppetite loss is when you do not want to eat or do not feel like eating very much. It is a\ncommon problem that occurs with cancer and its treatment. You may have appetite loss\nfor just 1 or 2 days, or throughout your course of treatment.\nThere are many reasons you may have a poor appetite.\nthe cancer itself\nfatigue\npain\nmedicines\nfeelings such as stress, fear, depression, and anxiety\ntreatment side effects such as nausea, vomiting, constipation, or changes in\nhow foods taste or smell\nÎ Drink a protein shake, smoothie or milkshake, when it is hard to eat.\nÎ Eat 5 or 6 smaller meals each day instead of 3 large meals. Many people find it is easier\nto eat smaller amounts more often. Doing so can also keep you from feeling too full.\nÎ Keep snacks nearby for when you feel like eating. Take easy-to-carry snacks such\nas peanut butter crackers, nuts, granola bars, or dried fruit when you go out. You can\nfind more quick and easy snack ideas on page 48.\nÎ Add extra protein and calories to your diet. You can find ways to add protein\non page 49 and calories on page 52.\n\n11\nÎ Drink liquids throughout the day—especially when you do not want to eat. If you\nhave trouble remembering to drink, set a timer to remind you to take frequent sips.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_007",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_cancer_survivor",
+    "conditions": [
+      "cancer",
+      "heart"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2001,
+        "text": "Î Exercise each day. Not only does\nexercise help you burn calories, but\nstudies show that it helps people with\ncancer feel better. Talk with your\ndoctor or nurse about how much\nexercise to do while having\nÎ Talk with your doctor before going\non a diet to lose weight. They can\nhelp figure out why you are gaining\nweight and prescribe medicine (called\na diuretic) if you have fluid retention.\n\n35\nWeight loss\nWeight loss is when you have a decrease in body weight.\nWeight loss can be caused by cancer itself, or by side effects of cancer treatment, such as\nnausea and vomiting. Stress and worry can also cause weight loss. Many people with cancer\nhave weight loss during treatment.\nÎ Eat on a schedule, rather than waiting until you feel hungry. You still need to eat even\nif you do not feel hungry while being treated for cancer.\nÎ Eat 5 or 6 small meals each day instead of 3 large meals. Many people find it easier to\neat smaller amounts more often.\nÎ Eat foods that are high in protein and calories. Do not fill up on low-calorie foods\nor fluids. “Power pack” your diet by adding protein and calories to other foods. Add\ntoppings like peanut butter, olive oil, nuts, seeds, avocado, honey, and jam to all foods.\nTry the recipe for Overnight Oats on page 36.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2179,
+        "text": "Check the Nutrition Facts label for saturated fat. Less than 10% of your daily calories should be from saturated fats.**Trans fats.**These are found mainly in commercially prepared baked goods, snack foods, fried foods, and margarine. The Food and Drug Administration is taking action to remove artificial trans fats from our food supply because of their risk to heart health. Check the Nutrition Facts label and choose foods with no trans fats as much as possible.**Cholesterol.**Cholesterol is found in foods made from animals, such as bacon, whole milk, cheese made from whole milk, ice cream, full-fat frozen yogurt, and eggs. Fruits and vegetables do not contain cholesterol. Eggs are a major source of dietary cholesterol for Americans, but studies show that eating one egg a day does not increase the risk for heart disease in healthy people.2You should eat less than 300 milligrams of cholesterol per day. Check the Nutrition Facts label for cholesterol. Foods with 20% or more of the “Daily Value” of cholesterol are high in cholesterol.**Sodium.**Sodium is found in salt, but most of the sodium we eat does not come from salt that we add while cooking or at the table. Most of our sodium comes from breads and rolls, cold cuts, pizza, hot dogs, cheese, pasta dishes, and condiments (like ketchup and mustard). Limit your daily sodium to less than 2,300 milligrams (equal to a teaspoon), unless your doctor says something else.",
+        "source": "US_OASH_heart.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1999,
+        "text": "33\nWeight gain\nWeight gain occurs when you have an increase in body weight. Many people with\ncancer think they will lose weight and are surprised, and sometimes upset, when they\ngain weight.\nWeight gain can happen for many reasons.\nPeople with certain types of cancer are more likely to gain weight.\nHormone therapy, certain types of chemotherapy, and medicines such as steroids can\ncause weight gain. These treatments can also cause your body to retain water, which\nmakes you gain weight and feel puffy.\nSome treatments can also increase your appetite, so you feel hungry and eat more calories\nthan your body needs.\nCancer and its treatments can cause fatigue and changes in your schedule that may\nlead to a decrease in activity. Being less active can cause weight gain.\nÎ Eat lots of fruits and vegetables.\nThese are high in fiber and low in\ncalories. They can help you feel full\nwithout adding a lot of calories.\nÎ Eat foods that are high in fiber, such\nas cooked beans and peas, whole grain\nbreads, cereals, and pasta. For more\nideas, see the list of high-fiber Foods\non page 46. People with certain types of\ncancer should not eat a lot of fiber, so\ncheck with your doctor before adding\nfiber to your diet.\n\n34\nÎ Choose lean meats, such as lean beef, pork trimmed of fat, fish, or poultry\nwithout skin.\nÎ Choose plant-based proteins, such as beans, nuts, seeds, and tofu.",
+        "source": "US_NIH_NCI_Eating-hints-before-during-and-after-cancer-treatment.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_008",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_ibd_crohn_flare",
+    "conditions": [
+      "ibd"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 914,
+        "text": "Nutritional care is clearly important in the treatment of patients\nwith IBD and includes prevention of malnutrition and micronutrient deficiencies, prevention of osteoporosis, and, in children\npromotion of optimal growth and development.\n2. Methodology\nThe present practical guideline consists of 40 recommendations\nand is based on the ESPEN Guideline: Clinical Nutrition in inflammatory bowel disease [1]. The original guideline was shortened by\nrestricting the commentaries to the gathered evidence and literature\non\nwhich\nthe\nrecommendations\nare\nbased\non.\nThe\nAbbreviations: CD, Crohn's disease; EN, enteral nutrition; IBD, inflammatory\nbowel disease; ONS, oral nutritional supplements; PN, parenteral nutrition; UC,\nulcerative colitis.\n* Corresponding author. Institute of Nutritional Medicine, University of Hohenheim, Fruwirthstr. 12, 70593, Stuttgart, Germany.\nE-mail address: bischoff.stephan@uni-hohenheim.de (S.C. Bischoff).\nContents lists available at ScienceDirect\nClinical Nutrition\njournal homepage:\n\n0261-5614/© 2019 The Author(s). Published by Elsevier Ltd and European Society for Clinical Nutrition and Metabolism. All rights reserved.\nClinical Nutrition 39 (2020) 632e653",
+        "source": "ESPEN_practical_guideline_Clinical_Nutrition_in_inflammatory_bowel_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 912,
+        "text": "Clinal Centre “Mother Therese”, Skopje, Macedonia\nh Amsterdam University Medical Centers, Amsterdam, the Netherlands\ni Pediatric Gastroenterology & Nutrition Unit, Bristol Royal Hospital for Children, Bristol, United Kingdom\nj Norwich Medical School, University of East Anglia, Norwich, United Kingdom\na r t i c l e\ni n f o\nArticle history:\nReceived 28 October 2019\nAccepted 1 November 2019\nKeywords:\nCrohn's disease\nUlcerative colitis\nEnteral nutrition\nParenteral nutrition\nInflammatory bowel disease\nNutritional therapy\ns u m m a r y\nThe present guideline is the first of a new series of “practical guidelines” based on more detailed scientific guidelines produced by ESPEN during the last few years. The guidelines have been shortened and\nnow include flow charts that connect the individual recommendations to logical care pathways and\nallow rapid navigation through the guideline. The purpose of the present practical guideline is to provide\nan easy-to-use tool to guide nutritional support and primary nutritional therapy in inflammatory bowel\ndisease (IBD). The guideline is aimed at professionals working in clinical practice, either in hospitals or in\noutpatient medicine, and treating patients with IBD. In 40 recommendations, general aspects of care in\npatients with IBD, and specific aspects during active disease and in remission are addressed. All recommendations are equipped with evidence grades, consensus rates, short commentaries and links to\ncited literature.",
+        "source": "ESPEN_practical_guideline_Clinical_Nutrition_in_inflammatory_bowel_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 913,
+        "text": "In 40 recommendations, general aspects of care in\npatients with IBD, and specific aspects during active disease and in remission are addressed. All recommendations are equipped with evidence grades, consensus rates, short commentaries and links to\ncited literature.\n© 2019 The Author(s). Published by Elsevier Ltd and European Society for Clinical Nutrition and\nMetabolism. All rights reserved.\n1. Introduction\nInflammatory bowel disease (IBD), predominantly ulcerative\ncolitis (UC) and Crohn's disease (CD), is now common in the entire\ndeveloped world. Malnutrition can occur as well in UC and CD, but\nis a considerably greater problem in CD given its capacity to affect\nany part of the gastrointestinal tract, unlike UC, which is restricted\nto the colon and has few direct malabsorptive effects. As in adults,\nmalnutrition is prevalent in paediatric IBD, mainly in active disease\nand more in CD than in UC. Since patients with IBD constitute a\nhigh-risk population for malnutrition, they need screening for\nmalnutrition, with its subsequent assessment and management.\nNutritional care is clearly important in the treatment of patients\nwith IBD and includes prevention of malnutrition and micronutrient deficiencies, prevention of osteoporosis, and, in children\npromotion of optimal growth and development.\n2.",
+        "source": "ESPEN_practical_guideline_Clinical_Nutrition_in_inflammatory_bowel_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_009",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_ibd_uc_remission",
+    "conditions": [
+      "ibd"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 914,
+        "text": "Nutritional care is clearly important in the treatment of patients\nwith IBD and includes prevention of malnutrition and micronutrient deficiencies, prevention of osteoporosis, and, in children\npromotion of optimal growth and development.\n2. Methodology\nThe present practical guideline consists of 40 recommendations\nand is based on the ESPEN Guideline: Clinical Nutrition in inflammatory bowel disease [1]. The original guideline was shortened by\nrestricting the commentaries to the gathered evidence and literature\non\nwhich\nthe\nrecommendations\nare\nbased\non.\nThe\nAbbreviations: CD, Crohn's disease; EN, enteral nutrition; IBD, inflammatory\nbowel disease; ONS, oral nutritional supplements; PN, parenteral nutrition; UC,\nulcerative colitis.\n* Corresponding author. Institute of Nutritional Medicine, University of Hohenheim, Fruwirthstr. 12, 70593, Stuttgart, Germany.\nE-mail address: bischoff.stephan@uni-hohenheim.de (S.C. Bischoff).\nContents lists available at ScienceDirect\nClinical Nutrition\njournal homepage:\n\n0261-5614/© 2019 The Author(s). Published by Elsevier Ltd and European Society for Clinical Nutrition and Metabolism. All rights reserved.\nClinical Nutrition 39 (2020) 632e653",
+        "source": "ESPEN_practical_guideline_Clinical_Nutrition_in_inflammatory_bowel_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 912,
+        "text": "Clinal Centre “Mother Therese”, Skopje, Macedonia\nh Amsterdam University Medical Centers, Amsterdam, the Netherlands\ni Pediatric Gastroenterology & Nutrition Unit, Bristol Royal Hospital for Children, Bristol, United Kingdom\nj Norwich Medical School, University of East Anglia, Norwich, United Kingdom\na r t i c l e\ni n f o\nArticle history:\nReceived 28 October 2019\nAccepted 1 November 2019\nKeywords:\nCrohn's disease\nUlcerative colitis\nEnteral nutrition\nParenteral nutrition\nInflammatory bowel disease\nNutritional therapy\ns u m m a r y\nThe present guideline is the first of a new series of “practical guidelines” based on more detailed scientific guidelines produced by ESPEN during the last few years. The guidelines have been shortened and\nnow include flow charts that connect the individual recommendations to logical care pathways and\nallow rapid navigation through the guideline. The purpose of the present practical guideline is to provide\nan easy-to-use tool to guide nutritional support and primary nutritional therapy in inflammatory bowel\ndisease (IBD). The guideline is aimed at professionals working in clinical practice, either in hospitals or in\noutpatient medicine, and treating patients with IBD. In 40 recommendations, general aspects of care in\npatients with IBD, and specific aspects during active disease and in remission are addressed. All recommendations are equipped with evidence grades, consensus rates, short commentaries and links to\ncited literature.",
+        "source": "ESPEN_practical_guideline_Clinical_Nutrition_in_inflammatory_bowel_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 913,
+        "text": "In 40 recommendations, general aspects of care in\npatients with IBD, and specific aspects during active disease and in remission are addressed. All recommendations are equipped with evidence grades, consensus rates, short commentaries and links to\ncited literature.\n© 2019 The Author(s). Published by Elsevier Ltd and European Society for Clinical Nutrition and\nMetabolism. All rights reserved.\n1. Introduction\nInflammatory bowel disease (IBD), predominantly ulcerative\ncolitis (UC) and Crohn's disease (CD), is now common in the entire\ndeveloped world. Malnutrition can occur as well in UC and CD, but\nis a considerably greater problem in CD given its capacity to affect\nany part of the gastrointestinal tract, unlike UC, which is restricted\nto the colon and has few direct malabsorptive effects. As in adults,\nmalnutrition is prevalent in paediatric IBD, mainly in active disease\nand more in CD than in UC. Since patients with IBD constitute a\nhigh-risk population for malnutrition, they need screening for\nmalnutrition, with its subsequent assessment and management.\nNutritional care is clearly important in the treatment of patients\nwith IBD and includes prevention of malnutrition and micronutrient deficiencies, prevention of osteoporosis, and, in children\npromotion of optimal growth and development.\n2.",
+        "source": "ESPEN_practical_guideline_Clinical_Nutrition_in_inflammatory_bowel_disease.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_010",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_pancreatitis_chronic",
+    "conditions": [
+      "pancreatitis"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 560,
+        "text": "Immediate oral\nfeeding in patients with mild acute pancreatitis is safe and may accelerate\nrecovery–a randomized clinical study. Clin Nutr 2007;26:758e63.\n[9] Wu LM, Sankaran SJ, Plank LD, Windsor JA, Petrov MS. Meta-analysis of gut\nbarrier dysfunction in patients with acute pancreatitis. Br J Surg 2014;101:\n1644e56.\n[10] Roberts KM, Nahikian-Nelms M, Ukleja A, Lara LF. Nutritional aspects of\nacute pancreatitis. Gastroenterol Clin N Am 2018;47:77e94.\n[11] Sobral-Oliveira MB, Faintuch J, Guarita DR, Oliveira CP, Carrilho FJ. Nutritional profile of asymptomatic alcoholic patients. Arq Gastroenterol 2011;48:\n112e8.\n[12] Kondrup J, Rasmussen HH, Hamberg O, Stanga Z, Ad Hoc EWG. Nutritional\nrisk screening (NRS 2002): a new method based on an analysis of controlled\nclinical trials. Clin Nutr 2003;22:321e36.\n[13] Guerra RS, Fonseca I, Sousa AS, Jesus A, Pichel F, Amaral TF. ESPEN diagnostic\ncriteria for malnutrition - a validation study in hospitalized patients.",
+        "source": "ESPEN-practical-guideline-on-clinical-nutrition-in-acute-and-chronic-pancreatitis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 564,
+        "text": "[23] Sathiaraj E, Murthy S, Mansard MJ, Rao GV, Mahukar S, Reddy DN.\nClinical trial: oral feeding with a soft diet compared with clear liquid\ndiet as initial meal in mild acute pancreatitis. Aliment Pharmacol Ther\n2008;28:777e81.\n[24] Moraes JM, Felga GE, Chebli LA, Franco MB, Gomes CA, Gaburri PD, et al.\nA full solid diet as the initial meal in mild acute pancreatitis is safe and result\nin a shorter length of hospitalization: results from a prospective, randomized, controlled, double-blind clinical trial. J Clin Gastroenterol 2010;44:\n517e22.\n[25] Horibe M, Nishizawa T, Suzuki H, Minami K, Yahagi N, Iwasaki E, et al. Timing\nof oral refeeding in acute pancreatitis: a systematic review and meta-analysis. United European Gastroenterol J 2016;4:725e32.\n[26] Bevan MG, Asrani VM, Bharmal S, Wu LM, Windsor JA, Petrov MS. Incidence\nand predictors of oral feeding intolerance in acute pancreatitis: a systematic\nreview, meta-analysis, and meta-regression. Clin Nutr 2017;36:722e9.",
+        "source": "ESPEN-practical-guideline-on-clinical-nutrition-in-acute-and-chronic-pancreatitis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 559,
+        "text": "Scand J Gastroenterol\n2017;52:909e15.\n[5] Dumonceau JM, Delhaye M, Tringali A, Arvanitakis M, Sanchez-Yague A,\nVaysse T, et al. Endoscopic treatment of chronic pancreatitis: European society of gastrointestinal endoscopy (ESGE) guideline - updated August 2018.\nEndoscopy 2019;51:179e93.\n[6] Arvanitakis M, Ockenga J, Bezmarevic M, Gianotti L, Krznaric Z, Lobo DN,\net al. ESPEN guideline on clinical nutrition in acute and chronic pancreatitis.\nClin Nutr 2020;39:612e31.\n[7] Bischoff SC, Singer P, Koller M, Barazzoni R, Cederholm T, van Gossum A.\nStandard operating procedures for ESPEN guidelines and consensus papers.\nClin Nutr 2015;34:1043e51.\n[8] Eckerwall GE, Tingstedt BB, Bergenzaun PE, Andersson RG. Immediate oral\nfeeding in patients with mild acute pancreatitis is safe and may accelerate\nrecovery–a randomized clinical study. Clin Nutr 2007;26:758e63.\n[9] Wu LM, Sankaran SJ, Plank LD, Windsor JA, Petrov MS.",
+        "source": "ESPEN-practical-guideline-on-clinical-nutrition-in-acute-and-chronic-pancreatitis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_011",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_pancreatitis_recovery",
+    "conditions": [
+      "pancreatitis"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 560,
+        "text": "Immediate oral\nfeeding in patients with mild acute pancreatitis is safe and may accelerate\nrecovery–a randomized clinical study. Clin Nutr 2007;26:758e63.\n[9] Wu LM, Sankaran SJ, Plank LD, Windsor JA, Petrov MS. Meta-analysis of gut\nbarrier dysfunction in patients with acute pancreatitis. Br J Surg 2014;101:\n1644e56.\n[10] Roberts KM, Nahikian-Nelms M, Ukleja A, Lara LF. Nutritional aspects of\nacute pancreatitis. Gastroenterol Clin N Am 2018;47:77e94.\n[11] Sobral-Oliveira MB, Faintuch J, Guarita DR, Oliveira CP, Carrilho FJ. Nutritional profile of asymptomatic alcoholic patients. Arq Gastroenterol 2011;48:\n112e8.\n[12] Kondrup J, Rasmussen HH, Hamberg O, Stanga Z, Ad Hoc EWG. Nutritional\nrisk screening (NRS 2002): a new method based on an analysis of controlled\nclinical trials. Clin Nutr 2003;22:321e36.\n[13] Guerra RS, Fonseca I, Sousa AS, Jesus A, Pichel F, Amaral TF. ESPEN diagnostic\ncriteria for malnutrition - a validation study in hospitalized patients.",
+        "source": "ESPEN-practical-guideline-on-clinical-nutrition-in-acute-and-chronic-pancreatitis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 564,
+        "text": "[23] Sathiaraj E, Murthy S, Mansard MJ, Rao GV, Mahukar S, Reddy DN.\nClinical trial: oral feeding with a soft diet compared with clear liquid\ndiet as initial meal in mild acute pancreatitis. Aliment Pharmacol Ther\n2008;28:777e81.\n[24] Moraes JM, Felga GE, Chebli LA, Franco MB, Gomes CA, Gaburri PD, et al.\nA full solid diet as the initial meal in mild acute pancreatitis is safe and result\nin a shorter length of hospitalization: results from a prospective, randomized, controlled, double-blind clinical trial. J Clin Gastroenterol 2010;44:\n517e22.\n[25] Horibe M, Nishizawa T, Suzuki H, Minami K, Yahagi N, Iwasaki E, et al. Timing\nof oral refeeding in acute pancreatitis: a systematic review and meta-analysis. United European Gastroenterol J 2016;4:725e32.\n[26] Bevan MG, Asrani VM, Bharmal S, Wu LM, Windsor JA, Petrov MS. Incidence\nand predictors of oral feeding intolerance in acute pancreatitis: a systematic\nreview, meta-analysis, and meta-regression. Clin Nutr 2017;36:722e9.",
+        "source": "ESPEN-practical-guideline-on-clinical-nutrition-in-acute-and-chronic-pancreatitis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 559,
+        "text": "Scand J Gastroenterol\n2017;52:909e15.\n[5] Dumonceau JM, Delhaye M, Tringali A, Arvanitakis M, Sanchez-Yague A,\nVaysse T, et al. Endoscopic treatment of chronic pancreatitis: European society of gastrointestinal endoscopy (ESGE) guideline - updated August 2018.\nEndoscopy 2019;51:179e93.\n[6] Arvanitakis M, Ockenga J, Bezmarevic M, Gianotti L, Krznaric Z, Lobo DN,\net al. ESPEN guideline on clinical nutrition in acute and chronic pancreatitis.\nClin Nutr 2020;39:612e31.\n[7] Bischoff SC, Singer P, Koller M, Barazzoni R, Cederholm T, van Gossum A.\nStandard operating procedures for ESPEN guidelines and consensus papers.\nClin Nutr 2015;34:1043e51.\n[8] Eckerwall GE, Tingstedt BB, Bergenzaun PE, Andersson RG. Immediate oral\nfeeding in patients with mild acute pancreatitis is safe and may accelerate\nrecovery–a randomized clinical study. Clin Nutr 2007;26:758e63.\n[9] Wu LM, Sankaran SJ, Plank LD, Windsor JA, Petrov MS.",
+        "source": "ESPEN-practical-guideline-on-clinical-nutrition-in-acute-and-chronic-pancreatitis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_012",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_obesity_bariatric",
+    "conditions": [
+      "obesity",
+      "micronutrient"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1670,
+        "text": "In patients with obesity, vitamin D is being\nsequestrated in fat tissue, therefore, low serum levels of 25-OH\nvitamin D are often measured [45]. Furthermore, obesity is characterized by pro-inflammatory pathogenic mechanisms and dysbiosis that are also linked to bone alterations in the IBD population\n[46].\nAppropriate screening and prophylaxis of bone alterations in\npatients with IBD and obesity are therefore even more important in\ncomparison with patients with IBD, but without obesity, and should\nbe done routinely.\n9) Screening for nutritional status and - if indicated - nutritional assessment shall be performed in patients with IBD\nand obesity before intestinal surgery to identify the need for\nperioperative nutritional therapy.\n(R9, grade GPP, strong consensus 100%)\n991\n\nWhile agreement exists that patients undergoing surgery\nshould be screened before and after surgery, and should receive\nnutritional therapy whenever indicated, so far, no evidence is\navailable for the recommendation of a specific screening tool and\nthe measures of assessment in this setting. The ESPEN guideline:\nClinical nutrition in inflammatory bowel disease states: “Patients\nwith IBD are at risk and therefore should be screened for malnutrition at the time of diagnosis and thereafter on a regular basis.\nGPP e strong consensus (96% agreement). Patients with obesity\nmay have covert deficits in lean mass which may be unmasked by\ntools such as skinfold thickness measurements [5].",
+        "source": "Practical_guideline_on_obesity_care_in_patients_with_gastrointestinal_and_liver_diseases_Joint_ESPEN_UEG_guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 666,
+        "text": "Grade of recommendation A - Strong consensus 97 % (No. 77)\nRecommendation 22.4: Parenteral nutrition should provide 800\nto 1100 mg RE per day.\nGrade of recommendation Be Strong consensus 97 % (No. 78)\nReference [85]\n22.3. When and how to provide additional amounts\nRecommendation 22.5: In conditions causing fat malabsorption,\nprevention of deficiency with oral supplements may be considered.\n126)\n23. Vitamin C (ascorbic acid)\nVitamin C has numerous functions, which are all based on\nelectron donation [223e225]. It is the most potent water-soluble\nantioxidant, which directly scavenges radicals, mitigates the production of oxygen radicals, and recycles other antioxidants.\nFurthermore, vitamin C is an important cofactor/cosubstrate for the\nbiosynthesis of neurotransmitters, cortisol, peptide hormones, and\ncollagen. It promotes endothelial collagen synthesis, and maintains\nendothelial vasodilation and barrier function [226]. It limits the\ninflammatory response and ischemia-reperfusion injury, and improves immunity [227] and wound healing [1].\nClinical conditions with increased inflammation and oxidative\nstress, such as sepsis, trauma, cardiac arrest, major surgery, and\nburns are associated with a high risk of depletion. Very low plasma\nlevels are observed in a substantial proportion of patients within\nhours of acute disease/injury [1,228e232].",
+        "source": "ESPEN-practical-short-micronutrient-guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1764,
+        "text": "(R72, grade GPP, strong consensus 97%)\nNutritional deficiencies are more common in individuals with\nobesity, including protein [306], iron [307], and vitamin D [308].\nBesides, patients with IBD might be at particular risk for nutritional\ndeficiencies due to decreased nutrient intake, malabsorption, hypermetabolism, pharmacological treatment, or long-term total\nparenteral nutrition [309,310]. Nutrient screening should minimally include iron status, vitamin B12, folic acid (red blood cell\nfolate, homocysteine, methylmalonic acid optional), and 25vitamin D (vitamins A and E optional) [311]. More extensive\ntesting should be considered in patients undergoing malabsorptive\nprocedures based on symptoms and risks (Fig. 12).\nIn case of clinical suspicion of sarcopenia, additional evaluations for reduction of muscle mass (e.g. by DXA or BIA) or muscle\nfunction (e.g. by handgrip measurement or other functional tests)\nshould be performed.\nFor further details see ESPEN micronutrient guideline [38] and\nESPEN consensus paper on sarcopenic obesity [31].\n73) In patients with IBD, gastric endoscopy and coloscopy\nshould be performed before surgery.",
+        "source": "Practical_guideline_on_obesity_care_in_patients_with_gastrointestinal_and_liver_diseases_Joint_ESPEN_UEG_guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_013",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_obesity_gi",
+    "conditions": [
+      "obesity"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1670,
+        "text": "In patients with obesity, vitamin D is being\nsequestrated in fat tissue, therefore, low serum levels of 25-OH\nvitamin D are often measured [45]. Furthermore, obesity is characterized by pro-inflammatory pathogenic mechanisms and dysbiosis that are also linked to bone alterations in the IBD population\n[46].\nAppropriate screening and prophylaxis of bone alterations in\npatients with IBD and obesity are therefore even more important in\ncomparison with patients with IBD, but without obesity, and should\nbe done routinely.\n9) Screening for nutritional status and - if indicated - nutritional assessment shall be performed in patients with IBD\nand obesity before intestinal surgery to identify the need for\nperioperative nutritional therapy.\n(R9, grade GPP, strong consensus 100%)\n991\n\nWhile agreement exists that patients undergoing surgery\nshould be screened before and after surgery, and should receive\nnutritional therapy whenever indicated, so far, no evidence is\navailable for the recommendation of a specific screening tool and\nthe measures of assessment in this setting. The ESPEN guideline:\nClinical nutrition in inflammatory bowel disease states: “Patients\nwith IBD are at risk and therefore should be screened for malnutrition at the time of diagnosis and thereafter on a regular basis.\nGPP e strong consensus (96% agreement). Patients with obesity\nmay have covert deficits in lean mass which may be unmasked by\ntools such as skinfold thickness measurements [5].",
+        "source": "Practical_guideline_on_obesity_care_in_patients_with_gastrointestinal_and_liver_diseases_Joint_ESPEN_UEG_guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1764,
+        "text": "(R72, grade GPP, strong consensus 97%)\nNutritional deficiencies are more common in individuals with\nobesity, including protein [306], iron [307], and vitamin D [308].\nBesides, patients with IBD might be at particular risk for nutritional\ndeficiencies due to decreased nutrient intake, malabsorption, hypermetabolism, pharmacological treatment, or long-term total\nparenteral nutrition [309,310]. Nutrient screening should minimally include iron status, vitamin B12, folic acid (red blood cell\nfolate, homocysteine, methylmalonic acid optional), and 25vitamin D (vitamins A and E optional) [311]. More extensive\ntesting should be considered in patients undergoing malabsorptive\nprocedures based on symptoms and risks (Fig. 12).\nIn case of clinical suspicion of sarcopenia, additional evaluations for reduction of muscle mass (e.g. by DXA or BIA) or muscle\nfunction (e.g. by handgrip measurement or other functional tests)\nshould be performed.\nFor further details see ESPEN micronutrient guideline [38] and\nESPEN consensus paper on sarcopenic obesity [31].\n73) In patients with IBD, gastric endoscopy and coloscopy\nshould be performed before surgery.",
+        "source": "Practical_guideline_on_obesity_care_in_patients_with_gastrointestinal_and_liver_diseases_Joint_ESPEN_UEG_guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1658,
+        "text": "Recommendations were developed and graded into four classes (A/B/0/GPP)\n[3].\nAll recommendations were agreed in a multistage consensus\nprocess, which resulted in a percentage of agreement (%). The\nguideline process was funded both by UEG and ESPEN. For further\ndetails on methodology, see the full version of the ESPEN guideline\n[1,2] and the ESPEN standard operating procedure [3].\n3. Inflammatory bowel disease\n3.1. Screening & assessment\n1) Patients with IBD should be screened for nutritional status at\nthe time of diagnosis and thereafter regularly (at least once a\nyear).\n(R1, grade GPP, strong consensus 97%)\nThis recommendation is a modified version of recommendation\n3 A in the ESPEN guideline: Clinical nutrition in inflammatory\nbowel disease [4,5] (Fig. 2).\nAdults with IBD are at increased risk of malnutrition, with deficits more common in patients with Crohn's disease (CD) than ulcerative colitis (UC) [6]. Patients with obesity may have covert\ndeficits in lean mass which may be unmasked by tools such as\nskinfold thickness measurement. Patients with active IBD, particularly those whose disease is poorly responsive to medical therapy,\nare at the highest risk of poor nutrition. In adults, the risk of\nmalnutrition can be assessed with validated screening tools [7].",
+        "source": "Practical_guideline_on_obesity_care_in_patients_with_gastrointestinal_and_liver_diseases_Joint_ESPEN_UEG_guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_014",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_celiac_new",
+    "conditions": [
+      "celiac"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2073,
+        "text": "If you have one of these conditions, a gluten-free diet will help regulate and often eliminate your symptoms. It also helps prevent health problems in people with celiac disease. If you suspect you have one of these conditions, talk with your health care provider before making any diet changes.\n\n**Other health claims.** Some people go gluten-free because they believe it can help regulate health problems such as headaches, depression, long-term (chronic) fatigue, and weight gain. However, these claims are unproven.\n\nBecause you cut out a whole group of foods, a gluten-free diet *can* cause you to lose weight. However, there are easier diets to follow for weight loss. People with celiac disease often gain weight because their symptoms improve.\n\nOn this diet, you need to learn which foods contain gluten and avoid them. This is not easy, because gluten is in many foods and food products.\n\nMany foods are naturally gluten-free, including:\n\n- Fruits and vegetables\n- Meat, fish, poultry, and eggs\n- Beans\n- Nuts and seeds\n- Dairy products\n\nOther grains and starches are fine to eat, as long as they do not come boxed with seasonings:\n\n- Quinoa\n- Amaranth\n- Buckwheat\n- Cornmeal\n- Millet\n- Oats (that have not been processed with gluten-containing grains)\n- Rice",
+        "source": "US_medlineplus_gluten.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2072,
+        "text": "On a gluten-free diet, you do not eat wheat, rye, and barley. These foods contain gluten, a type of protein. A gluten-free diet is the main treatment for celiac disease. Some people believe a gluten-free diet can also help improve other health problems, but there is little research to support this idea.\n\nPeople follow a gluten-free diet for a number of reasons:\n\n**Celiac disease.** People with this condition cannot eat gluten because it triggers an immune response that damages the lining of their GI tract. This response causes inflammation in the small intestine and makes it hard for the body to absorb nutrients in food. Symptoms include bloating, constipation, and diarrhea. Over time, weight loss, malnutrition, and vitamin deficiency can occur.\n\n**Gluten sensitivity.** People with gluten sensitivity do not have celiac disease. Eating gluten causes many of the same symptoms as in celiac disease, without the intestinal damage or abnormal immune response.\n\n**Gluten intolerance.** This describes people who have symptoms and may or may not have celiac disease. Symptoms include cramping, bloating, nausea, and diarrhea.\n\nIf you have one of these conditions, a gluten-free diet will help regulate and often eliminate your symptoms. It also helps prevent health problems in people with celiac disease. If you suspect you have one of these conditions, talk with your health care provider before making any diet changes.",
+        "source": "US_medlineplus_gluten.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2122,
+        "text": "If you have celiac disease, you will need to follow a gluten-free diet. Your doctor and a registered dietitian can help you plan a healthy, balanced diet to make sure that you get the nutrients you need.\n\nMany foods, such as meat, fish, fruits, vegetables, rice, and potatoes, without additives or some seasonings, are naturally gluten-free. Flour made from gluten-free foods, such as potatoes, rice, corn, soy, nuts, cassava, amaranth, quinoa, buckwheat, or beans are safe to eat.\n\nYou can also buy packaged gluten-free foods, such as gluten-free types of baked goods, bread, and pasta. These foods are available from many grocery stores, restaurants, and at specialty food companies. Packaged gluten-free foods tend to cost more than the same foods that have gluten, and restaurants may charge more for gluten-free types of foods.\n\nTalk with your doctor or a registered dietitian about whether you should include oats in your diet and how much. Research suggests that most people with celiac disease can safely eat moderate amounts of oats. If you do eat oats, make sure they are gluten-free. Cross-contact between oats and grains that contain gluten is common and can make oats unsafe for people with celiac disease.",
+        "source": "US_NIH_NIDDK_celiac.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_015",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_celiac_persistent",
+    "conditions": [
+      "celiac",
+      "micronutrient"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2073,
+        "text": "If you have one of these conditions, a gluten-free diet will help regulate and often eliminate your symptoms. It also helps prevent health problems in people with celiac disease. If you suspect you have one of these conditions, talk with your health care provider before making any diet changes.\n\n**Other health claims.** Some people go gluten-free because they believe it can help regulate health problems such as headaches, depression, long-term (chronic) fatigue, and weight gain. However, these claims are unproven.\n\nBecause you cut out a whole group of foods, a gluten-free diet *can* cause you to lose weight. However, there are easier diets to follow for weight loss. People with celiac disease often gain weight because their symptoms improve.\n\nOn this diet, you need to learn which foods contain gluten and avoid them. This is not easy, because gluten is in many foods and food products.\n\nMany foods are naturally gluten-free, including:\n\n- Fruits and vegetables\n- Meat, fish, poultry, and eggs\n- Beans\n- Nuts and seeds\n- Dairy products\n\nOther grains and starches are fine to eat, as long as they do not come boxed with seasonings:\n\n- Quinoa\n- Amaranth\n- Buckwheat\n- Cornmeal\n- Millet\n- Oats (that have not been processed with gluten-containing grains)\n- Rice",
+        "source": "US_medlineplus_gluten.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 666,
+        "text": "Grade of recommendation A - Strong consensus 97 % (No. 77)\nRecommendation 22.4: Parenteral nutrition should provide 800\nto 1100 mg RE per day.\nGrade of recommendation Be Strong consensus 97 % (No. 78)\nReference [85]\n22.3. When and how to provide additional amounts\nRecommendation 22.5: In conditions causing fat malabsorption,\nprevention of deficiency with oral supplements may be considered.\n126)\n23. Vitamin C (ascorbic acid)\nVitamin C has numerous functions, which are all based on\nelectron donation [223e225]. It is the most potent water-soluble\nantioxidant, which directly scavenges radicals, mitigates the production of oxygen radicals, and recycles other antioxidants.\nFurthermore, vitamin C is an important cofactor/cosubstrate for the\nbiosynthesis of neurotransmitters, cortisol, peptide hormones, and\ncollagen. It promotes endothelial collagen synthesis, and maintains\nendothelial vasodilation and barrier function [226]. It limits the\ninflammatory response and ischemia-reperfusion injury, and improves immunity [227] and wound healing [1].\nClinical conditions with increased inflammation and oxidative\nstress, such as sepsis, trauma, cardiac arrest, major surgery, and\nburns are associated with a high risk of depletion. Very low plasma\nlevels are observed in a substantial proportion of patients within\nhours of acute disease/injury [1,228e232].",
+        "source": "ESPEN-practical-short-micronutrient-guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2072,
+        "text": "On a gluten-free diet, you do not eat wheat, rye, and barley. These foods contain gluten, a type of protein. A gluten-free diet is the main treatment for celiac disease. Some people believe a gluten-free diet can also help improve other health problems, but there is little research to support this idea.\n\nPeople follow a gluten-free diet for a number of reasons:\n\n**Celiac disease.** People with this condition cannot eat gluten because it triggers an immune response that damages the lining of their GI tract. This response causes inflammation in the small intestine and makes it hard for the body to absorb nutrients in food. Symptoms include bloating, constipation, and diarrhea. Over time, weight loss, malnutrition, and vitamin deficiency can occur.\n\n**Gluten sensitivity.** People with gluten sensitivity do not have celiac disease. Eating gluten causes many of the same symptoms as in celiac disease, without the intestinal damage or abnormal immune response.\n\n**Gluten intolerance.** This describes people who have symptoms and may or may not have celiac disease. Symptoms include cramping, bloating, nausea, and diarrhea.\n\nIf you have one of these conditions, a gluten-free diet will help regulate and often eliminate your symptoms. It also helps prevent health problems in people with celiac disease. If you suspect you have one of these conditions, talk with your health care provider before making any diet changes.",
+        "source": "US_medlineplus_gluten.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_016",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_osteoporosis_woman",
+    "conditions": [
+      "osteoporosis",
+      "micronutrient"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1641,
+        "text": "• Anorexia nervosa: an eating disorder characterized by\nexcessive dieting that can increase the risk for bone loss and\nHow Can I Reduce My Risk?\nThere are many steps you can take to keep your bones healthy\nand strong. Concentrate your efforts on the risk factors you\ncan change. Eat a healthy diet that includes calcium and\nvitamin D (consult with your health care provider for the\nrecommended amounts). Participate in regular weight-bearing\nexercises that can maintain and increase bone strength. Do not\ndrink alcohol in excess or smoke. Lastly, talk to your health\ncare provider about the medications you are taking. Some\nmedications are prescribed to prevent and treat osteoporosis.\nOn the other hand, some medications used for other purposes\nmay result in bone loss (NIAMSD 2019)\nTo help reduce your risk of osteoporosis, consider increasing\nyour intake of the following foods:\n• Fat-free or low-fat dairy products",
+        "source": "PennStateExtension_osteoporosis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 666,
+        "text": "Grade of recommendation A - Strong consensus 97 % (No. 77)\nRecommendation 22.4: Parenteral nutrition should provide 800\nto 1100 mg RE per day.\nGrade of recommendation Be Strong consensus 97 % (No. 78)\nReference [85]\n22.3. When and how to provide additional amounts\nRecommendation 22.5: In conditions causing fat malabsorption,\nprevention of deficiency with oral supplements may be considered.\n126)\n23. Vitamin C (ascorbic acid)\nVitamin C has numerous functions, which are all based on\nelectron donation [223e225]. It is the most potent water-soluble\nantioxidant, which directly scavenges radicals, mitigates the production of oxygen radicals, and recycles other antioxidants.\nFurthermore, vitamin C is an important cofactor/cosubstrate for the\nbiosynthesis of neurotransmitters, cortisol, peptide hormones, and\ncollagen. It promotes endothelial collagen synthesis, and maintains\nendothelial vasodilation and barrier function [226]. It limits the\ninflammatory response and ischemia-reperfusion injury, and improves immunity [227] and wound healing [1].\nClinical conditions with increased inflammation and oxidative\nstress, such as sepsis, trauma, cardiac arrest, major surgery, and\nburns are associated with a high risk of depletion. Very low plasma\nlevels are observed in a substantial proportion of patients within\nhours of acute disease/injury [1,228e232].",
+        "source": "ESPEN-practical-short-micronutrient-guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1642,
+        "text": "Some\nmedications are prescribed to prevent and treat osteoporosis.\nOn the other hand, some medications used for other purposes\nmay result in bone loss (NIAMSD 2019)\nTo help reduce your risk of osteoporosis, consider increasing\nyour intake of the following foods:\n• Fat-free or low-fat dairy products\n\nPage 2\n• Beans such as navy, black, kidney, chickpeas (garbanzo),\npinto, and cannellini\n• Calcium-fortified products such as orange juice and cereal\n• Canned fish with bones, such as sardines and salmon\n• Calcium-fortified soy products such as soy beverages and\ntofu\n• Dark green leafy vegetables such as broccoli, bok choy,\ncollards, and spinach\nExamine your risks\nMy Risks\nWhat I do\nnow\nWhat I\nwould like to\nchange\nHow I plan\nto change\nLack of\nexercise\nDon't make\ntime\nBe more\nactive\nTake the\nstairs rather\nthan the\nelevator\nMy Goal\nTry the following to boost calcium\ncontent of your meals and snacks\n• Add fat-free or low-fat cheese to an English muffin, bagel, or\ntoast.\n• Drink fat-free or low-fat milk instead of sugar-sweetened or\nother beverages at meals.\n• Enjoy a glass of fat-free or low-fat milk, fortified soy\nbeverage, or hot chocolate for a snack.\n• Add broccoli or beans to a leafy green salad.",
+        "source": "PennStateExtension_osteoporosis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_017",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_osteoporosis_man",
+    "conditions": [
+      "osteoporosis",
+      "micronutrient"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1641,
+        "text": "• Anorexia nervosa: an eating disorder characterized by\nexcessive dieting that can increase the risk for bone loss and\nHow Can I Reduce My Risk?\nThere are many steps you can take to keep your bones healthy\nand strong. Concentrate your efforts on the risk factors you\ncan change. Eat a healthy diet that includes calcium and\nvitamin D (consult with your health care provider for the\nrecommended amounts). Participate in regular weight-bearing\nexercises that can maintain and increase bone strength. Do not\ndrink alcohol in excess or smoke. Lastly, talk to your health\ncare provider about the medications you are taking. Some\nmedications are prescribed to prevent and treat osteoporosis.\nOn the other hand, some medications used for other purposes\nmay result in bone loss (NIAMSD 2019)\nTo help reduce your risk of osteoporosis, consider increasing\nyour intake of the following foods:\n• Fat-free or low-fat dairy products",
+        "source": "PennStateExtension_osteoporosis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 666,
+        "text": "Grade of recommendation A - Strong consensus 97 % (No. 77)\nRecommendation 22.4: Parenteral nutrition should provide 800\nto 1100 mg RE per day.\nGrade of recommendation Be Strong consensus 97 % (No. 78)\nReference [85]\n22.3. When and how to provide additional amounts\nRecommendation 22.5: In conditions causing fat malabsorption,\nprevention of deficiency with oral supplements may be considered.\n126)\n23. Vitamin C (ascorbic acid)\nVitamin C has numerous functions, which are all based on\nelectron donation [223e225]. It is the most potent water-soluble\nantioxidant, which directly scavenges radicals, mitigates the production of oxygen radicals, and recycles other antioxidants.\nFurthermore, vitamin C is an important cofactor/cosubstrate for the\nbiosynthesis of neurotransmitters, cortisol, peptide hormones, and\ncollagen. It promotes endothelial collagen synthesis, and maintains\nendothelial vasodilation and barrier function [226]. It limits the\ninflammatory response and ischemia-reperfusion injury, and improves immunity [227] and wound healing [1].\nClinical conditions with increased inflammation and oxidative\nstress, such as sepsis, trauma, cardiac arrest, major surgery, and\nburns are associated with a high risk of depletion. Very low plasma\nlevels are observed in a substantial proportion of patients within\nhours of acute disease/injury [1,228e232].",
+        "source": "ESPEN-practical-short-micronutrient-guideline.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1642,
+        "text": "Some\nmedications are prescribed to prevent and treat osteoporosis.\nOn the other hand, some medications used for other purposes\nmay result in bone loss (NIAMSD 2019)\nTo help reduce your risk of osteoporosis, consider increasing\nyour intake of the following foods:\n• Fat-free or low-fat dairy products\n\nPage 2\n• Beans such as navy, black, kidney, chickpeas (garbanzo),\npinto, and cannellini\n• Calcium-fortified products such as orange juice and cereal\n• Canned fish with bones, such as sardines and salmon\n• Calcium-fortified soy products such as soy beverages and\ntofu\n• Dark green leafy vegetables such as broccoli, bok choy,\ncollards, and spinach\nExamine your risks\nMy Risks\nWhat I do\nnow\nWhat I\nwould like to\nchange\nHow I plan\nto change\nLack of\nexercise\nDon't make\ntime\nBe more\nactive\nTake the\nstairs rather\nthan the\nelevator\nMy Goal\nTry the following to boost calcium\ncontent of your meals and snacks\n• Add fat-free or low-fat cheese to an English muffin, bagel, or\ntoast.\n• Drink fat-free or low-fat milk instead of sugar-sweetened or\nother beverages at meals.\n• Enjoy a glass of fat-free or low-fat milk, fortified soy\nbeverage, or hot chocolate for a snack.\n• Add broccoli or beans to a leafy green salad.",
+        "source": "PennStateExtension_osteoporosis.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_018",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_diabetes_chol",
+    "conditions": [
+      "diabetes",
+      "heart"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2163,
+        "text": "- Eat fruits, vegetables, or a small handful of unsalted nuts instead of chips or candy.\n- To reduce calories, drink water instead of regular soda, sports drinks, or juice.\n- Chew sugar-free gum between meals to help reduce your urge to snack.\n\n- Make a list of what you need before going to the store, and stick to your list.\n- Eat a healthy snack or meal before shopping for food. Don’t shop on an empty stomach.\n- Compare nutrition facts on food labels and choose foods that are lower in calories, saturated fat, trans fats, and sodium.\n- Buy a new fruit or vegetable to try each time you go to the store. Use it to add flavor and color to soups, stews, or salads.\n- Buy reduced-fat or light versions of mayonnaise, cheese, and salad dressing.\n- Buy fat-free, low-fat, or soy milk instead of whole milk.",
+        "source": "US_NIH_NIDDK_prevent_type2_diabetes.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2179,
+        "text": "Check the Nutrition Facts label for saturated fat. Less than 10% of your daily calories should be from saturated fats.**Trans fats.**These are found mainly in commercially prepared baked goods, snack foods, fried foods, and margarine. The Food and Drug Administration is taking action to remove artificial trans fats from our food supply because of their risk to heart health. Check the Nutrition Facts label and choose foods with no trans fats as much as possible.**Cholesterol.**Cholesterol is found in foods made from animals, such as bacon, whole milk, cheese made from whole milk, ice cream, full-fat frozen yogurt, and eggs. Fruits and vegetables do not contain cholesterol. Eggs are a major source of dietary cholesterol for Americans, but studies show that eating one egg a day does not increase the risk for heart disease in healthy people.2You should eat less than 300 milligrams of cholesterol per day. Check the Nutrition Facts label for cholesterol. Foods with 20% or more of the “Daily Value” of cholesterol are high in cholesterol.**Sodium.**Sodium is found in salt, but most of the sodium we eat does not come from salt that we add while cooking or at the table. Most of our sodium comes from breads and rolls, cold cuts, pizza, hot dogs, cheese, pasta dishes, and condiments (like ketchup and mustard). Limit your daily sodium to less than 2,300 milligrams (equal to a teaspoon), unless your doctor says something else.",
+        "source": "US_OASH_heart.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2162,
+        "text": "Here are more tips on healthy eating.\n\n- Use low-fat, light, or fat-free sour cream, cream cheese, mayonnaise, cheese, and salad dressing.\n- Cook with a mix of spices instead of salt.\n- Refrigerate extra portions of food right after cooking so that you’re less tempted to go back for seconds.\n- Freeze extra portions of food to have meals ready on days when you’re too busy or too tired to cook.\n- Share a bowl of fruit with family and friends instead of cookies or chips.\n- Eat fat-free or low-fat frozen yogurt or sherbet instead of ice cream.\n\n- Take your lunch to work or meetings to stay in charge of what you eat.\n- Pack your lunch the night before so it’s ready to go when you are.\n- Make a sandwich on whole-grain bread with turkey or lean beef.\n- Use mustard or hummus instead of mayonnaise as a sandwich spread.\n- Add carrots and celery sticks to your lunch instead of chips.\n- Drink water instead of juice or regular soda.\n- Pack a snack like an apple or fat-free yogurt to eat if you get hungry.\n\n- Eat fruits, vegetables, or a small handful of unsalted nuts instead of chips or candy.\n- To reduce calories, drink water instead of regular soda, sports drinks, or juice.\n- Chew sugar-free gum between meals to help reduce your urge to snack.",
+        "source": "US_NIH_NIDDK_prevent_type2_diabetes.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_019",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_diabetes_htn",
+    "conditions": [
+      "diabetes",
+      "heart"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2163,
+        "text": "- Eat fruits, vegetables, or a small handful of unsalted nuts instead of chips or candy.\n- To reduce calories, drink water instead of regular soda, sports drinks, or juice.\n- Chew sugar-free gum between meals to help reduce your urge to snack.\n\n- Make a list of what you need before going to the store, and stick to your list.\n- Eat a healthy snack or meal before shopping for food. Don’t shop on an empty stomach.\n- Compare nutrition facts on food labels and choose foods that are lower in calories, saturated fat, trans fats, and sodium.\n- Buy a new fruit or vegetable to try each time you go to the store. Use it to add flavor and color to soups, stews, or salads.\n- Buy reduced-fat or light versions of mayonnaise, cheese, and salad dressing.\n- Buy fat-free, low-fat, or soy milk instead of whole milk.",
+        "source": "US_NIH_NIDDK_prevent_type2_diabetes.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2179,
+        "text": "Check the Nutrition Facts label for saturated fat. Less than 10% of your daily calories should be from saturated fats.**Trans fats.**These are found mainly in commercially prepared baked goods, snack foods, fried foods, and margarine. The Food and Drug Administration is taking action to remove artificial trans fats from our food supply because of their risk to heart health. Check the Nutrition Facts label and choose foods with no trans fats as much as possible.**Cholesterol.**Cholesterol is found in foods made from animals, such as bacon, whole milk, cheese made from whole milk, ice cream, full-fat frozen yogurt, and eggs. Fruits and vegetables do not contain cholesterol. Eggs are a major source of dietary cholesterol for Americans, but studies show that eating one egg a day does not increase the risk for heart disease in healthy people.2You should eat less than 300 milligrams of cholesterol per day. Check the Nutrition Facts label for cholesterol. Foods with 20% or more of the “Daily Value” of cholesterol are high in cholesterol.**Sodium.**Sodium is found in salt, but most of the sodium we eat does not come from salt that we add while cooking or at the table. Most of our sodium comes from breads and rolls, cold cuts, pizza, hot dogs, cheese, pasta dishes, and condiments (like ketchup and mustard). Limit your daily sodium to less than 2,300 milligrams (equal to a teaspoon), unless your doctor says something else.",
+        "source": "US_OASH_heart.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2162,
+        "text": "Here are more tips on healthy eating.\n\n- Use low-fat, light, or fat-free sour cream, cream cheese, mayonnaise, cheese, and salad dressing.\n- Cook with a mix of spices instead of salt.\n- Refrigerate extra portions of food right after cooking so that you’re less tempted to go back for seconds.\n- Freeze extra portions of food to have meals ready on days when you’re too busy or too tired to cook.\n- Share a bowl of fruit with family and friends instead of cookies or chips.\n- Eat fat-free or low-fat frozen yogurt or sherbet instead of ice cream.\n\n- Take your lunch to work or meetings to stay in charge of what you eat.\n- Pack your lunch the night before so it’s ready to go when you are.\n- Make a sandwich on whole-grain bread with turkey or lean beef.\n- Use mustard or hummus instead of mayonnaise as a sandwich spread.\n- Add carrots and celery sticks to your lunch instead of chips.\n- Drink water instead of juice or regular soda.\n- Pack a snack like an apple or fat-free yogurt to eat if you get hungry.\n\n- Eat fruits, vegetables, or a small handful of unsalted nuts instead of chips or candy.\n- To reduce calories, drink water instead of regular soda, sports drinks, or juice.\n- Chew sugar-free gum between meals to help reduce your urge to snack.",
+        "source": "US_NIH_NIDDK_prevent_type2_diabetes.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_020",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_heart_chol",
+    "conditions": [
+      "heart"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 2179,
+        "text": "Check the Nutrition Facts label for saturated fat. Less than 10% of your daily calories should be from saturated fats.**Trans fats.**These are found mainly in commercially prepared baked goods, snack foods, fried foods, and margarine. The Food and Drug Administration is taking action to remove artificial trans fats from our food supply because of their risk to heart health. Check the Nutrition Facts label and choose foods with no trans fats as much as possible.**Cholesterol.**Cholesterol is found in foods made from animals, such as bacon, whole milk, cheese made from whole milk, ice cream, full-fat frozen yogurt, and eggs. Fruits and vegetables do not contain cholesterol. Eggs are a major source of dietary cholesterol for Americans, but studies show that eating one egg a day does not increase the risk for heart disease in healthy people.2You should eat less than 300 milligrams of cholesterol per day. Check the Nutrition Facts label for cholesterol. Foods with 20% or more of the “Daily Value” of cholesterol are high in cholesterol.**Sodium.**Sodium is found in salt, but most of the sodium we eat does not come from salt that we add while cooking or at the table. Most of our sodium comes from breads and rolls, cold cuts, pizza, hot dogs, cheese, pasta dishes, and condiments (like ketchup and mustard). Limit your daily sodium to less than 2,300 milligrams (equal to a teaspoon), unless your doctor says something else.",
+        "source": "US_OASH_heart.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2180,
+        "text": "Most of our sodium comes from breads and rolls, cold cuts, pizza, hot dogs, cheese, pasta dishes, and condiments (like ketchup and mustard). Limit your daily sodium to less than 2,300 milligrams (equal to a teaspoon), unless your doctor says something else. Check the Nutrition Facts label for sodium. Foods with 20% or more of the “Daily Value” of sodium are high in sodium.**Added sugars.**Foods like fruit and dairy products naturally contain sugar. But you should limit foods that contain added sugars. These include sodas, sports drinks, cake, candy, and ice cream. Check the Nutrition Facts label for added sugars and limit the how much food you eat with added sugars. Look for these other names for sugar in the list of ingredients:- Corn syrup\n- Corn sweetener\n- Fructose\n- Glucose\n- Sucrose\n- Dextrose\n- Lactose\n- Maltose\n- Honey\n- Molasses\n- Raw sugar\n- Invert sugar\n- Syrup\n- Caramel\n- Fruit juice concentrates\n\nMost packaged foods have a Nutrition Facts label. This label has information about how many calories, saturated fat, trans fat, cholesterol, sodium, and added sugars are in each serving. It also lists the amounts of certain vitamins and minerals. Learn to read the Nutrition Facts label to know what is in the packaged food you buy.",
+        "source": "US_OASH_heart.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1932,
+        "text": "So eating foods low in total fat\nwill help you eat less saturated fat. When you do eat fat, make\nit unsaturated fat—either monounsatured (such as olive and\ncanola oils) or polyunsaturated (such as safflower, sunflower,\ncorn, and soybean oils).\nTotal fat intake on the TLC Program can be from 25–35 percent\nof daily calories to allow flexibility in putting together a diet\nthat works for you.\n■Cholesterol\nThe cholesterol in your diet raises the cholesterol level in your\nblood—but not as much as saturated fat. However, the two\noften are found in the same foods. So by limiting your intake\nof foods rich in saturated fat, you’ll also help reduce your\nintake of cholesterol.\nDietary cholesterol comes only from foods of animal origin,\nsuch as liver and other organ meats; egg yolks (but not the\nwhites, which have no cholesterol); shrimp; and whole milk\ndairy products, including butter, cream, and cheese.\nKeep your dietary cholesterol to less than 200 milligrams a day.\nUse the Nutrition Facts label on food products to help you\nchoose items low in cholesterol. See Boxes 12 and 13 (pages\n24–26) for how to use food labels.\n■Soluble Fiber\nFiber comes from plants. Your body can’t really digest it or\nabsorb it into your bloodstream—your body isn’t nourished by\nit. But it is vital for your good health.",
+        "source": "US_NIH_cholesterol.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_021",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_intestinal_failure",
+    "conditions": [
+      "intestinal_failure"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 784,
+        "text": "(R3, Grade of evidence: very low)\nAll patients who are considered for entry into an HPN program\nshould have documented prolonged CIF which, if untreated, would\nlead to deteriorating nutritional and/or fluid status and should have\nundergone an adequate trial of enteral nutrition (EN), if feasible\n(except, for example, in the case of extreme short bowel). They\nshould be managed by a clinician and multidisciplinary nutrition\nIntesƟnal\nrehabilitaƟon\nPseudoobstruc-\nƟon (CIPO)\nMedical\nManagement and treatment of benign\nChronic IntesƟnal Failure (CIF)\nRadiaƟon\nenteriƟs\nSurgery\nIntesƟnal Tx\nFigure 8\nFigure 9\nFigure 10\nVenous\ncatheters\nfor HPN\nFigure 4\nLiver\ndisease\nCholelithiasis\nRenal\nfailure /\nstones\nComplicaƟons\nof HPN\nBone\ndisease\nManagement of\nComponents\nof HPN\nCatheterrelated\nCatheter\ninfecƟons\nOcclusions\nthrombosis\nFigure 7\nDiet\nFigures 6\nDiseaserelated\nFigure 3\nFigure 2\nSpecial\ncases\nFigures 5\nFigure 13\nFigure 11\nFigure 12\nFig. 1.",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_chronic_intestinal_failure.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 783,
+        "text": "Accreditation programs for HPN providers must also\nensure regular audit against these quality measures.\n3) We recommend that patients selected for an HPN program\nhave confirmed CIF that despite maximal medical therapy\nwould lead to deterioration of nutrition and/or fluid status.\nAbbreviations\nCIPO\nchronic intestinal pseudo-obstruction\nCRBSI\ncatheter-related bloodstream infection\nCRI\ncatheter-related infection\nCRVT\ncatheter-related venous thrombosis\nCVC\ncentral venous catheter\nDXA\ndual-energy X-ray absorptiometry\nEFA\nessential fatty acids\nEN\nenteral nutrition\nGLP-2\nglucagon-like peptide-2\nhome enteral nutrition\nhome parenteral nutrition\nIF\nintestinal failure\nIFALD\nintestinal failure associated liver disease\nITx\nintestinal transplantation\nLILT\nlongitudinal intestinal lengthening and tailoring\nMCT\nmedium-chain triglycerides\nNST\nnutrition support team\nONS\noral nutritional supplements\nPICC\nperipherally Inserted Central Venous Catheter\nPN\nparenteral nutrition\nPUFA\npoly-unsaturated fatty acids\nQoL\nquality of life\nRCT\nrandomized controlled trial\nSBS\nshort bowel syndrome\nSRSB\nsegmental reversal of the small bowel\nSTEP\nserial transverse enteroplasty\n5197",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_chronic_intestinal_failure.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 787,
+        "text": "(R2)\n3) We recommend that paƟents selected for an\nHPN program have confirmed CIF that despite\nmaximal medical therapy would lead to\ndeterioraƟon of nutriƟon and/or fluid status. (R3)\n4) We recommend that prior to discharge,\npaƟents are metabolically stable, able to\nphysically and emoƟonally cope with the HPN\ntherapy, and have an adequate home\nenvironment. (R4)\nFig. 2. Management of home parenteral nutrition. For details see text. Abreviations: CIF, chronic intestinal failure; CRI, catherter-related infection; HPN, home parenteral nutrition;\nNST, nutrition support team.\n5198\n\nsupport team (NST) that have an interest and experience in CIF. To\noptimize safety and efficacy, evidence-based procedures and protocols should be used to educate patients and carers (including\nhospital and home care provider staff) on catheter care and for\nmonitoring the nutritional, metabolic, and clinical status of the\npatient.\n4) We recommend that prior to discharge, patients are\nmetabolically stable, able to physically and emotionally cope\ntherapy,\nhave\nan\nadequate\nhome\nenvironment.\n(R4, Grade of evidence: very low)\nThe patient and/or carers must be physically and emotionally\nable to undertake HPN training and demonstrate self-care competency prior to discharge.",
+        "source": "ESPEN_practical_guideline_Clinical_nutrition_in_chronic_intestinal_failure.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_022",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_polymorbid_elderly",
+    "conditions": [
+      "polymorbid",
+      "kidney",
+      "diabetes"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 431,
+        "text": "0, 96 %\nRecommendation 15\nWe cannot recommend the use of other disease-specific\nnutritional supplementation in polymorbid medical\ninpatients.\nInitiation of\nRecommendation 16\nIn polymorbid medical inpatients with reduced food\nintake and hampered nutritional status, at least 75 % of\ncalculated energy and protein requirements shall be\nachieved in order to reduce the risk of adverse\noutcomes and mortality.\nRecommendation 17\nEarly nutritional support (i.e. provided in less than 48 h\npost hospital admission) compared to later nutritional\nsupport shall be performed in polymorbid medical\ninpatients, as mortality and adverse events are lower\nand lean body mass loss could be decreased and selfsufficiency could be improved.\nRecommendation 18\nUnderlying disease modifies the effect of nutritional\ntherapy and should be considered when initiating\nnutritional support.\nB, 92 %\nOral Nutrition\nRecommendation 19\nthose at high risk of malnutrition who can safely receive\noral nutrition, individualized provision of nutritional\nsupport via oral nutritional supplements (ONS) to reach\nenergy and protein requirements shall be offered to\nimprove their nutritional status, QoL and overall\nsurvival.\nRecommendation 20\nthose at high risk of malnutrition, high protein nutrient\nspecific ONS should be administered, when they may\nhelp maintain functional status and muscle mass,\nreduce mortality and improve QoL.",
+        "source": "ESPEN-practical-guideline-Nutritional-support-for-polymorbid-medical-inpatients.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1250,
+        "text": "Diagnosis of\nmalnutrition requires at least one phenotypic and one etiological\ncriterion. So far, no study has validated the application of these\ncriteria in hospitalized patients with kidney disease. Limitations\nof BMI use in overhydrated patients may also lead to underestimating malnutrition in this setting, and special attention\nshould therefore be paid to the use of this criterion in potential\napplications of the GLIM approach to hospitalized subjects with\nAKI/AKD and/or CKD or CKD with KF.\n3. Indication for medical nutrition treatment\n3.1. Which patients?\n4) Medical nutrition therapy needs may be considered for\nany patient with AKI/AKD, AKI on CKD, CKD with or without KF\nrequiring hospitalization.\n(R1, Grade GPP, strong consensus 100%)\nPatients with CKD, especially in those in the KF stage undergoing or not chronic dialysis, are at high risk of developing nutritional disorders [4]. Progressive depletion of protein and/or energy\nstores is often observed [12], with prevalence rates that increase\nalong with the decline in kidney function [12].",
+        "source": "ESPEN_practical_guideline_on_clinical_nutrition_in_hospitalized_patients_with_acute_or_chronic_kidney_disease-text.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 2163,
+        "text": "- Eat fruits, vegetables, or a small handful of unsalted nuts instead of chips or candy.\n- To reduce calories, drink water instead of regular soda, sports drinks, or juice.\n- Chew sugar-free gum between meals to help reduce your urge to snack.\n\n- Make a list of what you need before going to the store, and stick to your list.\n- Eat a healthy snack or meal before shopping for food. Don’t shop on an empty stomach.\n- Compare nutrition facts on food labels and choose foods that are lower in calories, saturated fat, trans fats, and sodium.\n- Buy a new fruit or vegetable to try each time you go to the store. Use it to add flavor and color to soups, stews, or salads.\n- Buy reduced-fat or light versions of mayonnaise, cheese, and salad dressing.\n- Buy fat-free, low-fat, or soy milk instead of whole milk.",
+        "source": "US_NIH_NIDDK_prevent_type2_diabetes.html",
+        "folder": "richtlinien/HTML",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_023",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_polymorbid_frail",
+    "conditions": [
+      "polymorbid"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 431,
+        "text": "0, 96 %\nRecommendation 15\nWe cannot recommend the use of other disease-specific\nnutritional supplementation in polymorbid medical\ninpatients.\nInitiation of\nRecommendation 16\nIn polymorbid medical inpatients with reduced food\nintake and hampered nutritional status, at least 75 % of\ncalculated energy and protein requirements shall be\nachieved in order to reduce the risk of adverse\noutcomes and mortality.\nRecommendation 17\nEarly nutritional support (i.e. provided in less than 48 h\npost hospital admission) compared to later nutritional\nsupport shall be performed in polymorbid medical\ninpatients, as mortality and adverse events are lower\nand lean body mass loss could be decreased and selfsufficiency could be improved.\nRecommendation 18\nUnderlying disease modifies the effect of nutritional\ntherapy and should be considered when initiating\nnutritional support.\nB, 92 %\nOral Nutrition\nRecommendation 19\nthose at high risk of malnutrition who can safely receive\noral nutrition, individualized provision of nutritional\nsupport via oral nutritional supplements (ONS) to reach\nenergy and protein requirements shall be offered to\nimprove their nutritional status, QoL and overall\nsurvival.\nRecommendation 20\nthose at high risk of malnutrition, high protein nutrient\nspecific ONS should be administered, when they may\nhelp maintain functional status and muscle mass,\nreduce mortality and improve QoL.",
+        "source": "ESPEN-practical-guideline-Nutritional-support-for-polymorbid-medical-inpatients.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 432,
+        "text": "Recommendation 20\nthose at high risk of malnutrition, high protein nutrient\nspecific ONS should be administered, when they may\nhelp maintain functional status and muscle mass,\nreduce mortality and improve QoL.\nB, 96 %\nRecommendation 21\nIn polymorbid medical inpatients who are\nmalnourished or at high risk of malnutrition and can\nsafely receive nutrition orally, ONS shall be offered as a\ncost-effective way of intervention towards improved\noutcomes.\nRecommendation 22\nIn polymorbid medical inpatients who are\nmalnourished or at high risk of malnutrition, able to\nsafely receive nutrition orally, and cannot tolerate or\nwish not to receive ONS, food fortification can be\n676\n\n3. Results\n3.1. Screening for malnutrition risk (Fig. 1, Fig. 2)\n1) In polymorbid medical inpatients, a quick and simple\nnutritional screening method using a validated tool should\nbe applied to identify malnutrition risk.\n(R1, Grade B, Strong consensus 97 %)\nPolymorbid medical inpatients are at high risk of malnutrition.\nSeveral\nprospective\ncohort\nstudies\nshowed\nprevalence\nof\napproximately 40e50 % in a hospitalized population of tertiary\ncenters [11,12]. In a prospective observational cohort study, Lengfelder et al.",
+        "source": "ESPEN-practical-guideline-Nutritional-support-for-polymorbid-medical-inpatients.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 436,
+        "text": "Recommendation 26\nIn polymorbid medical inpatients there is an important\npossibility of drugedrug or drugenutrient interactions\nthat needs to be taken into account, therefore, a\npharmacist-assisted management plan for any\ninteractions should be established.\nContinuation of nutritional support\nRecommendation 27\nthose at risk of malnutrition, nutritional support shall be\ncontinued after hospital discharge in order to maintain\nor improve body weight and nutritional status.\nRecommendation 28\nthose at high risk of malnutrition, nutritional support\nshould be continued post hospital discharge to maintain\nor improve functional status and quality of life.\nRecommendation 29\nIn polymorbid medical inpatients at high risk of\nmalnutrition or with established malnutrition aged 65\nand older, continued nutritional support post hospital\nintervention shall be considered to lower mortality.\nA, 96 %\nRecommendation 30\nIn polymorbid medical inpatients at high risk of\nmalnutrition or with established malnutrition aged 65\nand older, continued nutritional support post hospital\nintervention should be considered for more than two\nmonths in order to lower mortality/impact clinical\ncourse.\nOrganizational changes\nRecommendation 31\nOrganizational changes in nutrition support provision\nlike enriched menus should be implemented for\npolymorbid medical inpatients who are malnourished\nor at risk of malnutrition to improve intake and\nnutritional outcome.",
+        "source": "ESPEN-practical-guideline-Nutritional-support-for-polymorbid-medical-inpatients.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_024",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_hiv_maintain",
+    "conditions": [
+      "hiv"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1910,
+        "text": "Identify Nutrition Concerns\nSeveral factors may influence nutrition,\nincluding the following:\n• Barriers to good nutrition (e.g., lack of\nknowledge or motivation for self-care, poor\nappetite, lack of money for food, lack of\nfacilities for food storage and preparation)\n• Lifestyle factors (e.g., smoking, substance\nabuse, frequent eating out, erratic eating\npatterns, hectic schedule, high stress)\n• Physical problems affecting food and\nnutrient intake (e.g., poor appetite, nausea,\nfatigue, pain, weakness, mouth or throat\npain, acid reflux, missing or decayed teeth,\npoorly fitting dentures, poor eyesight,\nconstipation)\n• Nutrient losses (e.g., owing to diarrhea,\nvomiting)\n• Potential confounding factors (e.g., use\nof multiple overlapping or questionable\nsupplements, eating disorders)\nEvaluate Dietary Intake\nAssess the following diet-related issues:\n• Expected excesses or deficiencies from\ndietary history or interview\n• Rating of food security, including access to\ncooking and refrigeration\n• Food intolerances, aversions, or allergies\nlikely to affect adequacy of intake\n• Special needs related to other conditions\n(e.g., documented cardiovascular disease,\ndiabetes, hypertension)\nEvaluate Weight, Body Composition,\nand Weight Distribution\nAssess physical findings of malnutrition and\nconfirm with nutrition history, laboratory\ntests, and anthropometric evidence. Normal\nand abnormal findings of anthropometric tests\nand recommendations for monitoring changes\nover time are presented in Table 4.",
+        "source": "US_DoH_HIV.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1913,
+        "text": "Nutrition-Related Problem List\nNumber\nDescription of Problem (circle/describe)\nNutrition barriers: insufficient knowledge, poor appetite, food insecurity, no food preparation\nor storage facilities, homelessness\nLifestyle: substance abuse, smoking, erratic eating, frequent fast-food intake, high stress\nWeight or body composition: undesirable weight gain or loss (adult), changes in growth\ntrajectory (children), loss of lean body mass (wasting), gain of excess fat (obesity), lipoatrophy or\nlipodystrophy\nPhysical problems: fatigue, pain, early satiety, poor dentition, clinical signs of malnutrition\nLaboratory findings: low hematocrit or hemoglobin, low protein or albumin, low or high fasting\nglucose, high total cholesterol, high LDL, high triglycerides, low HDL, low testosterone\nGastrointestinal: diarrhea, vomiting, reflux, constipation\nPoor diet: poor food choices, bingeing, skipping meals, high sugar intake, high alcohol\nconsumption, high intake of refined foods, low fruit and vegetable intake, insufficient protein,\ninsufficient calcium, food allergies or intolerances that limit intake\nComorbid conditions: diabetes, hypertension, cardiovascular disease, cancer, gastroesophageal\nreflux disease (GERD)\nMedications: drug-drug or drug-nutrient interactions or difficulty coordinating medicines with\nmeals\nSupplements: insufficient or excessive intakes, cost of supplements unaffordable, supplements\nwith potential or unknown risks",
+        "source": "US_DoH_HIV.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1903,
+        "text": "199\nTo develop a specific dietary history, ask about the following:\nDietary History\nUsual Dietary Intake\nFactors That May Affect or Limit Intake\n• Frequency of intake of foods providing key\nnutrients (e.g., dairy products, fortified or whole\ngrains, fruits and vegetables, eggs, beans, fluids,\nmeat) as well as those that perhaps should be\nlimited (fast-food items, highly processed or\nsalted products)\n• Usual meal patterns (number of times per day,\nsnacks) and whether meals are prepared and\neaten at home or eaten at restaurants or fast-food\nestablishments\n• Specific information about nutritional\nsupplements (e.g., vitamins, minerals, herbs,\nprotein), including contents, amounts,\nformulation (pills, powders, drinks), cost, and\noverlap among products\n• Amount of money available for food, or\nparticipation in food assistance programs (e.g.,\nfood stamps, food pantries)\n• Appetite, general well-being (e.g., fatigue, pain,\ndepression)\n• Food allergies, intolerances\n• Problems with dentition, swallowing, heartburn,\ndiarrhea, constipation\n• Coordination of foods and supplements with\nmedications (HIV or other)\nElicit symptoms that may be related to nutritional deficiencies.",
+        "source": "US_DoH_HIV.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  },
+  {
+    "context_id": "ctx_cond_025",
+    "context_type": "condition",
+    "context_lang": "en",
+    "persona_id": "cur_hiv_weightloss",
+    "conditions": [
+      "hiv"
+    ],
+    "question_langs": [
+      "en"
+    ],
+    "chunks": [
+      {
+        "chunk_id": 1910,
+        "text": "Identify Nutrition Concerns\nSeveral factors may influence nutrition,\nincluding the following:\n• Barriers to good nutrition (e.g., lack of\nknowledge or motivation for self-care, poor\nappetite, lack of money for food, lack of\nfacilities for food storage and preparation)\n• Lifestyle factors (e.g., smoking, substance\nabuse, frequent eating out, erratic eating\npatterns, hectic schedule, high stress)\n• Physical problems affecting food and\nnutrient intake (e.g., poor appetite, nausea,\nfatigue, pain, weakness, mouth or throat\npain, acid reflux, missing or decayed teeth,\npoorly fitting dentures, poor eyesight,\nconstipation)\n• Nutrient losses (e.g., owing to diarrhea,\nvomiting)\n• Potential confounding factors (e.g., use\nof multiple overlapping or questionable\nsupplements, eating disorders)\nEvaluate Dietary Intake\nAssess the following diet-related issues:\n• Expected excesses or deficiencies from\ndietary history or interview\n• Rating of food security, including access to\ncooking and refrigeration\n• Food intolerances, aversions, or allergies\nlikely to affect adequacy of intake\n• Special needs related to other conditions\n(e.g., documented cardiovascular disease,\ndiabetes, hypertension)\nEvaluate Weight, Body Composition,\nand Weight Distribution\nAssess physical findings of malnutrition and\nconfirm with nutrition history, laboratory\ntests, and anthropometric evidence. Normal\nand abnormal findings of anthropometric tests\nand recommendations for monitoring changes\nover time are presented in Table 4.",
+        "source": "US_DoH_HIV.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1913,
+        "text": "Nutrition-Related Problem List\nNumber\nDescription of Problem (circle/describe)\nNutrition barriers: insufficient knowledge, poor appetite, food insecurity, no food preparation\nor storage facilities, homelessness\nLifestyle: substance abuse, smoking, erratic eating, frequent fast-food intake, high stress\nWeight or body composition: undesirable weight gain or loss (adult), changes in growth\ntrajectory (children), loss of lean body mass (wasting), gain of excess fat (obesity), lipoatrophy or\nlipodystrophy\nPhysical problems: fatigue, pain, early satiety, poor dentition, clinical signs of malnutrition\nLaboratory findings: low hematocrit or hemoglobin, low protein or albumin, low or high fasting\nglucose, high total cholesterol, high LDL, high triglycerides, low HDL, low testosterone\nGastrointestinal: diarrhea, vomiting, reflux, constipation\nPoor diet: poor food choices, bingeing, skipping meals, high sugar intake, high alcohol\nconsumption, high intake of refined foods, low fruit and vegetable intake, insufficient protein,\ninsufficient calcium, food allergies or intolerances that limit intake\nComorbid conditions: diabetes, hypertension, cardiovascular disease, cancer, gastroesophageal\nreflux disease (GERD)\nMedications: drug-drug or drug-nutrient interactions or difficulty coordinating medicines with\nmeals\nSupplements: insufficient or excessive intakes, cost of supplements unaffordable, supplements\nwith potential or unknown risks",
+        "source": "US_DoH_HIV.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      },
+      {
+        "chunk_id": 1903,
+        "text": "199\nTo develop a specific dietary history, ask about the following:\nDietary History\nUsual Dietary Intake\nFactors That May Affect or Limit Intake\n• Frequency of intake of foods providing key\nnutrients (e.g., dairy products, fortified or whole\ngrains, fruits and vegetables, eggs, beans, fluids,\nmeat) as well as those that perhaps should be\nlimited (fast-food items, highly processed or\nsalted products)\n• Usual meal patterns (number of times per day,\nsnacks) and whether meals are prepared and\neaten at home or eaten at restaurants or fast-food\nestablishments\n• Specific information about nutritional\nsupplements (e.g., vitamins, minerals, herbs,\nprotein), including contents, amounts,\nformulation (pills, powders, drinks), cost, and\noverlap among products\n• Amount of money available for food, or\nparticipation in food assistance programs (e.g.,\nfood stamps, food pantries)\n• Appetite, general well-being (e.g., fatigue, pain,\ndepression)\n• Food allergies, intolerances\n• Problems with dentition, swallowing, heartburn,\ndiarrhea, constipation\n• Coordination of foods and supplements with\nmedications (HIV or other)\nElicit symptoms that may be related to nutritional deficiencies.",
+        "source": "US_DoH_HIV.pdf",
+        "folder": "richtlinien/PDF",
+        "lang": "en"
+      }
+    ]
+  }
+]
