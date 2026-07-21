@@ -9,26 +9,22 @@ _SYNTH_DIR = Path(__file__).resolve().parent
 def _default_dataset() -> Path:
     """Resolve the dataset to load when no explicit path is given.
 
-    Runs write to per-run dirs (dataset/synthetic/generated_<model>_<stamp>/),
-    so there is no single fixed filename. Honour SYNTH_DATASET_FILE if set;
-    otherwise pick the most recently modified synthetic_dataset.json under any
-    generated_* dir. Callers can always pass an explicit `path` to load.py.
+    The finished dataset is the curated, git-tracked top-level
+    dataset/synthetic/synthetic_dataset.json (also the file present on the SLURM
+    node — the per-run generated_* dirs are gitignored). Override with
+    SYNTH_DATASET_FILE (e.g. to evaluate a raw generated_*/ pilot run) or pass an
+    explicit `path` to load.py.
     """
     override = os.getenv("SYNTH_DATASET_FILE")
     if override:
         return Path(override)
-    candidates = sorted(
-        _SYNTH_DIR.glob("generated*/synthetic_dataset.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if not candidates:
+    curated = _SYNTH_DIR / "synthetic_dataset.json"
+    if not curated.exists():
         raise FileNotFoundError(
-            f"no generated*/synthetic_dataset.json under {_SYNTH_DIR} — run the "
-            f"generation pipeline first, or pass an explicit path / "
-            f"SYNTH_DATASET_FILE."
+            f"no {curated} — put your finished dataset there, or pass an explicit "
+            f"path / SYNTH_DATASET_FILE."
         )
-    return candidates[0]
+    return curated
 
 
 def to_metadata(sample: dict) -> dict:
