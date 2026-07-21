@@ -15,10 +15,9 @@
 ## fleet, quality does: this runs the largest model that fits one 8 GB GPU
 ## (8B-class Q4; override LLAMACPP_GEN_REPO / LLAMACPP_GEN_FILE for another).
 ## Pilot first: SYNTH_MAX_CONTEXTS=6 sbatch slurm/run_synth.sh
-## Escape hatch: if pilot quality disappoints, the Python is endpoint-agnostic
-## — point LLAMACPP_GEN_BASE_URL at an Ollama/llama-server /v1 endpoint on the
-## 12 GB node (branch test/new-node-larger-models) and run
-## `python -m dataset.synthetic.generate_synthetic` there directly.
+## Escape hatch: if SLURM is down or pilot quality disappoints, use
+## slurm/run_synth_ollama.sh — it runs the same Python locally against the
+## external 12 GB Ollama node (gemma4:e4b / gemma4:12b), configured via .env.
 ##
 ## Prerequisites (login node):
 ##   1. dataset/synthetic/contexts_mixed.json + personas.json committed
@@ -118,7 +117,12 @@ nvidia-smi || true
 # Generate + validate
 # ---------------------------------------------------------------------------
 export DEEPEVAL_TELEMETRY_OPT_OUT=YES
-export SYNTH_OUTPUT_DIR="${SYNTH_OUTPUT_DIR:-results/synthetic}"
+# Per-run dir keyed on the SLURM job id: unique across separate submissions, but
+# STABLE across a requeue of the same job, so the resume logic (skip finished
+# goldens_<pass>.json) still works after a preemption. Override SYNTH_OUTPUT_DIR
+# to point at an existing dir if you want to resume a different run.
+RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)}"
+export SYNTH_OUTPUT_DIR="${SYNTH_OUTPUT_DIR:-dataset/synthetic/generated_job${RUN_ID}}"
 mkdir -p "${WORKDIR}/${SYNTH_OUTPUT_DIR}"
 
 echo "==== Generation ===="

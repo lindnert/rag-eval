@@ -1,265 +1,132 @@
 [
   {
-    "id": "ngqa_00",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: opioid_misuse, hypertension, Weight gain/Muscle building diet, High protein diet. Their dietary habits include: Eats lots of fish; Eats lots of fast food; Eats lots of frozen food; Eats often outside the home; Eats many ready to eat meals; Takes more supplements; Uses little to no salt in preparation; Ate more food than usual; Ate less food than usual; Eats diabetic diet; Eats gluten free diet."
-  },
-  {
-    "id": "ngqa_01",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: obesity, diabetes, High protein diet. Their dietary habits include: Adds lots of salt at table; Heavy cigarette smoker; Drinks Alcohol less than average; Eats little to no fast food; Eats little to no frozen food; Eats often outside the home; Takes more supplements; Uses lots of salt in preparation; Ate more food than usual; Ate less food than usual; Eats gluten free diet."
-  },
-  {
-    "id": "ngqa_02",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: hypertension, Weight gain/Muscle building diet, High protein diet. Their dietary habits include: Eats little or no shellfish; Uses tobacco often; Drinks Alcohol more than average; Takes few or no supplements; Drinks lots of water; Claims to have a good diet; Ate more food than usual; Ate less food than usual; Eats diabetic diet; Eats gluten free diet."
-  },
-  {
-    "id": "ngqa_03",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: opioid_misuse, hypertension, Low fat/Low cholesterol diet, Sugar free/Low sugar diet, Low carbohydrate diet. Their dietary habits include: Drinks lots of milk; Eats little or no shellfish; Drinks Alcohol less than average; Eats little to no fast food; Eats few to no ready to eat meals; Takes few or no supplements; Claims to have a good diet; Ate more food than usual; Ate less food than usual; Eats weight loss diet; Eats low salt diet; Eats high protein diet; Eats renal/kidney diet."
-  },
-  {
-    "id": "ngqa_04",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: opioid_misuse, hypertension, Weight gain/Muscle building diet. Their dietary habits include: Eats lots of fast food; Eats little to no frozen food; Eats often outside the home; Eats few to no ready to eat meals; Ate more food than usual; Ate less food than usual; Eats diabetic diet."
-  },
-  {
-    "id": "ngqa_05",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: obesity, opioid_misuse, diabetes, Weight loss/Low calorie diet, Low fat/Low cholesterol diet, Low salt/Low sodium diet, Diabetic diet. Their dietary habits include: Drinks lots of milk; Adds little to no salt at table; Drinks Alcohol less than average; Eats little to no frozen food; Eats few to no meals outside home; Eats few to no ready to eat meals; Rarely or never check nutrition labels; Takes more supplements; Uses lots of salt in preparation; Drinks lots of water; Ate more food than usual; Ate less food than usual; Eats weight loss diet; Eats low fat diet; Eats high fiber diet."
-  },
-  {
-    "id": "ngqa_06",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: obesity, hypertension, diabetes, Renal/Kidney diet. Their dietary habits include: Drinks lots of milk; Eats little or no shellfish; Eats little to no frozen food; Eats few to no meals outside home; Eats few to no ready to eat meals; Takes few or no supplements; Uses little to no salt in preparation; Drinks little water; Claims to have a poor diet; Ate more food than usual; Ate less food than usual; Eats low carb diet."
-  },
-  {
-    "id": "ngqa_07",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: obesity, hypertension, Weight loss/Low calorie diet, Low fat/Low cholesterol diet, Low salt/Low sodium diet, Sugar free/Low sugar diet, Diabetic diet, Low carbohydrate diet, Renal/Kidney diet. Their dietary habits include: Drinks lots of milk; Light cigarette smoker; Eats little to no fast food; Eats few to no ready to eat meals; Often check nutrition labels; Uses little to no salt in preparation; Ate more food than usual; Ate less food than usual; Eats weight loss diet; Eats low fat diet; Eats low salt diet; Eats low fiber diet; Eats high fiber diet; Eats high protein diet; Eats low carb diet."
-  },
-  {
-    "id": "ngqa_08",
-    "origin": "ngqa",
-    "text": "The user has the following health conditions: obesity, Weight loss/Low calorie diet, Low fat/Low cholesterol diet, Low salt/Low sodium diet, Sugar free/Low sugar diet, Diabetic diet, Low carbohydrate diet, Renal/Kidney diet. Their dietary habits include: Drinks lots of milk; Light cigarette smoker; Eats little to no fast food; Eats few to no ready to eat meals; Often check nutrition labels; Uses little to no salt in preparation; Ate more food than usual; Ate less food than usual; Eats weight loss diet; Eats low fat diet; Eats low salt diet; Eats low fiber diet; Eats high fiber diet; Eats high protein diet; Eats low carb diet."
-  },
-  {
-    "origin": "curated",
     "id": "cur_ckd_predialysis",
-    "conditions": [
-      "kidney"
-    ],
+    "conditions": ["kidney"],
     "text": "The user is a 62-year-old man with the following health conditions: chronic kidney disease (stage 3b, not on dialysis), mild hypertension. Their dietary habits include: Tries to limit protein; Watches potassium and phosphorus; Adds little to no salt at table; Drinks moderate water; Eats few to no ready to eat meals; Takes prescribed supplements; Cooks most meals at home."
   },
   {
-    "origin": "curated",
     "id": "cur_ckd_dialysis",
-    "conditions": [
-      "kidney"
-    ],
+    "conditions": ["kidney"],
     "text": "The user is a 54-year-old woman with the following health conditions: end-stage kidney disease on haemodialysis three times a week. Their dietary habits include: Restricts fluids; Limits potassium and phosphorus; Aims for higher protein on dialysis days; Adds little to no salt in preparation; Eats little to no processed food; Takes phosphate binders with meals."
   },
   {
-    "origin": "curated",
     "id": "cur_ckd_diabetes",
-    "conditions": [
-      "kidney",
-      "diabetes"
-    ],
+    "conditions": ["kidney", "diabetes"],
     "text": "The user is a 67-year-old man with the following health conditions: type 2 diabetes and diabetic kidney disease (stage 3). Their dietary habits include: Watches carbohydrate portions; Limits potassium; Moderates protein; Adds little to no salt at table; Checks blood glucose regularly; Eats few to no sugary drinks; Cooks most meals at home."
   },
   {
-    "origin": "curated",
     "id": "cur_liver_cirrhosis",
-    "conditions": [
-      "liver"
-    ],
+    "conditions": ["liver"],
     "text": "The user is a 58-year-old man with the following health conditions: compensated liver cirrhosis with early muscle wasting. Their dietary habits include: Poor appetite; Eats small frequent meals; Includes a late-evening snack; Drinks no alcohol; Struggles to meet protein targets; Eats little to no fast food; Often feels full quickly."
   },
   {
-    "origin": "curated",
     "id": "cur_liver_nafld",
-    "conditions": [
-      "liver"
-    ],
+    "conditions": ["liver"],
     "text": "The user is a 45-year-old woman with the following health conditions: non-alcoholic fatty liver disease and overweight. Their dietary habits include: Trying to lose weight gradually; Limits sugary drinks and refined carbohydrates; Eats more vegetables; Reduces saturated fat; Drinks little to no alcohol; Walks most days; Eats few to no ready to eat meals."
   },
   {
-    "origin": "curated",
     "id": "cur_cancer_chemo",
-    "conditions": [
-      "cancer"
-    ],
+    "conditions": ["cancer"],
     "text": "The user is a 60-year-old woman with the following health conditions: colorectal cancer, currently undergoing chemotherapy, unintentional weight loss. Their dietary habits include: Frequent nausea; Altered taste; Eats small portions; Struggles with low appetite; Prefers bland soft foods; Drinks oral nutrition supplements; Eats few to no spicy foods."
   },
   {
-    "origin": "curated",
     "id": "cur_cancer_headneck",
-    "conditions": [
-      "cancer"
-    ],
+    "conditions": ["cancer"],
     "text": "The user is a 66-year-old man with the following health conditions: head and neck cancer with swallowing difficulty during radiotherapy. Their dietary habits include: Eats soft or pureed foods; Uses oral nutrition supplements; Finds dry foods hard to swallow; Adds sauces and gravies for moisture; Eats small frequent meals; Loses weight easily."
   },
   {
-    "origin": "curated",
     "id": "cur_cancer_survivor",
-    "conditions": [
-      "cancer",
-      "heart"
-    ],
+    "conditions": ["cancer", "heart"],
     "text": "The user is a 52-year-old woman with the following health conditions: breast cancer survivor two years after treatment, wanting to eat well and manage cholesterol. Their dietary habits include: Eats plenty of vegetables and wholegrains; Limits red and processed meat; Chooses unsaturated fats; Drinks little to no alcohol; Maintains a healthy weight; Exercises regularly."
   },
   {
-    "origin": "curated",
     "id": "cur_ibd_crohn_flare",
-    "conditions": [
-      "ibd"
-    ],
+    "conditions": ["ibd"],
     "text": "The user is a 29-year-old woman with the following health conditions: Crohn's disease, currently in a flare, recent weight loss. Their dietary habits include: Avoids high-fibre foods during flares; Eats small frequent meals; Limits dairy; Watches for trigger foods; Takes iron and vitamin supplements; Eats little to no raw vegetables."
   },
   {
-    "origin": "curated",
     "id": "cur_ibd_uc_remission",
-    "conditions": [
-      "ibd"
-    ],
+    "conditions": ["ibd"],
     "text": "The user is a 37-year-old man with the following health conditions: ulcerative colitis in remission. Their dietary habits include: Eats a varied balanced diet in remission; Gradually reintroduced fibre; Stays well hydrated; Monitors for symptom return; Limits alcohol; Takes a supplement when advised; Cooks most meals at home."
   },
   {
-    "origin": "curated",
     "id": "cur_pancreatitis_chronic",
-    "conditions": [
-      "pancreatitis"
-    ],
+    "conditions": ["pancreatitis"],
     "text": "The user is a 49-year-old man with the following health conditions: chronic pancreatitis with fat malabsorption. Their dietary habits include: Eats a lower-fat diet; Takes enzyme replacement with meals; Eats small frequent meals; Drinks no alcohol; Watches for steatorrhoea; Takes fat-soluble vitamin supplements."
   },
   {
-    "origin": "curated",
     "id": "cur_pancreatitis_recovery",
-    "conditions": [
-      "pancreatitis"
-    ],
+    "conditions": ["pancreatitis"],
     "text": "The user is a 41-year-old woman recovering from an episode of acute pancreatitis. Their dietary habits include: Reintroducing food gradually; Prefers low-fat meals; Eats small frequent portions; Drinks no alcohol; Avoids fried and greasy foods; Building back to a normal diet cautiously."
   },
   {
-    "origin": "curated",
     "id": "cur_obesity_bariatric",
-    "conditions": [
-      "obesity",
-      "micronutrient"
-    ],
+    "conditions": ["obesity", "micronutrient"],
     "text": "The user is a 43-year-old woman with the following health conditions: obesity, six months after bariatric (sleeve) surgery. Their dietary habits include: Eats very small portions; Prioritises protein at every meal; Takes lifelong multivitamin and mineral supplements; Separates fluids from meals; Eats few to no sugary foods; Chews food thoroughly."
   },
   {
-    "origin": "curated",
     "id": "cur_obesity_gi",
-    "conditions": [
-      "obesity"
-    ],
+    "conditions": ["obesity"],
     "text": "The user is a 50-year-old man with the following health conditions: obesity with gastro-oesophageal reflux, wanting to lose weight. Their dietary habits include: Trying to reduce portion sizes; Avoids late heavy meals; Limits fatty and spicy foods; Cuts down on sugary drinks; Eats more vegetables; Walks daily."
   },
   {
-    "origin": "curated",
     "id": "cur_celiac_new",
-    "conditions": [
-      "celiac"
-    ],
+    "conditions": ["celiac"],
     "text": "The user is a 34-year-old woman with the following health conditions: newly diagnosed coeliac disease. Their dietary habits include: Strictly avoids gluten; Reads all food labels; Learning gluten-free substitutes; Eats little to no processed food; Worries about cross-contamination; Takes supplements for possible deficiencies."
   },
   {
-    "origin": "curated",
     "id": "cur_celiac_persistent",
-    "conditions": [
-      "celiac",
-      "micronutrient"
-    ],
+    "conditions": ["celiac", "micronutrient"],
     "text": "The user is a 46-year-old man with the following health conditions: long-standing coeliac disease with persistent tiredness and low iron. Their dietary habits include: Follows a strict gluten-free diet; Checks for hidden gluten; Eats iron-rich foods; Takes iron and vitamin supplements; Eats little to no oats unless certified; Cooks most meals at home."
   },
   {
-    "origin": "curated",
     "id": "cur_osteoporosis_woman",
-    "conditions": [
-      "osteoporosis",
-      "micronutrient"
-    ],
+    "conditions": ["osteoporosis", "micronutrient"],
     "text": "The user is a 68-year-old woman with the following health conditions: postmenopausal osteoporosis. Their dietary habits include: Tries to get enough calcium; Takes vitamin D supplements; Drinks lots of milk; Eats little or no fish; Walks daily; Adds little to no salt at table; Drinks alcohol less than average."
   },
   {
-    "origin": "curated",
     "id": "cur_osteoporosis_man",
-    "conditions": [
-      "osteoporosis",
-      "micronutrient"
-    ],
+    "conditions": ["osteoporosis", "micronutrient"],
     "text": "The user is a 72-year-old man with the following health conditions: osteoporosis after a wrist fracture. Their dietary habits include: Increasing calcium-rich foods; Takes vitamin D; Eats oily fish sometimes; Limits alcohol; Gave up smoking; Eats few to no ready to eat meals; Does resistance exercises."
   },
   {
-    "origin": "curated",
     "id": "cur_diabetes_chol",
-    "conditions": [
-      "diabetes",
-      "heart"
-    ],
+    "conditions": ["diabetes", "heart"],
     "text": "The user is a 55-year-old man with the following health conditions: type 2 diabetes, high LDL cholesterol, overweight. Their dietary habits include: Watches carbohydrate portions; Chooses wholegrains; Limits saturated fat; Eats oily fish twice a week; Adds little to no salt at table; Eats few to no sugary drinks; Trying to lose weight."
   },
   {
-    "origin": "curated",
     "id": "cur_diabetes_htn",
-    "conditions": [
-      "diabetes",
-      "heart"
-    ],
+    "conditions": ["diabetes", "heart"],
     "text": "The user is a 61-year-old woman with the following health conditions: type 2 diabetes and high blood pressure. Their dietary habits include: Follows a lower-salt diet; Watches carbohydrate intake; Eats more vegetables and fruit; Limits processed foods; Chooses low-fat dairy; Checks blood glucose; Walks most days."
   },
   {
-    "origin": "curated",
     "id": "cur_heart_chol",
-    "conditions": [
-      "heart"
-    ],
+    "conditions": ["heart"],
     "text": "The user is a 57-year-old man with the following health conditions: high cholesterol and a family history of heart disease. Their dietary habits include: Replaces saturated with unsaturated fats; Eats oily fish twice a week; Chooses wholegrains; Eats plenty of vegetables; Limits salt; Drinks alcohol less than average; Exercises regularly."
   },
   {
-    "origin": "curated",
     "id": "cur_intestinal_failure",
-    "conditions": [
-      "intestinal_failure"
-    ],
+    "conditions": ["intestinal_failure"],
     "text": "The user is a 48-year-old woman with the following health conditions: short bowel syndrome on home parenteral nutrition. Their dietary habits include: Eats small frequent oral meals; Manages high stoma output; Watches fluid and electrolyte balance; Limits high-sugar drinks; Takes prescribed micronutrients; Separates fluids from solids."
   },
   {
-    "origin": "curated",
     "id": "cur_polymorbid_elderly",
-    "conditions": [
-      "polymorbid",
-      "kidney",
-      "diabetes"
-    ],
+    "conditions": ["polymorbid", "kidney", "diabetes"],
     "text": "The user is a 79-year-old man with the following health conditions: type 2 diabetes, chronic kidney disease and malnutrition risk after a recent hospital stay. Their dietary habits include: Poor appetite; Low food intake; Struggles to meet protein and energy needs; Watches potassium; Eats small frequent meals; Needs help preparing food."
   },
   {
-    "origin": "curated",
     "id": "cur_polymorbid_frail",
-    "conditions": [
-      "polymorbid"
-    ],
+    "conditions": ["polymorbid"],
     "text": "The user is an 83-year-old woman with the following health conditions: frailty, heart failure and unintentional weight loss. Their dietary habits include: Small appetite; Eats energy-dense small meals; Uses oral nutrition supplements; Limits added salt; Struggles with fatigue when cooking; Prefers soft foods; Eats little to no large meals."
   },
   {
-    "origin": "curated",
     "id": "cur_hiv_maintain",
-    "conditions": [
-      "hiv"
-    ],
+    "conditions": ["hiv"],
     "text": "The user is a 40-year-old man with the following health conditions: living with HIV, on antiretroviral therapy, maintaining weight. Their dietary habits include: Aims for adequate protein and energy; Practises careful food hygiene; Eats regular balanced meals; Takes a daily multivitamin; Eats little to no undercooked food; Manages occasional appetite changes."
   },
   {
-    "origin": "curated",
     "id": "cur_hiv_weightloss",
-    "conditions": [
-      "hiv"
-    ],
+    "conditions": ["hiv"],
     "text": "The user is a 35-year-old woman with the following health conditions: HIV with recent unintentional weight loss and low appetite. Their dietary habits include: Eats small frequent nutrient-dense meals; Uses oral nutrition supplements; Practises strict food safety; Adds healthy fats to boost energy; Takes prescribed micronutrients; Manages nausea."
   }
 ]
