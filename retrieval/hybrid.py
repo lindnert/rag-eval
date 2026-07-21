@@ -162,7 +162,17 @@ class HybridRetriever:
         fused = alpha * dense + (1.0 - alpha) * sparse_norm
 
         top = np.argsort(-fused)[:k]
+        # Attach the FAISS position as `chunk_id` so downstream eval can match
+        # retrieved chunks against gold context ids (see dataset/synthetic —
+        # gold `context_chunks[*].chunk_id` share this same 0..n-1 id space).
+        # Copy the metadata dict so we never mutate the shared per-doc metadata.
         return [
-            (Document(page_content=self._texts[i], metadata=self._metadatas[i]), float(fused[i]))
+            (
+                Document(
+                    page_content=self._texts[i],
+                    metadata={**self._metadatas[i], "chunk_id": int(i)},
+                ),
+                float(fused[i]),
+            )
             for i in top
         ]

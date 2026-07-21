@@ -147,6 +147,76 @@ def _get_hhem_metric() -> FaithfulnesswithHHEMPerChunk:
 _get_hhem_metric()
 
 
+def _reference_context_ids(sample) -> list | None:
+    """Gold context chunk ids for a synthetic sample, else None.
+
+    Synthetic goldens carry the guideline chunks they were generated from in
+    dataset_metadata.context_chunks, each with a `chunk_id` in the retriever's
+    id space (see dataset/synthetic/build_contexts.py). No other dataset has
+    gold contexts, so id-based context scoring only applies to synthetic rows.
+    """
+    dm = sample.get("dataset_metadata") or {}
+    chunks = dm.get("context_chunks") or []
+    ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id") is not None]
+    return ids or None
+
+
+def _id_based_context_scores(sample) -> dict:
+    """ID-based context precision/recall for synthetic samples (gold ids known).
+
+    Pure set/rank arithmetic over retrieved-vs-gold chunk ids — no LLM, no
+    embeddings, deterministic. The three fields are:
+
+    - recall    = |gold ∩ retrieved| / |gold|      (rank-agnostic)
+    - precision = |gold ∩ retrieved| / |retrieved| (rank-agnostic)
+      Both are the exact formulas ragas' IDBasedContextRecall /
+      IDBasedContextPrecision use; computed inline so the cheap deterministic
+      metrics don't ride the LLM `evaluate()` path.
+    - ap        = Average Precision over the retrieved ids in rank order,
+      mirroring ragas' _calculate_average_precision. This is the rank-aware
+      signal (the flat precision above ignores order); averaged across samples
+      it is MAP@k.
+
+    Every field is None when the sample has no gold ids (non-synthetic) or no
+    retrieved ids (no_rag / retrieval error / result files predating the
+    chunk-id wiring), so the key set stays stable across all rows.
+    """
+    none_scores = {
+        "ragas_id_context_recall": None,
+        "ragas_id_context_precision": None,
+        "ragas_id_context_ap": None,
+    }
+    reference_ids = _reference_context_ids(sample)
+    retrieved_ids = sample.get("retrieved_context_ids")
+    if not reference_ids or not retrieved_ids:
+        return none_scores
+
+    # Compare as strings so int/str id representations always match (ragas does
+    # the same). Recall/precision are set-based; AP keeps retrieval rank order.
+    ref_set = {str(r) for r in reference_ids}
+    ret_ids = [str(r) for r in retrieved_ids]
+    ret_set = set(ret_ids)
+
+    inter = ref_set & ret_set
+    recall = len(inter) / len(ref_set)
+    precision = len(inter) / len(ret_set)
+
+    rel = [1 if rid in ref_set else 0 for rid in ret_ids]
+    hits = sum(rel)
+    if hits == 0:
+        ap = 0.0
+    else:
+        ap = sum(
+            (sum(rel[: i + 1]) / (i + 1)) * rel[i] for i in range(len(rel))
+        ) / hits
+
+    return {
+        "ragas_id_context_recall": recall,
+        "ragas_id_context_precision": precision,
+        "ragas_id_context_ap": ap,
+    }
+
+
 def _build_base_llm() -> ChatOpenAI:
     return ChatOpenAI(
         model=LLAMACPP_EVAL_MODEL,
@@ -270,6 +340,10 @@ def run_ragas(sample):
     reference_answer = sample.get("reference_answer")
     has_reference_answer = reference_answer is not None and str(reference_answer).strip() != ""
 
+    # ID-based context precision/recall (synthetic-only, deterministic, no LLM).
+    # Computed once here and merged into every return so the key set is stable.
+    id_ctx_scores = _id_based_context_scores(sample)
+
     dataset = Dataset.from_dict({
         "question": [sample["query"]],
         "answer": [sample["answer"]],
@@ -311,6 +385,7 @@ def run_ragas(sample):
                 "ragas_faithfulness_with_hhem": None,
                 "ragas_answer_accuracy": None,
                 "ragas_answer_correctness": None,
+                **id_ctx_scores,
             }
 
         result = cast(
@@ -362,6 +437,7 @@ def run_ragas(sample):
             "ragas_faithfulness_with_hhem": faith_hhem_out,
             "ragas_answer_accuracy": acc_out,
             "ragas_answer_correctness": corr_out,
+            **id_ctx_scores,
         }
 
     except Exception as e:
@@ -379,6 +455,7 @@ def run_ragas(sample):
             "ragas_faithfulness_with_hhem": None,
             "ragas_answer_accuracy": None,
             "ragas_answer_correctness": None,
+            **id_ctx_scores,
             "ragas_error": f"{type(e).__name__}: {e}",
         }
 

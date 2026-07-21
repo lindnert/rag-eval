@@ -333,24 +333,37 @@ def _generation_correction_triggers(logprobs):
     return triggers
 
 
-def _merge_and_rerank(ctx_orig, retr_scores_orig, ctx_hyde, retr_scores_hyde, k=RAG_K):
+def _merge_and_rerank(
+    ctx_orig, retr_scores_orig, ids_orig,
+    ctx_hyde, retr_scores_hyde, ids_hyde,
+    k=RAG_K,
+):
     """Union both retrievals, dedupe by context text, keep best score per doc,
-    sort by direction, truncate to k."""
-    pool = {}
-    for context, score in list(zip(ctx_orig, retr_scores_orig)) + list(zip(ctx_hyde, retr_scores_hyde)):
+    sort by direction, truncate to k. `chunk_id` rides along with each doc's
+    score so the merged list keeps ids aligned to contexts (retrieval order)."""
+    pool = {}  # context text -> (score, chunk_id)
+    for context, score, cid in (
+        list(zip(ctx_orig, retr_scores_orig, ids_orig))
+        + list(zip(ctx_hyde, retr_scores_hyde, ids_hyde))
+    ):
         existing = pool.get(context)
         if existing is None:
-            pool[context] = score
+            pool[context] = (score, cid)
         elif RAG_SC_SCORE_DIRECTION == "lower":
-            pool[context] = min(existing, score)
+            if score < existing[0]:
+                pool[context] = (score, cid)
         else:
-            pool[context] = max(existing, score)
+            if score > existing[0]:
+                pool[context] = (score, cid)
     items = sorted(
         pool.items(),
-        key=lambda kv_pair: kv_pair[1],
+        key=lambda kv_pair: kv_pair[1][0],
         reverse=(RAG_SC_SCORE_DIRECTION == "higher"),
     )[:k]
-    return [c for c, _ in items], [s for _, s in items]
+    contexts = [c for c, _ in items]
+    scores = [v[0] for _, v in items]
+    ids = [v[1] for _, v in items]
+    return contexts, scores, ids
 
 
 def build_user_prompt(query, contexts):
@@ -367,7 +380,11 @@ def _retrieve(retriever, query, k=RAG_K):
     docs_with_scores = retriever.search_with_score(query, k=k)
     contexts = [doc.page_content for doc, _ in docs_with_scores]
     scores = [float(score) for _, score in docs_with_scores]
-    return contexts, scores
+    # `chunk_id` is the FAISS position the retriever tags each doc with; it shares
+    # the gold context id space, so downstream eval can score ID-based context
+    # precision/recall. Kept parallel to `contexts`/`scores` (retrieval rank order).
+    ids = [doc.metadata.get("chunk_id") for doc, _ in docs_with_scores]
+    return contexts, scores, ids
 
 
 async def _generate(
@@ -469,12 +486,13 @@ async def process_single_query(
     loop = asyncio.get_event_loop()
     contexts = []
     retrieval_scores = []
+    retrieved_ids = []
     sc_metadata = None  # only populated for variant == "rag_sc"
 
     if variant in _RAG_VARIANTS:
         retriever = _get_retriever()
         try:
-            contexts, retrieval_scores = await loop.run_in_executor(
+            contexts, retrieval_scores, retrieved_ids = await loop.run_in_executor(
                 None, lambda: _retrieve(retriever, query)
             )
         except Exception as exc:
@@ -486,6 +504,7 @@ async def process_single_query(
                 "answer": f"[RETRIEVAL ERROR] {exc}",
                 "contexts": [],
                 "retrieval_scores": [],
+                "retrieved_context_ids": [],
                 "gen_logprob_stats": None,
             }
 
@@ -501,14 +520,16 @@ async def process_single_query(
             hyde_text = await _generate_hyde(session, sem, query)
             if hyde_text.strip():
                 try:
-                    hyde_ctx, hyde_retrieval_scores = await loop.run_in_executor(
+                    hyde_ctx, hyde_retrieval_scores, hyde_ids = await loop.run_in_executor(
                         None, lambda: _retrieve(retriever, hyde_text)
                     )
                     sc_metadata["hyde_retrieval_fake_answer"] = hyde_text
                     sc_metadata["original_contexts"] = list(contexts)
                     sc_metadata["original_retrieval_scores"] = list(retrieval_scores)
-                    contexts, retrieval_scores = _merge_and_rerank(
-                        contexts, retrieval_scores, hyde_ctx, hyde_retrieval_scores
+                    sc_metadata["original_context_ids"] = list(retrieved_ids)
+                    contexts, retrieval_scores, retrieved_ids = _merge_and_rerank(
+                        contexts, retrieval_scores, retrieved_ids,
+                        hyde_ctx, hyde_retrieval_scores, hyde_ids,
                     )
                     sc_metadata["retrieval_retried_count"] += 1
                 except Exception as exc:
@@ -609,6 +630,7 @@ async def process_single_query(
         "rejected": answer == REJECTION_ANSWER,
         "contexts": contexts,
         "retrieval_scores": retrieval_scores,
+        "retrieved_context_ids": retrieved_ids,
         "gen_logprob_stats": _logprob_stats(gen_logprobs),
     }
     if sc_metadata is not None:
