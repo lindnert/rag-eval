@@ -12,8 +12,6 @@ from common.schema import finalize
 from rag.utils import run_rag_pipeline_async
 from rag.llm_config import LLAMACPP_RAG_CONCURRENCY, LLAMACPP_RAG_MODEL
 
-from common.constants import RAG_LANG
-
 from dataset.NGQA.loader import load_ngqa, to_metadata as ngqa_to_metadata
 from dataset.LLMDRS.loader import load_llmdrs, to_metadata as llmdrs_to_metadata
 from dataset.MMLU.loader import load_mmlu, to_metadata as mmlu_to_metadata
@@ -88,28 +86,24 @@ if __name__ == "__main__":
     # should abstain rather than hallucinate.
     medqa_samples = load_medqa(limit=1)
 
-    # Synthetic queries carry their own language; load only those matching this
-    # run's RAG_LANG so each query meets a same-language system prompt (German
-    # goldens ride the RAG_LANG=de run, English goldens the RAG_LANG=en run).
-    synth_samples = load_synthetic(lang=RAG_LANG, limit=15)
+    # Synthetic goldens carry their own language (English + German). Load both
+    # (lang=None) in this single run; each golden's `to_metadata` tags it with
+    # its `question_lang`, and the pipeline selects a same-language prompt per
+    # query (see rag.utils.process_single_query).
+    synth_samples = load_synthetic(limit=15)
 
-    # NGQA/LLMDRS/MMLU/MEDQA are all-English datasets. They belong to the en run;
-    # including them in the de run is the (English-query × German-prompt) ablation
-    # — off by default, opt in with RUN_EN_DATASETS_IN_DE=1.
-    run_en_datasets = RAG_LANG == "en" or os.environ.get(
-        "RUN_EN_DATASETS_IN_DE", ""
-    ).lower() in ("1", "true", "yes")
+    # NGQA/LLMDRS/MMLU/MEDQA are all-English datasets — tag them lang="en" so the
+    # per-query prompt selection answers them in English.
+    en_items = (
+        [(s["query"], {**ngqa_to_metadata(s), "lang": "en"}) for s in ngqa_samples]
+        + [(s["query"], {**llmdrs_to_metadata(s), "lang": "en"}) for s in llmdrs_samples]
+        + [(s["query"], {**mmlu_to_metadata(s), "lang": "en"}) for s in mmlu_samples]
+        + [(s["query"], {**medqa_to_metadata(s), "lang": "en"}) for s in medqa_samples]
+    )
 
     # Build (query, metadata) pairs per-dataset since each loader defines its
     # own `to_metadata`. The metadata dict is opaque to the pipeline and its
     # fields become top-level keys on every result row.
-    en_items = (
-        [(s["query"], ngqa_to_metadata(s)) for s in ngqa_samples]
-        + [(s["query"], llmdrs_to_metadata(s)) for s in llmdrs_samples]
-        + [(s["query"], mmlu_to_metadata(s)) for s in mmlu_samples]
-        + [(s["query"], medqa_to_metadata(s)) for s in medqa_samples]
-    ) if run_en_datasets else []
-
     items = (
         en_items
         + [(s["query"], synth_to_metadata(s)) for s in synth_samples]

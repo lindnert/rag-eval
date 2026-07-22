@@ -12,43 +12,54 @@
 #SBATCH --partition=NvidiaAll
 #SBATCH --exclude=adakit
 #SBATCH --exclusive
+# Default array for a bare `sbatch slurm/run_rag.sh`; the login-node submitter
+# below overrides it with --array=0-${ARRAY_MAX} (see the job-accounting note).
 #SBATCH --array=0-14
 
-## This script is dual-mode (see the SLURM_JOB_ID branch below).
-## Run it directly on the login node — it submits the array job(s) for you:
-##   ./slurm/run_rag.sh          # both languages (default)
-##   ./slurm/run_rag.sh de       # one language (en | de)
-## Direct sbatch still works (defaults to RAG_LANG=en, uses the --array above):
-##   RAG_LANG=de sbatch slurm/run_rag.sh
-## Override shards per language: ARRAY_MAX=9 ./slurm/run_rag.sh   # 10 shards
+## Two ways to start it (this script is dual-mode — see the SLURM_JOB_ID branch
+## below). Both produce one array run covering both languages (per-query prompt
+## selection) plus a dependency-held merge job; see the job-accounting note.
+##
+##   1. Login-node launcher (recommended):  ./slurm/run_rag.sh
+##      SLURM_JOB_ID is unset, so the script runs as a *submitter*: it sbatch-es
+##      the array job for you and exits. Pick the shard count with the ARRAY_MAX
+##      env var — it becomes --array=0-${ARRAY_MAX} (default 14 → 15 shards) and
+##      overrides the #SBATCH --array header:
+##        ARRAY_MAX=9 ./slurm/run_rag.sh        # 10 shards
+##
+##   2. Plain sbatch:  sbatch slurm/run_rag.sh
+##      SLURM sets SLURM_JOB_ID, so the submitter branch is skipped and the
+##      worker body runs directly as the array job defined by the #SBATCH
+##      --array=0-14 header (15 shards). ARRAY_MAX is NOT read on this path —
+##      override the size on the command line instead:
+##        sbatch --array=0-9 slurm/run_rag.sh   # 10 shards
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Dual-mode entry point.
 #   - On the LOGIN NODE (no SLURM_JOB_ID) this acts as a *submitter*: it
-#     sbatch-es one array job per language and exits, so you never type
-#     sbatch/--export yourself. Languages come from the args (default: both).
+#     sbatch-es the array job and exits, so you never type sbatch/--export
+#     yourself. The command-line --array here overrides the #SBATCH --array
+#     header directive above (the header only applies to a bare `sbatch`).
 #   - Under SLURM (SLURM_JOB_ID set) it falls through to the worker body and
-#     runs the pipeline for the single $RAG_LANG it was submitted with.
-# Array size respects a 30-job cap: 14 shards/lang when both queue together
-# (14 + 14 + 2 dependency-held merge jobs = 30), 15 for a single language.
-# Override with ARRAY_MAX=<n> (array is 0..n, i.e. n+1 shards).
+#     runs the pipeline. A single run now covers both languages (per-query
+#     prompt selection), so there is one array job, not one per language.
+#
+# Job accounting (matters for the cluster's per-user submit cap, ~30 jobs):
+#   * The array submits ARRAY_MAX+1 independent tasks (default 15: indices
+#     0..14); SLURM counts each array task as one job.
+#   * The first task to start schedules ONE merge job, held by
+#     --dependency=afterok until every shard succeeds — a pending dependency
+#     job still counts against the cap.
+#   => one RAG run = 15 shards + 1 merge = 16 jobs. slurm/run_eval.sh is the
+#      same (16); run it after RAG finishes so the two don't queue together
+#      (16 + 16 would exceed 30). Raise ARRAY_MAX up to 28 (29 shards + 1
+#      merge = 30) for more parallelism. There is no %-throttle, so all shards
+#      can run at once (each is --exclusive → one node), nodes permitting.
 # ---------------------------------------------------------------------------
 if [ -z "${SLURM_JOB_ID:-}" ]; then
-  LANGS=("$@")
-  if [ ${#LANGS[@]} -eq 0 ]; then
-    LANGS=(en de)
-  fi
-  for lang in "${LANGS[@]}"; do
-    if [ "${lang}" != "en" ] && [ "${lang}" != "de" ]; then
-      echo "ERROR: unknown language '${lang}' (expected 'en' or 'de')" >&2
-      exit 1
-    fi
-  done
-  if [ -z "${ARRAY_MAX:-}" ]; then
-    if [ ${#LANGS[@]} -ge 2 ]; then ARRAY_MAX=13; else ARRAY_MAX=14; fi
-  fi
+  ARRAY_MAX="${ARRAY_MAX:-14}"
   # Resolve absolute paths so submission is independent of the cwd the user
   # launched from. This script lives in <repo>/slurm/, so REPO_ROOT is its
   # parent dir. cd there before sbatch so the array job's SLURM_SUBMIT_DIR
@@ -56,10 +67,8 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
   SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
   cd "${REPO_ROOT}"
-  for lang in "${LANGS[@]}"; do
-    echo "Submitting RAG_LANG=${lang}  --array=0-${ARRAY_MAX} ($((ARRAY_MAX + 1)) shards) from ${REPO_ROOT}"
-    sbatch --array="0-${ARRAY_MAX}" --export=ALL,RAG_LANG="${lang}" "${SELF}"
-  done
+  echo "Submitting RAG --array=0-${ARRAY_MAX} ($((ARRAY_MAX + 1)) shards) from ${REPO_ROOT}"
+  sbatch --array="0-${ARRAY_MAX}" --export=ALL "${SELF}"
   exit 0
 fi
 
@@ -67,13 +76,12 @@ WORKDIR="${SLURM_SUBMIT_DIR:-$PWD}"
 ERR_LOG="${WORKDIR}/logs/rag.${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}.$(hostname).err"
 exec 2> >(tee -a "${ERR_LOG}" >&2)
 
-# Run language: selects the prompt bundle (rag/utils.py) and abstention string
-# (common/constants.py), and keeps each language's results in its own tree so
-# the two runs never collide. Submit one job per language:
-#   sbatch --export=ALL,RAG_LANG=en slurm/run_rag.sh
-#   sbatch --export=ALL,RAG_LANG=de slurm/run_rag.sh
+# Default run language: only seeds the fallback abstention string / default
+# prompt singletons (common/constants.py, rag/utils.py) and the warm-up prompt
+# below. Each query is answered in its own language via per-query prompt
+# selection, and all results land in one flat results/ tree.
 export RAG_LANG="${RAG_LANG:-en}"
-export RESULTS_DIR="${WORKDIR}/results/${RAG_LANG}"
+export RESULTS_DIR="${WORKDIR}/results"
 mkdir -p "${RESULTS_DIR}" "${WORKDIR}/logs"
 echo "RAG_LANG=${RAG_LANG}  RESULTS_DIR=${RESULTS_DIR}"
 
