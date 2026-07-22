@@ -27,7 +27,7 @@ from rag.llm_config import (
     RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
     RAG_SC_SCORE_DIRECTION,
 )
-from common.constants import RAG_LANG, REJECTION_ANSWER
+from common.constants import RAG_LANG, REJECTION_ANSWER, REJECTION_ANSWERS
 
 VARIANTS = ("no_rag", "rag", "rag_sc")
 _RAG_VARIANTS = {"rag", "rag_sc"}
@@ -57,13 +57,14 @@ def _get_retriever():
     return _retriever
 
 # --- Language-dependent prompt bundle --------------------------------------
-# All model-facing prompt text is selected by RAG_LANG (see common.constants) so
-# a single `export RAG_LANG=de` flips the system prompts, the user-prompt labels,
-# and the abstention string coherently for a run. German runs answer the
-# (English) dataset queries in German. The field labels 'Food information' and
-# 'User profile' stay English in every bundle because they appear verbatim in the
-# NGQA query text (see dataset/NGQA/NGQA.py) — the prompt points the model at the
-# labels as they actually occur, not a translation of them.
+# Every language's model-facing prompt text (system prompts, user-prompt labels,
+# abstention string) is built up front and selected *per query* by that query's
+# language (see _resolve_lang / process_single_query), so one run answers each
+# query in its own language: German goldens get the German prompt, English
+# queries the English one. The field labels 'Food information' and 'User profile'
+# stay English in every bundle because they appear verbatim in the NGQA query
+# text (see dataset/NGQA/NGQA.py) — the prompt points the model at the labels as
+# they actually occur, not a translation of them.
 
 
 def _en_bundle():
@@ -71,7 +72,7 @@ def _en_bundle():
         "If neither the question nor the context provides the information needed to "
         "answer — not even partially — respond with exactly this sentence and add "
         "nothing else: "
-        f"\"{REJECTION_ANSWER}\" "
+        f"\"{REJECTION_ANSWERS['en']}\" "
     )
     sources = (
         "You have two sources of information: the question (including for example "
@@ -119,7 +120,7 @@ def _de_bundle():
         "Wenn weder die Frage noch der Kontext die zur Beantwortung nötigen "
         "Informationen liefert — nicht einmal teilweise —, antworte mit exakt "
         "diesem Satz und füge nichts hinzu: "
-        f"\"{REJECTION_ANSWER}\" "
+        f"\"{REJECTION_ANSWERS['de']}\" "
     )
     sources = (
         "Dir stehen zwei Informationsquellen zur Verfügung: die Frage "
@@ -164,15 +165,23 @@ def _de_bundle():
     }
 
 
-_BUNDLES = {"en": _en_bundle, "de": _de_bundle}
-_bundle = _BUNDLES[RAG_LANG]()
+# Build every language bundle once and select per query at generation time.
+_BUNDLES = {"en": _en_bundle(), "de": _de_bundle()}
 
-SYSTEM_PROMPT_RAG = _bundle["rag"]
-SYSTEM_PROMPT_NO_RAG = _bundle["no_rag"]
-SYSTEM_PROMPT_RAG_STRICT = _bundle["rag_strict"]
-SYSTEM_PROMPT_HYDE = _bundle["hyde"]
-_QUESTION_LABEL = _bundle["question_label"]
-_CONTEXT_LABEL = _bundle["context_label"]
+
+def _resolve_lang(lang):
+    """Map a query's `lang` tag onto a built prompt bundle, falling back to the
+    run default (RAG_LANG) for missing/unknown tags."""
+    return lang if lang in _BUNDLES else RAG_LANG
+
+
+# Default-language prompt singletons — kept for importers/debug harnesses (e.g.
+# test_single_query); the pipeline selects per query via _BUNDLES / build_user_prompt.
+_default_bundle = _BUNDLES[_resolve_lang(RAG_LANG)]
+SYSTEM_PROMPT_RAG = _default_bundle["rag"]
+SYSTEM_PROMPT_NO_RAG = _default_bundle["no_rag"]
+SYSTEM_PROMPT_RAG_STRICT = _default_bundle["rag_strict"]
+SYSTEM_PROMPT_HYDE = _default_bundle["hyde"]
 
 # Qwen3 emits its reasoning as <think>…</think> at the start of content when
 # enable_thinking=true; strip it so the stored answer isn't polluted.
@@ -226,7 +235,11 @@ def _word_levenshtein(a, b):
     return prev[-1]
 
 
-_REJECTION_WORDS = _words(REJECTION_ANSWER)
+# Tokenised rejection sentence per language; the query's language selects which
+# one the near-rejection edit-distance gate matches against.
+_REJECTION_WORDS_BY_LANG = {
+    lang: _words(ans) for lang, ans in REJECTION_ANSWERS.items()
+}
 
 # Anchor tokens that a near-rejection first sentence must contain: a negation
 # and an "information" noun. Unioned across EN and DE so one code path serves
@@ -239,8 +252,9 @@ _NEGATION_ANCHORS = {"not", "nicht", "keine"}
 _INFORMATION_ANCHORS = {"information", "informationen"}
 
 
-def _is_near_rejection(stripped, max_word_diff=2):
-    """True if the answer *opens* with (a near-paraphrase of) REJECTION_ANSWER.
+def _is_near_rejection(stripped, lang, max_word_diff=2):
+    """True if the answer *opens* with (a near-paraphrase of) the query
+    language's REJECTION_ANSWER.
 
     Conservative by design — matches only when the first sentence is within
     ``max_word_diff`` word-level edits of REJECTION_ANSWER, so it catches:
@@ -258,10 +272,11 @@ def _is_near_rejection(stripped, max_word_diff=2):
     word_set = set(words)
     if not (word_set & _NEGATION_ANCHORS) or not (word_set & _INFORMATION_ANCHORS):
         return False
-    return _word_levenshtein(words, _REJECTION_WORDS) <= max_word_diff
+    reference = _REJECTION_WORDS_BY_LANG[_resolve_lang(lang)]
+    return _word_levenshtein(words, reference) <= max_word_diff
 
 
-def _finalize_answer(answer, *, is_rag):
+def _finalize_answer(answer, *, is_rag, lang):
     """Map a raw completion onto either a clean answer or the canonical
     rejection. Returns (final_answer, rejection_reason | None).
 
@@ -280,13 +295,14 @@ def _finalize_answer(answer, *, is_rag):
 
     no_rag has no context to be "insufficient", so it never abstains here.
     """
+    rejection = REJECTION_ANSWERS[_resolve_lang(lang)]
     stripped = _strip_thinking(answer).strip()
     if not is_rag:
         return stripped, None
     if not stripped:
-        return REJECTION_ANSWER, "empty"
-    if _is_near_rejection(stripped):
-        return REJECTION_ANSWER, "model_rejected"
+        return rejection, "empty"
+    if _is_near_rejection(stripped, lang):
+        return rejection, "model_rejected"
     return stripped, None
 
 
@@ -366,10 +382,12 @@ def _merge_and_rerank(
     return contexts, scores, ids
 
 
-def build_user_prompt(query, contexts):
+def build_user_prompt(query, contexts, lang=None):
+    bundle = _BUNDLES[_resolve_lang(lang)]
+    q_label, c_label = bundle["question_label"], bundle["context_label"]
     if not contexts:
-        return f"{_QUESTION_LABEL}: {query}"
-    lines = [f"{_QUESTION_LABEL}: {query}", "", f"{_CONTEXT_LABEL}:"]
+        return f"{q_label}: {query}"
+    lines = [f"{q_label}: {query}", "", f"{c_label}:"]
     for i, c in enumerate(contexts, start=1):
         lines.append(f"{i}. {c}")
     return "\n".join(lines)
@@ -449,12 +467,12 @@ async def _generate(
     return answer, gen_logprobs, prompt_tokens, gen_tokens, finish_reason
 
 
-async def _generate_hyde(session, sem, query):
+async def _generate_hyde(session, sem, query, lang):
     """Draft a short hypothetical answer used to seed a second retrieval pass."""
     payload = {
         "model": LLAMACPP_RAG_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT_HYDE},
+            {"role": "system", "content": _BUNDLES[_resolve_lang(lang)]["hyde"]},
             {"role": "user", "content": query},
         ],
         "temperature": LLAMACPP_RAG_TEMPERATURE,
@@ -488,6 +506,10 @@ async def process_single_query(
     retrieval_scores = []
     retrieved_ids = []
     sc_metadata = None  # only populated for variant == "rag_sc"
+    # Language of this query (synthetic goldens carry 'en'/'de'; all other
+    # datasets are English). Selects the system prompt, user-prompt labels, and
+    # abstention string so each query is answered in its own language.
+    lang = _resolve_lang((metadata or {}).get("lang"))
 
     if variant in _RAG_VARIANTS:
         retriever = _get_retriever()
@@ -501,6 +523,7 @@ async def process_single_query(
                 **(metadata or {}),
                 "query": query,
                 "variant": variant,
+                "lang": lang,
                 "answer": f"[RETRIEVAL ERROR] {exc}",
                 "contexts": [],
                 "retrieval_scores": [],
@@ -517,7 +540,7 @@ async def process_single_query(
             "generation_retried_count": 0,
         }
         if sc_metadata["retrieval_correction_triggers"]:
-            hyde_text = await _generate_hyde(session, sem, query)
+            hyde_text = await _generate_hyde(session, sem, query, lang)
             if hyde_text.strip():
                 try:
                     hyde_ctx, hyde_retrieval_scores, hyde_ids = await loop.run_in_executor(
@@ -535,10 +558,11 @@ async def process_single_query(
                 except Exception as exc:
                     sc_metadata["retrieval_error"] = str(exc)
 
-    system_prompt = SYSTEM_PROMPT_RAG if variant in _RAG_VARIANTS else SYSTEM_PROMPT_NO_RAG
+    bundle = _BUNDLES[lang]
+    system_prompt = bundle["rag"] if variant in _RAG_VARIANTS else bundle["no_rag"]
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": build_user_prompt(query, contexts)},
+        {"role": "user", "content": build_user_prompt(query, contexts, lang)},
     ]
 
     async with sem:
@@ -556,8 +580,8 @@ async def process_single_query(
                 sc_metadata["original_answer"] = answer
                 sc_metadata["original_gen_logprob_stats"] = _logprob_stats(gen_logprobs)
                 strict_messages = [
-                    {"role": "system", "content": SYSTEM_PROMPT_RAG_STRICT},
-                    {"role": "user", "content": build_user_prompt(query, contexts)},
+                    {"role": "system", "content": bundle["rag_strict"]},
+                    {"role": "user", "content": build_user_prompt(query, contexts, lang)},
                 ]
                 # Thinking is re-enabled on the regen so the model can actually
                 # reason over the context, with a larger budget so a genuine
@@ -584,7 +608,7 @@ async def process_single_query(
         # and the model's own abstention both collapse onto the exact
         # REJECTION_ANSWER so rejection is a single countable outcome downstream.
         answer, rejection_reason = _finalize_answer(
-            answer, is_rag=variant in _RAG_VARIANTS
+            answer, is_rag=variant in _RAG_VARIANTS, lang=lang
         )
         if sc_metadata is not None:
             # finish_reason of whatever produced the final answer (regen if it
@@ -626,8 +650,9 @@ async def process_single_query(
         **(metadata or {}),
         "query": query,
         "variant": variant,
+        "lang": lang,
         "answer": answer,
-        "rejected": answer == REJECTION_ANSWER,
+        "rejected": answer == REJECTION_ANSWERS[lang],
         "contexts": contexts,
         "retrieval_scores": retrieval_scores,
         "retrieved_context_ids": retrieved_ids,

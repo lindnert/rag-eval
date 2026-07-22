@@ -37,12 +37,17 @@ def to_metadata(sample: dict) -> dict:
     own contexts, but keeping the gold ones lets later analyses compute
     context recall.
     """
+    dataset_metadata = sample.get("dataset_metadata") or {}
     return {
         "source_dataset": sample.get("source_dataset", "synthetic_guidelines"),
         "id": sample.get("id"),
         "reference_answer": sample.get("reference_answer"),
+        # Per-query language ('en'|'de') so the pipeline answers each golden in
+        # its own language (see rag.utils.process_single_query); the other
+        # datasets are English and tagged 'en' at load time.
+        "lang": dataset_metadata.get("question_lang", "en"),
         "dataset_metadata": {
-            **(sample.get("dataset_metadata") or {}),
+            **dataset_metadata,
             "reference_contexts": sample.get("contexts"),
         },
     }
@@ -52,10 +57,11 @@ def load_synthetic(path=None, lang=None, limit=None, shuffle=True, seed=42):
     """Load the validated synthetic guideline goldens (a flat JSON list).
 
     `path` defaults to the most recent run's dataset (see `_default_dataset`).
-    `lang` ('en'|'de') filters to goldens whose question language matches — pass
-    RAG_LANG so a per-language pipeline run answers each query with a
-    same-language system prompt (the German goldens ride the RAG_LANG=de run,
-    the English ones the RAG_LANG=en run), with no per-query prompt switching.
+    `lang` ('en'|'de') optionally filters to goldens whose question language
+    matches. Leave it None (the default) so a single run loads both languages;
+    the pipeline then answers each golden with a same-language prompt selected
+    per query from its `question_lang` (see rag.utils / dataset.synthetic loader
+    `to_metadata`).
     """
     path = Path(path) if path is not None else _default_dataset()
     with open(path, encoding="utf-8") as f:

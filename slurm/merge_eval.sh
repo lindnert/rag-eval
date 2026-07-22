@@ -10,12 +10,11 @@
 #SBATCH --error=/home/l/lindnerti/rag-eval/logs/eval.merge.%j.err
 set -euo pipefail
 WORKDIR="${SLURM_SUBMIT_DIR:-$PWD}"
-# Inherit the language-specific RESULTS_DIR / RAG_LANG from the eval job
-# (propagated via --export=ALL) so the merge writes into the same tree the
-# shards were written to; fall back to the English default for a manual run.
-export RAG_LANG="${RAG_LANG:-en}"
-export RESULTS_DIR="${RESULTS_DIR:-${WORKDIR}/results/${RAG_LANG}}"
-echo "Merging RAG_LANG=${RAG_LANG} from RESULTS_DIR=${RESULTS_DIR}"
+# Inherit RESULTS_DIR from the eval job (propagated via --export=ALL) so the
+# merge writes into the same tree the shards were written to; fall back to the
+# flat results/ tree for a manual run.
+export RESULTS_DIR="${RESULTS_DIR:-${WORKDIR}/results}"
+echo "Merging eval shards from RESULTS_DIR=${RESULTS_DIR}"
 source "${WORKDIR}/.venv/bin/activate"
 
 ARRAY_ID="${MERGE_JOB_ID:?MERGE_JOB_ID not set}"
