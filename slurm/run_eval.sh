@@ -117,8 +117,8 @@ mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
 # llama-server gen/emb instances, and HHEM (184M params) is fast enough on CPU.
 export HHEM_DEVICE="${HHEM_DEVICE:-cpu}"
 
-GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-E2B-it-GGUF}"
-GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-E2B-it-UD-Q4_K_XL.gguf}"
+GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-E4B-it-GGUF}"
+GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-E4B-it-UD-Q4_K_XL.gguf}"
 EMB_REPO="${LLAMACPP_EMB_REPO:-Qwen/Qwen3-Embedding-0.6B-GGUF}"
 EMB_FILE="${LLAMACPP_EMB_FILE:-Qwen3-Embedding-0.6B-Q8_0.gguf}"
 
@@ -164,8 +164,17 @@ export LLAMACPP_EMB_PORT=8081
 export LLAMACPP_GEN_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v1"
 export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1"
 
-CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-32768}"
-GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-6}"
+# llama.cpp divides the total --ctx-size across the --parallel slots, so the
+# *per-request* budget is CONTEXT_LENGTH/GEN_PARALLEL (padded up to a multiple of
+# 256). At 32768/6 that is only 5632 tokens/slot — and RAGAS's AnswerCorrectness
+# metric can exceed it: when the small gemma judge emits malformed JSON, RAGAS's
+# recursive output-format-repair loop re-embeds the broken output each retry and
+# inflates the prompt past 6k tokens, tripping an "exceeds context size" 400.
+# Parallel=4 gives 32768/4 = 8192 tokens/slot with headroom; it is VRAM-neutral
+# (total KV cache is sized by CONTEXT_LENGTH, not the slot count) so it does not
+# worsen the nodes that already fail to load at higher memory pressure.
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-16384}"
+GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-2}"
 EMB_CONTEXT_LENGTH="${LLAMACPP_EMB_CONTEXT_LENGTH:-2048}"
 echo "GEN_PARALLEL=${GEN_PARALLEL}, GEN_CTX=${CONTEXT_LENGTH}, EMB_CTX=${EMB_CONTEXT_LENGTH}"
 
