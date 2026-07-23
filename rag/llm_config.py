@@ -70,7 +70,7 @@ RAG_SC_RETRIEVAL_SPREAD_THRESHOLD = float(
 
 # Trigger U: mean token logprob below this → low overall confidence.
 RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD = float(
-    os.getenv("RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD", "-0.35")
+    os.getenv("RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD", "-0.30")
 )
 
 # Trigger V: some token's logprob below this → at least one very uncertain step.
