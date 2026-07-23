@@ -227,6 +227,7 @@ dataset/synthetic/generated*/*
 results/
 analysis/*.csv
 analysis/*.png
+analysis/*.txt
 
 # Models & HF
 .ollama_models/
