@@ -173,8 +173,8 @@ export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v
 # Parallel=4 gives 32768/4 = 8192 tokens/slot with headroom; it is VRAM-neutral
 # (total KV cache is sized by CONTEXT_LENGTH, not the slot count) so it does not
 # worsen the nodes that already fail to load at higher memory pressure.
-CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-16384}"
-GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-2}"
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-24576}"
+GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-3}"
 EMB_CONTEXT_LENGTH="${LLAMACPP_EMB_CONTEXT_LENGTH:-2048}"
 echo "GEN_PARALLEL=${GEN_PARALLEL}, GEN_CTX=${CONTEXT_LENGTH}, EMB_CTX=${EMB_CONTEXT_LENGTH}"
 

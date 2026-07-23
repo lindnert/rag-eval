@@ -173,11 +173,11 @@ export LLAMACPP_EMB_MODEL="${LLAMACPP_EMB_MODEL:-lm-kit/bge-m3-gguf:Q4_K_M}"
 # llama.cpp divides --ctx-size evenly across the --parallel slots, so the
 # per-request window is CONTEXT_LENGTH / GEN_PARALLEL. With a ~2250-token RAG
 # prompt and a 3072-token completion budget (thinking + answer, see
-# RAG_SC_REGEN_MAX_TOKENS), each slot needs ~5322 tokens. 21600/4 = 5400/slot
+# RAG_SC_REGEN_MAX_TOKENS)and 572 HyDE, each slot needs ~5734 tokens. 23000/4 = 5750/slot
 # clears that. Concurrency is dropped 6→4 to buy the bigger per-slot window
 # without growing total KV-cache VRAM (KV scales with CONTEXT_LENGTH, shared
 # across slots — fewer slots means each gets a larger share at the same cost).
-CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-21600}"
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-23000}"
 GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-4}"
 # Keep the client's in-flight request cap in lockstep with the server's slot
 # count so we don't queue requests server-side (LLM_CONCURRENCY drives
