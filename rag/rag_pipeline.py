@@ -65,32 +65,32 @@ if __name__ == "__main__":
     #]
 
     # NGQA strata
-    s1 = load_ngqa(difficulty="easy", has_conflict=False, limit=1)
-    s2 = load_ngqa(difficulty="easy", has_conflict=True, limit=1)
-    s3 = load_ngqa(difficulty="medium", has_conflict=False, limit=1)
-    s4 = load_ngqa(difficulty="medium", has_conflict=True, limit=1)
-    s5 = load_ngqa(difficulty="hard", is_healthy_agrees_with_csv_answer=True, limit=1)
-    s6 = load_ngqa(difficulty="hard", is_healthy_agrees_with_csv_answer=False, limit=1)
+    s1 = load_ngqa(difficulty="easy", has_conflict=False, limit=2)
+    s2 = load_ngqa(difficulty="easy", has_conflict=True, limit=2)
+    s3 = load_ngqa(difficulty="medium", has_conflict=False, limit=3)
+    s4 = load_ngqa(difficulty="medium", has_conflict=True, limit=3)
+    s5 = load_ngqa(difficulty="hard", is_healthy_agrees_with_csv_answer=True, limit=3)
+    s6 = load_ngqa(difficulty="hard", is_healthy_agrees_with_csv_answer=False, limit=3)
     ngqa_samples = s1 + s2 + s3 + s4 + s5 + s6
 
     # LLMDRS — all 50 English patient profiles. Gold is GPT-4 output, used to
     # probe whether the eval framework flags guideline-deviation.
-    llmdrs_samples = load_llmdrs(limit=2)
+    llmdrs_samples = load_llmdrs(limit=6)
 
     # MMLU-nutrition — 344 MCQs across dev+validation+test, run open-ended
     # (choices are hidden from the model). Probes factual recall vs retrieval.
-    mmlu_samples = load_mmlu(limit=1)
+    mmlu_samples = load_mmlu(limit=5)
 
     # MEDQA — USMLE-style medical Qs used as an out-of-domain rejection probe;
     # the nutrition corpus shouldn't retrieve anything relevant, so a good RAG
     # should abstain rather than hallucinate.
-    medqa_samples = load_medqa(limit=1)
+    medqa_samples = load_medqa(limit=5)
 
     # Synthetic goldens carry their own language (English + German). Load both
     # (lang=None) in this single run; each golden's `to_metadata` tags it with
     # its `question_lang`, and the pipeline selects a same-language prompt per
     # query (see rag.utils.process_single_query).
-    synth_samples = load_synthetic(limit=15)
+    synth_samples = load_synthetic(limit=12)
 
     # NGQA/LLMDRS/MMLU/MEDQA are all-English datasets — tag them lang="en" so the
     # per-query prompt selection answers them in English.
