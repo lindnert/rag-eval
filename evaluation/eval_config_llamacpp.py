@@ -1,8 +1,11 @@
 import os
 
 LLAMACPP_EVAL_MODEL = os.getenv(
+    # run_eval.sh derives and exports this from the loaded GGUF; this default
+    # only applies to standalone runs outside the SLURM harness. Keep it in sync
+    # with the judge GEN_FILE in slurm/run_eval.sh.
     "LLAMACPP_EVAL_MODEL",
-    "unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL",
+    "unsloth/gemma-4-E4B-it-GGUF:UD-Q4_K_XL",
 )
 LLAMACPP_EVAL_EMBEDDINGS_MODEL = os.getenv(
     "LLAMACPP_EVAL_EMBEDDINGS_MODEL",
