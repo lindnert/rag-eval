@@ -35,7 +35,7 @@ LLAMACPP_RAG_MAX_TOKENS = int(os.getenv("LLAMACPP_RAG_MAX_TOKENS", "2048"))
 # (e.g. token-level entropy) cheap to add without re-running generation.
 LLAMACPP_RAG_TOP_LOGPROBS = int(os.getenv("LLAMACPP_RAG_TOP_LOGPROBS", "5"))
 
-LLAMACPP_RAG_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "6"))
+LLAMACPP_RAG_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "4"))
 
 RAG_K = int(os.getenv("RAG_K", "3"))
 
@@ -80,6 +80,20 @@ RAG_SC_GEN_MIN_LOGPROB_THRESHOLD = float(
 
 # HyDE draft is only used to embed-and-retrieve; doesn't need to be long.
 RAG_SC_HYDE_MAX_TOKENS = int(os.getenv("RAG_SC_HYDE_MAX_TOKENS", "512"))
+
+# Repetition penalty applied *only* to the thinking-enabled rag_sc regen. On the
+# Q4 model the regen can loop on self-doubt ("Wait, let me check again…") and
+# burn the whole budget without emitting an answer (see _generate call in
+# utils.py). A mild penalty (>1.0) discourages that degenerate repetition. The
+# baseline/HyDE calls deliberately do NOT use this so their logprobs stay
+# comparable to prior runs; 1.0 is a no-op if you want to disable it.
+RAG_SC_REGEN_REPEAT_PENALTY = float(os.getenv("RAG_SC_REGEN_REPEAT_PENALTY", "1.1"))
+
+# Sliding window (in tokens) the repeat penalty looks back over. The eval judge
+# uses 16, but the regen's self-doubt loops span whole sentences ("Wait, I
+# should check whether…"), so a wider window is needed to catch a phrase that
+# recurs many tokens later rather than immediately. 0 disables the window.
+RAG_SC_REGEN_REPEAT_LAST_N = int(os.getenv("RAG_SC_REGEN_REPEAT_LAST_N", "64"))
 
 # Combined thinking+answer budget for the thinking-enabled rag_sc regen. Larger
 # than the baseline (LLAMACPP_RAG_MAX_TOKENS) so a *genuine* reasoning trace

@@ -23,6 +23,8 @@ from rag.llm_config import (
     RAG_SC_GEN_MIN_LOGPROB_THRESHOLD,
     RAG_SC_HYDE_MAX_TOKENS,
     RAG_SC_REGEN_MAX_TOKENS,
+    RAG_SC_REGEN_REPEAT_LAST_N,
+    RAG_SC_REGEN_REPEAT_PENALTY,
     RAG_SC_RETRIEVAL_BEST_THRESHOLD,
     RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
     RAG_SC_SCORE_DIRECTION,
@@ -406,7 +408,11 @@ def _retrieve(retriever, query, k=RAG_K):
 
 
 async def _generate(
-    session, messages, enable_thinking=LLAMACPP_RAG_ENABLE_THINKING, max_tokens=None
+    session,
+    messages,
+    enable_thinking=LLAMACPP_RAG_ENABLE_THINKING,
+    max_tokens=None,
+    repeat_penalty=None,
 ):
     payload = {
         "model": LLAMACPP_RAG_MODEL,
@@ -419,6 +425,12 @@ async def _generate(
         "stream": False,
         "chat_template_kwargs": {"enable_thinking": enable_thinking},
     }
+    # Repetition penalty is opt-in per call: baseline/HyDE pass None so their
+    # payloads (and thus logprobs) stay identical to prior runs; only the rag_sc
+    # regen supplies a value to break the self-doubt loop.
+    if repeat_penalty is not None:
+        payload["repeat_penalty"] = repeat_penalty
+        payload["repeat_last_n"] = RAG_SC_REGEN_REPEAT_LAST_N
     answer = ""
     gen_logprobs = []
     prompt_tokens = 0
@@ -594,6 +606,7 @@ async def process_single_query(
                     strict_messages,
                     enable_thinking=True,
                     max_tokens=RAG_SC_REGEN_MAX_TOKENS,
+                    repeat_penalty=RAG_SC_REGEN_REPEAT_PENALTY,
                 )
                 # Surface the regen's reasoning trace so the thinking-looped
                 # (empty-answer) case is inspectable without re-running.
