@@ -132,6 +132,21 @@ _hhem_lock = threading.Lock()  # guards lazy init across run_ragas worker thread
 
 _RETRY_PROMPT_MARKER = "The output string did not satisfy"
 
+# Grammar-level JSON enforcement gate. This marker is auto-appended by ragas to
+# *every* PydanticPrompt (pydantic_prompt.py _generate_output_signature) and to
+# its FixOutputFormat reprompt, but is ABSENT from the nv_metrics rating prompts
+# (AnswerAccuracy), which end in "The rating is:" and are parsed by scanning the
+# reply for a bare digit 0-4. We enable llama-server's json_object response
+# format ONLY when this marker is present, so the structured metrics
+# (Faithfulness, AnswerRelevancy, AnswerCorrectness) and their format-fix
+# retries are grammar-locked to valid JSON, while a global json_object -- which
+# would wrap nv_accuracy's rating in an object whose key digits corrupt its
+# process_score scan -- is avoided. Note this is enforcement, not instruction:
+# JSON_SYSTEM_PROMPT already *asks* for JSON on every call (soft, ignorable);
+# response_format makes the server unable to emit syntactically invalid JSON.
+_JSON_PROMPT_MARKER = "Please return the output in a JSON format that complies with"
+_JSON_RESPONSE_FORMAT = {"type": "json_object"}
+
 def _get_hhem_metric() -> FaithfulnesswithHHEMPerChunk:
     global _hhem_metric
     if _hhem_metric is None:
@@ -305,13 +320,19 @@ class RagasJSONWrapper:
             _print_gpu_diagnostics()
 
     async def agenerate(self, prompt, **kwargs):
+        prompt_text = _prompt_to_text(prompt)
         messages = [
             SystemMessage(content=JSON_SYSTEM_PROMPT),
-            HumanMessage(content=_prompt_to_text(prompt)),
+            HumanMessage(content=prompt_text),
         ]
+        # Grammar-lock structured-metric calls (and their fix-format retries) to
+        # valid JSON; leave nv_accuracy's free-text rating prompt untouched.
+        llm = self.llm
+        if _JSON_PROMPT_MARKER in prompt_text:
+            llm = llm.bind(response_format=_JSON_RESPONSE_FORMAT)
         ctx = self._log_prompt(prompt)
         try:
-            result = await self.llm.ainvoke(messages)
+            result = await llm.ainvoke(messages)
             response = (result.content if result is not None else None) or "{}"
             response = _strip_code_fences(response)
         except Exception as e:
