@@ -3,6 +3,7 @@ import time
 import requests
 from datetime import datetime
 from common.json_io import dump as dump_json
+from common.results_io import RAG_PREFIX, latest_results
 from common.schema import finalize
 from evaluation.ragas_eval import run_ragas_batch
 from evaluation.deepeval_eval import run_deepeval_batch
@@ -132,10 +133,13 @@ if __name__ == "__main__":
     results_dir = os.environ.get("RESULTS_DIR", "results")
     os.makedirs(results_dir, exist_ok=True)
 
-    rag_input = os.environ.get(
-        "RAG_RESULTS_FILE",
-        os.path.join(results_dir, "rag_results_latest.json"),
+    # Normally set by the login-node submitter (slurm/run_eval.sh), which resolves
+    # the newest RAG run ONCE so every shard and the merge job agree on it. The
+    # fallback covers a plain `sbatch`/local run: same rule, resolved here.
+    rag_input = os.environ.get("RAG_RESULTS_FILE") or latest_results(
+        RAG_PREFIX, results_dir
     )
+    print(f"Reading RAG results from: {rag_input}", flush=True)
     results = load_rag_results(rag_input)
 
     shard_idx   = int(os.environ.get("EVAL_SHARD_INDEX", "0"))
