@@ -541,6 +541,10 @@ async def process_single_query(
                 "retrieval_scores": [],
                 "retrieved_context_ids": [],
                 "gen_logprob_stats": None,
+                # Generation never ran on this path; emitted anyway so every row
+                # carries the same keys.
+                "finish_reason": None,
+                "rejection_reason": None,
             }
 
     # --- SC retrieval pass (budget=1) ----------------------------------------
@@ -666,6 +670,16 @@ async def process_single_query(
         "lang": lang,
         "answer": answer,
         "rejected": answer == REJECTION_ANSWERS[lang],
+        # How the FINAL generation stopped ("stop" | "length"), and why the answer
+        # collapsed onto the canonical rejection ("empty" | "model_rejected" | None).
+        # For rag_sc these describe the regen when one ran, else the first pass.
+        # Recorded for EVERY variant (sc_metadata keeps its own copy for rag_sc, so
+        # existing result files stay readable): "length" + "empty" is the runaway
+        # thinking loop, "length" with an answer is a truncated one. finish_reason is
+        # None only when generation never completed — those rows carry a
+        # "[LLAMACPP ...]" answer.
+        "finish_reason": finish_reason,
+        "rejection_reason": rejection_reason,
         "contexts": contexts,
         "retrieval_scores": retrieval_scores,
         "retrieved_context_ids": retrieved_ids,
