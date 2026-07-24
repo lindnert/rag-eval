@@ -2,6 +2,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 from datetime import datetime
 
@@ -19,6 +20,21 @@ CONFIGS = {
         "output_prefix": "rag_results",
     },
 }
+
+
+def _stamp(path):
+    """How a source results file is identified inside a derived filename.
+
+    Normally its YYYYMMDD_HHMMSS run stamp. A file named by hand (pointed at via
+    RAG_RESULTS_FILE) may not carry one, so fall back to its stem minus the
+    ``rag_results_`` prefix — sanitised, since it becomes part of a filename."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    m = re.search(r"_(\d{8}_\d{6})", stem)
+    if m:
+        return m.group(1)
+    label = re.sub(r"^rag_results_?", "", stem)
+    label = re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-")
+    return label or None
 
 
 def _sort_key(kind):
@@ -56,11 +72,23 @@ def merge(kind, results_dir=None):
             merged.extend(json.load(f))
     merged.sort(key=_sort_key(kind))
 
+    # One timestamped file per run, no *_latest.json copy — see common/results_io.
+    # An eval run additionally records WHICH rag_results file it consumed by
+    # appending that file's stamp: evaluated_results_<evalts>_from_<ragts>.json.
+    # RAG_RESULTS_FILE is resolved once by the login-node submitter in
+    # slurm/run_eval.sh and exported down through the shards to this merge job.
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = os.path.join(results_dir, f"{cfg['output_prefix']}_{ts}.json")
-    latest = os.path.join(results_dir, f"{cfg['output_prefix']}_latest.json")
-    for path in (out, latest):
-        dump_json(merged, path)
+    name = f"{cfg['output_prefix']}_{ts}"
+    if kind == "eval":
+        src = os.environ.get("RAG_RESULTS_FILE")
+        src_stamp = _stamp(src) if src else None
+        if src_stamp:
+            name += f"_from_{src_stamp}"
+        else:
+            print("WARNING: RAG_RESULTS_FILE unset — output records no source file. "
+                  "Submit via ./slurm/run_eval.sh (or export it) to keep provenance.")
+    out = os.path.join(results_dir, f"{name}.json")
+    dump_json(merged, out)
 
     print(f"Merged {len(shards)} shards → {len(merged)} samples → {out}")
 
