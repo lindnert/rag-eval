@@ -58,7 +58,7 @@ from evaluation.eval_config_llamacpp import (
     JSON_SYSTEM_PROMPT,
 )
 
-RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "900"))
+RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "300"))
 
 print(f"[ragas_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 
@@ -347,7 +347,15 @@ class RagasJSONWrapper:
 
 
 def run_ragas(sample):
-    raise_exceptions = EVAL_DEBUG_LLM
+    # Per-metric isolation. With raise_exceptions=True a single metric's failure
+    # aborts the whole evaluate() and discards the OTHER metrics this sample
+    # already scored — e.g. AnswerCorrectness running away to the token cap
+    # (LengthFinishReasonError) or blowing the RAGAS_TIMEOUT watchdog would also
+    # wipe a valid faithfulness/relevancy/accuracy. raise_exceptions=False lets
+    # ragas record NaN for just the failed metric (surfaced as None by the
+    # NaN-guards below) while the rest survive. EVAL_DEBUG_LLM still controls the
+    # verbose prompt/response logging; it no longer makes failures fatal.
+    raise_exceptions = False
     has_contexts = bool(sample.get("contexts"))
     # Abstentions: relevancy of the canonical REJECTION_ANSWER to the question
     # is meaningless, so we skip it and report REJECTED_SENTINEL. Faithfulness /
@@ -418,7 +426,7 @@ def run_ragas(sample):
                 metrics=metrics,
                 return_executor=False,
                 raise_exceptions=raise_exceptions,
-                run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=3, max_wait=60),
+                run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=2, max_wait=60),
             ),
         )
 
