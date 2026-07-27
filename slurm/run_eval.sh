@@ -5,7 +5,7 @@
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
 #SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%A_%a.%N.out
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=0
