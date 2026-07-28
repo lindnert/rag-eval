@@ -1,6 +1,8 @@
 import asyncio
 import contextvars
+import logging
 import os
+import re
 import sys
 import threading
 import types
@@ -63,8 +65,29 @@ RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "300"))
 print(f"[ragas_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 
 EVAL_DEBUG_LLM = os.getenv("EVAL_DEBUG_LLM", "1") == "1"
-RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "6"))  # match gen server slot count
-print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}", flush=True)
+# Concurrency is NESTED, and the product is what lands on the llama-server slots:
+#   RAGAS_CONCURRENCY samples in flight  x  RAGAS_MAX_WORKERS metric jobs each,
+# where a "job" is one metric on one row (this dataset is always 1 row, so a job
+# == a metric). The server exposes GEN_PARALLEL slots (3 by default, see
+# slurm/run_eval.sh), so the product should not exceed it.
+#
+# It badly did: 6 samples x ragas' DEFAULT max_workers=16 put ~30 metric jobs on
+# 3 slots. RunConfig.timeout is a per-job WALL-CLOCK budget (ragas wraps each
+# metric's _ascore in asyncio.wait_for), so that queue wait — not the model — is
+# what blew the deadline, and it killed metrics in order of how many sequential
+# LLM calls they need: answer_correctness (3 calls) failed 98% of the time,
+# faithfulness (2) 81%, while single-call answer_relevancy and the local-NLI
+# faithfulness_with_hhem survived ~96%. Every progress bar read exactly
+# [05:00<00:00] because all jobs start together and time out together.
+#
+# NOTE this bounds concurrent JOBS, not concurrent CALLS: a single metric may
+# still fan out internally (AnswerRelevancy(strictness=3) gathers its 3 question
+# generations in agenerate_prompt), so 3 jobs can mean up to ~9 in-flight calls.
+RAGAS_CONCURRENCY = int(os.getenv("RAGAS_CONCURRENCY", "3"))  # = gen server slot count
+RAGAS_MAX_WORKERS = int(os.getenv("RAGAS_MAX_WORKERS", "1"))  # metrics run serially per sample
+print(f"RAGAS_CONCURRENCY is set to {RAGAS_CONCURRENCY}, "
+      f"RAGAS_MAX_WORKERS to {RAGAS_MAX_WORKERS} "
+      f"({RAGAS_CONCURRENCY * RAGAS_MAX_WORKERS} concurrent metric jobs)", flush=True)
 _current_sample_idx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "_current_sample_idx", default=None
 )
@@ -75,6 +98,85 @@ _diag_state = {"printed": False, "concurrent_printed": False}
 
 HHEM_DEVICE = os.getenv("HHEM_DEVICE", "cpu") # fallback
 HHEM_BATCH_SIZE = int(os.getenv("HHEM_BATCH_SIZE", "16"))
+
+
+# --- Per-metric failure capture ----------------------------------------------
+# The trade-off ragas gives you is a bad one out of the box:
+#
+#   raise_exceptions=True  -> the exception propagates out of evaluate(), so ONE
+#       metric's failure discards every other metric already scored for that
+#       sample. A domino, and the reason we stopped using it.
+#   raise_exceptions=False -> ragas records NaN for just the failed metric and
+#       lets the rest finish (what we want), but the reason only ever appears as
+#       a log line: `Exception raised in Job[i]: Type(msg)` on the
+#       `ragas.executor` logger. Nothing reaches the result file, which is how
+#       one run silently lost 2388 metric cells with no ragas_error to show.
+#
+# This handler takes the third option: keep raise_exceptions=False and tee those
+# log records into a per-thread buffer, so run_ragas can attach the reason to the
+# specific metric that failed. Job index maps to the metrics list positionally —
+# ragas submits one job per metric per row (`for metric in metrics`) and this
+# dataset is always a single row, so Job[i] is metrics[i].
+_JOB_ERROR_RE = re.compile(r"Exception raised in Job\[(\d+)\]:\s*(\w+)\((.*)\)\s*$", re.S)
+_job_error_local = threading.local()
+
+
+def _job_error_buf() -> dict[int, str]:
+    """Captured {job_index: "ExcType: message"} for the CURRENT thread.
+
+    Thread-local because samples are evaluated concurrently (arun_ragas hands
+    run_ragas to asyncio.to_thread), and ragas logs the failure from the same
+    thread that runs evaluate() — so each sample sees only its own errors.
+    """
+    buf = getattr(_job_error_local, "buf", None)
+    if buf is None:
+        buf = _job_error_local.buf = {}
+    return buf
+
+
+class _JobErrorCapture(logging.Handler):
+    """Tees ragas' swallowed per-job exceptions into the thread-local buffer."""
+
+    def emit(self, record):
+        try:
+            m = _JOB_ERROR_RE.search(record.getMessage())
+        except Exception:  # never let logging break the eval
+            return
+        if m:
+            idx, exc_name, exc_msg = int(m.group(1)), m.group(2), m.group(3).strip()
+            _job_error_buf()[idx] = f"{exc_name}: {exc_msg}" if exc_msg else exc_name
+
+
+_ragas_executor_logger = logging.getLogger("ragas.executor")
+_ragas_executor_logger.addHandler(_JobErrorCapture())
+# ERROR passes the default WARNING threshold, but be explicit: if anything lowers
+# the root level later, the capture must not go quiet.
+if _ragas_executor_logger.level > logging.ERROR:
+    _ragas_executor_logger.setLevel(logging.ERROR)
+
+# ragas metric.name -> the key we publish it under, so a captured failure is
+# labelled with the same name the result file and the analysis use.
+_METRIC_NAME_TO_KEY = {
+    "faithfulness": "ragas_faithfulness",
+    "faithfulness_with_hhem": "ragas_faithfulness_with_hhem",
+    "answer_relevancy": "ragas_answer_relevancy",
+    "nv_accuracy": "ragas_answer_accuracy",
+    "answer_correctness": "ragas_answer_correctness",
+}
+
+
+def _collect_metric_errors(metrics) -> dict[str, str]:
+    """Map this thread's captured job errors onto metric keys, then clear them."""
+    buf = _job_error_buf()
+    out = {}
+    for idx, msg in buf.items():
+        if 0 <= idx < len(metrics):
+            name = getattr(metrics[idx], "name", f"job_{idx}")
+            out[_METRIC_NAME_TO_KEY.get(name, name)] = msg
+        else:  # index outside this sample's metric list — keep it rather than drop
+            out[f"job_{idx}"] = msg
+    buf.clear()
+    return out
 
 
 class FaithfulnesswithHHEMPerChunk(FaithfulnesswithHHEM):
@@ -415,7 +517,12 @@ def run_ragas(sample):
                 "ragas_answer_accuracy": None,
                 "ragas_answer_correctness": None,
                 **id_ctx_scores,
+                "ragas_metric_errors": None,
             }
+
+        # Drop anything a previous sample left on this thread, so the errors we
+        # collect after evaluate() belong to THIS sample's jobs only.
+        _job_error_buf().clear()
 
         result = cast(
             EvaluationResult,
@@ -426,9 +533,25 @@ def run_ragas(sample):
                 metrics=metrics,
                 return_executor=False,
                 raise_exceptions=raise_exceptions,
-                run_config=RunConfig(timeout=RAGAS_TIMEOUT, max_retries=2, max_wait=60),
+                run_config=RunConfig(
+                    timeout=RAGAS_TIMEOUT,
+                    max_retries=2,
+                    max_wait=60,
+                    # Without this ragas defaults to 16, firing every metric of
+                    # this sample at the server at once; see RAGAS_MAX_WORKERS.
+                    max_workers=RAGAS_MAX_WORKERS,
+                ),
             ),
         )
+
+        # Why any metric below came back NaN, per metric, harvested from the log
+        # records ragas emits when raise_exceptions=False swallows a job. Empty
+        # when everything scored. A NaN with no entry here is a legitimate
+        # un-scorable row (e.g. no claims extracted), not a failure.
+        metric_errors = _collect_metric_errors(metrics)
+        if metric_errors:
+            print(f"[ragas_eval] sample={_current_sample_idx.get()} metric failures: "
+                  f"{metric_errors}", flush=True)
 
         # ragas returns NaN for rows it couldn't score (e.g. empty claims
         # list); surface those as None so the output stays valid JSON. Rejected
@@ -467,6 +590,10 @@ def run_ragas(sample):
             "ragas_answer_accuracy": acc_out,
             "ragas_answer_correctness": corr_out,
             **id_ctx_scores,
+            # {metric_key: "ExcType: msg"} for the metrics ragas gave up on, or
+            # None when the whole sample scored. Distinct from `ragas_error`
+            # below, which marks the whole-sample failure path.
+            "ragas_metric_errors": metric_errors or None,
         }
 
     except Exception as e:
@@ -485,6 +612,9 @@ def run_ragas(sample):
             "ragas_answer_accuracy": None,
             "ragas_answer_correctness": None,
             **id_ctx_scores,
+            # Whatever per-metric reasons were captured before the whole sample
+            # blew up — often the first domino, so keep them next to ragas_error.
+            "ragas_metric_errors": _collect_metric_errors(locals().get("metrics") or []) or None,
             "ragas_error": f"{type(e).__name__}: {e}",
         }
 

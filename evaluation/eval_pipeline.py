@@ -40,9 +40,14 @@ def evaluate_results(results, partial_path=None):
         faith = scores.get("ragas_faithfulness")
         relev = scores.get("ragas_answer_relevancy")
         err = scores.get("ragas_error")
+        metric_errs = scores.get("ragas_metric_errors")
         score_str = f"faith={faith} relev={relev}"
         if err:
             score_str += f" ERROR={err}"
+        # Per-metric failures no longer abort the sample, so without this the
+        # only sign of them is a None score. Name the metrics that gave up.
+        if metric_errs:
+            score_str += f" FAILED={','.join(sorted(metric_errs))}"
         print(
             f"  [ragas {n}/{len(results)}] sample={idx} | {score_str} "
             f"| {preview}... | Elapsed: {elapsed:.1f}s | ETA: {remaining:.1f}s",
