@@ -188,6 +188,8 @@ SYSTEM_PROMPT_HYDE = _default_bundle["hyde"]
 # Qwen3 emits its reasoning as <think>…</think> at the start of content when
 # enable_thinking=true; strip it so the stored answer isn't polluted.
 _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
 
 
 def _strip_thinking(text):
@@ -204,6 +206,43 @@ def _extract_thinking(text):
     if not text:
         return ""
     return "\n".join(m.strip() for m in _THINK_CAPTURE.findall(text)).strip()
+
+
+def _answer_logprobs(logprob_tokens):
+    """Logprobs of the ANSWER tokens only, dropping any <think>…</think> trace.
+
+    Mean token logprob is our confidence signal, and averaging it over a reasoning
+    trace measures the wrong thing: reasoning text is exploratory and self-
+    correcting ("Wait, let me check…"), so it is inherently higher-entropy than the
+    final declarative answer. Including it made the rag_sc regen — the only pass
+    that runs with enable_thinking=True — look *less* confident than the first pass
+    on literally every retried row, which is an artifact of what was averaged, not
+    a property of the answer.
+
+    Works on the raw token stream, so it covers both llama.cpp layouts: whether the
+    server splits the trace into `reasoning_content` or leaves it inline in
+    `content`, the model still *generates* the <think> / </think> marker tokens and
+    they appear here. A completion with no trace is returned untouched, which makes
+    this a no-op for the non-thinking passes.
+
+    Returns [] when the model reasoned but never closed the trace — the runaway
+    thinking loop that gets cut off at max_tokens and yields no answer text. There
+    is no answer there to be confident about, so `_logprob_stats` reports None
+    rather than scoring the loop itself.
+    """
+    if not logprob_tokens:
+        return []
+
+    def _lp(toks):
+        return [t["logprob"] for t in toks if t.get("logprob") is not None]
+
+    text = ""
+    for i, tok in enumerate(logprob_tokens):
+        text += tok.get("token") or ""
+        if _THINK_CLOSE in text:
+            return _lp(logprob_tokens[i + 1:])
+    # No closing marker anywhere in the stream.
+    return [] if _THINK_OPEN in text else _lp(logprob_tokens)
 
 
 # --- Conservative abstention detection -------------------------------------
@@ -327,10 +366,17 @@ def _retrieval_correction_triggers(scores):
 
 
 def _logprob_stats(logprobs):
-    """Return {'mean','min','max'} of a non-empty logprob list, or None."""
+    """Return {'n','mean','median','min','max'} of a non-empty logprob list, or None.
+
+    ``n`` is how many tokens the mean is taken over. Since _answer_logprobs drops
+    reasoning traces, this is the ANSWER length in tokens — which is what tells you
+    whether a mean is built on a one-line abstention or a full recommendation, and
+    is None exactly when a thinking loop produced no answer at all.
+    """
     if not logprobs:
         return None
     return {
+        "n": len(logprobs),
         "mean": sum(logprobs) / len(logprobs),
         "median": statistics.median(logprobs),
         "min": min(logprobs),
@@ -463,12 +509,11 @@ async def _generate(
                 content = msg.get("content") or ""
                 answer = f"<think>{reasoning}</think>{content}" if reasoning else content
                 lp = choice.get("logprobs") or {}
-                content = lp.get("content") or []
-                gen_logprobs = [
-                    tok["logprob"]
-                    for tok in content
-                    if tok.get("logprob") is not None
-                ]
+                # ANSWER tokens only — a <think>…</think> trace is dropped here so
+                # every pass's confidence is measured over the same kind of text
+                # and thinking/non-thinking passes stay comparable. No-op when the
+                # completion carries no trace. See _answer_logprobs.
+                gen_logprobs = _answer_logprobs(lp.get("content") or [])
                 usage = parsed.get("usage") or {}
                 prompt_tokens = usage.get("prompt_tokens", 0) or 0
                 gen_tokens = usage.get("completion_tokens", 0) or 0
