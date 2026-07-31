@@ -173,9 +173,17 @@ export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v
 # Parallel=4 gives 32768/4 = 8192 tokens/slot with headroom; it is VRAM-neutral
 # (total KV cache is sized by CONTEXT_LENGTH, not the slot count) so it does not
 # worsen the nodes that already fail to load at higher memory pressure.
-CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-24576}"
+CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-30000}"
 GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-3}"
-EMB_CONTEXT_LENGTH="${LLAMACPP_EMB_CONTEXT_LENGTH:-2048}"
+# 4096 (was 2048). RAGAS embeds each string separately — AnswerCorrectness's
+# semantic-similarity half embeds the generated answer and the ground truth,
+# AnswerRelevancy the question — so this has to hold the longest SINGLE input,
+# not their sum. The binding one is a full-budget rag_sc regen answer
+# (RAG_SC_REGEN_MAX_TOKENS = 3072), slightly above the longest dataset question
+# (~3000). Kept wider than run_rag.sh's embedding window (3584) because that
+# ceiling is a config knob we may raise, whereas the RAG side is bounded by the
+# corpus; eval is also the pipeline with VRAM to spare.
+EMB_CONTEXT_LENGTH="${LLAMACPP_EMB_CONTEXT_LENGTH:-4096}"
 echo "GEN_PARALLEL=${GEN_PARALLEL}, GEN_CTX=${CONTEXT_LENGTH}, EMB_CTX=${EMB_CONTEXT_LENGTH}"
 
 pkill -f "llama-server" || true
@@ -198,10 +206,14 @@ GEN_PID=$!
 
 # Embedding server: --parallel 1 keeps n_seq_max=1, so n_ctx is honored exactly
 # (the bug we hit in llama_cpp.server doesn't exist in the native binary).
+# -b/-ub track EMB_CONTEXT_LENGTH: a pooled embedding input has to fit in one
+# physical batch, and the default n_ubatch of 512 would reject anything longer
+# regardless of how large --ctx-size is.
 stdbuf -oL -eL "${LLAMACPP_SERVER}" \
   --model "${EMB_PATH}" \
   --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_EMB_PORT}" \
   --ctx-size "${EMB_CONTEXT_LENGTH}" \
+  -b "${EMB_CONTEXT_LENGTH}" -ub "${EMB_CONTEXT_LENGTH}" \
   --n-gpu-layers -1 \
   --parallel 1 \
   --embeddings \
