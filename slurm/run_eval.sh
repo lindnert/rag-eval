@@ -117,18 +117,34 @@ mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
 # llama-server gen/emb instances, and HHEM (184M params) is fast enough on CPU.
 export HHEM_DEVICE="${HHEM_DEVICE:-cpu}"
 
-GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-E4B-it-GGUF}"
-GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-E4B-it-UD-Q4_K_XL.gguf}"
-EMB_REPO="${LLAMACPP_EMB_REPO:-Qwen/Qwen3-Embedding-0.6B-GGUF}"
-EMB_FILE="${LLAMACPP_EMB_FILE:-Qwen3-Embedding-0.6B-Q8_0.gguf}"
+# Production eval: EVAL_DEBUG_LLM=0 disables the verbose per-LLM-call prompt
+# logging. It no longer affects error handling — ragas evaluate() now always runs
+# with raise_exceptions=False so a single metric that fails to parse (small judge
+# → occasional bad JSON) degrades THAT metric to None instead of nulling the whole
+# sample; ragas_eval captures the per-metric reason separately. Set =1 to debug.
+export EVAL_DEBUG_LLM="${EVAL_DEBUG_LLM:-0}"
 
-echo "Downloading GGUFs (cached in ${HF_HOME})..."
-# Use the Python API directly — the `hf` CLI leaks a click.exceptions.Exit(0)
-# on success in some typer/click version combos, which trips `set -e`.
-python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='${GEN_REPO}', filename='${GEN_FILE}', local_dir='${LLAMA_MODELS_DIR}/gen')"
-python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='${EMB_REPO}', filename='${EMB_FILE}', local_dir='${LLAMA_MODELS_DIR}/emb')"
-GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
-EMB_PATH="${LLAMA_MODELS_DIR}/emb/${EMB_FILE}"
+# RAGAS scorer budget and concurrency. These were previously left to the code
+# defaults and were invisible here, which hid the cause of a mass metric failure:
+# ragas applies RAGAS_TIMEOUT as a per-metric WALL-CLOCK deadline that includes
+# time spent queueing on the llama-server slots, so the concurrency below has to
+# stay within GEN_PARALLEL or every multi-call metric times out at once.
+#   RAGAS_CONCURRENCY x RAGAS_MAX_WORKERS  <=  GEN_PARALLEL (see below)
+export RAGAS_TIMEOUT="${RAGAS_TIMEOUT:-300}"        # seconds, per metric per sample
+export RAGAS_CONCURRENCY="${RAGAS_CONCURRENCY:-3}"  # samples evaluated in parallel
+export RAGAS_MAX_WORKERS="${RAGAS_MAX_WORKERS:-1}"  # metrics in parallel per sample
+
+# Judge model id the eval client sends in /v1/chat/completions and records for
+# provenance. DERIVED from GEN_REPO + the quant tag parsed out of GEN_FILE
+# (unsloth convention: repo ends in -GGUF, file is <stem>-<quant>.gguf) so it
+# cannot drift from the loaded weights the way the stale eval_config default did
+# (it said E2B while the server loads E4B). An explicit env override still wins;
+# the local single-model llama-server ignores the field regardless.
+#_stem="${GEN_REPO##*/}"; _stem="${_stem%-GGUF}"
+#_quant="${GEN_FILE%.gguf}"; _quant="${_quant#${_stem}-}"
+#export LLAMACPP_EVAL_MODEL="${LLAMACPP_EVAL_MODEL:-${GEN_REPO}:${_quant}}"
+
+#stage_models "${WORKDIR}"
 echo "Gen GGUF: ${GEN_PATH}"
 echo "Emb GGUF: ${EMB_PATH}"
 
