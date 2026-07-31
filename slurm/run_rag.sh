@@ -178,7 +178,7 @@ export LLAMACPP_EMB_MODEL="${LLAMACPP_EMB_MODEL:-lm-kit/bge-m3-gguf:Q4_K_M}"
 # without growing total KV-cache VRAM (KV scales with CONTEXT_LENGTH, shared
 # across slots — fewer slots means each gets a larger share at the same cost).
 CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-23000}"
-GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-4}"
+GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-3}"
 # Keep the client's in-flight request cap in lockstep with the server's slot
 # count so we don't queue requests server-side (LLM_CONCURRENCY drives
 # LLAMACPP_RAG_CONCURRENCY in rag/llm_config.py).
@@ -201,13 +201,26 @@ stdbuf -oL -eL "${LLAMACPP_SERVER}" \
   2>&1 | stdbuf -oL sed 's/^/[GEN] /' &
 GEN_PID=$!
 
-# Embedding server — same config as slurm/build_faiss_index.sh so query and
-# passage embeddings stay in the same space.
+# Embedding server — same model/pooling as slurm/build_faiss_index.sh so query
+# and passage embeddings stay in the same space. The window is larger here than
+# at index time (3584 vs 1024) because the inputs differ: at index time it sees
+# 350-token chunks, at run time it sees the *query* (longest ~3000 tokens) and
+# the HyDE draft (<=RAG_SC_HYDE_MAX_TOKENS). Retrieved chunks are NOT re-encoded
+# here — they are already vectors in the FAISS index — so the window has to hold
+# the longest single input, not a sum.
+#
+# bge-m3 is encoder-only with CLS pooling, so a sequence cannot be split across
+# physical batches: -b/-ub must track -c or llama-server rejects the input with
+# "input is too large to process" (it errors rather than truncating, which is why
+# nothing shows up as truncated in the logs). 3584 = 14*256 leaves ~580 tokens
+# over the longest observed query; raise it if that measurement grows. Batch size
+# does not change the embedding of a sequence that fits, so index-time vectors
+# stay comparable despite the different -b/-ub here.
 stdbuf -oL -eL "${LLAMACPP_SERVER}" \
   -hf "${LLAMACPP_EMB_MODEL}" \
   --host "${LLAMACPP_GEN_HOST}" --port "${LLAMACPP_EMB_PORT}" \
-  -c 1024 \
-  -b 1024 -ub 1024 \
+  -c 3584 \
+  -b 3584 -ub 3584 \
   --n-gpu-layers -1 \
   --parallel 1 \
   --embeddings --pooling cls \
