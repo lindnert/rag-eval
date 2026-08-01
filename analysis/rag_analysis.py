@@ -26,6 +26,13 @@ RAGAS/DeepEval scoring:
     answer text) and genuinely truncated answers. Runs made before finish_reason
     was hoisted to top level only carry it for rag_sc rows; ``truncation_coverage``
     reports how many rows actually have one.
+  - abstentions: ``rejected`` marks an answer the pipeline replaced with the
+    canonical "the context does not cover this" rejection, ``rejection_reason``
+    says why (the model abstained, vs nothing surviving a runaway regen).
+    ``abstention_summary`` / ``abstention_by_dataset_variant`` count them,
+    ``abstention_signals`` shows what retrieval and confidence looked like on
+    those rows, ``abstention_transitions`` whether self-correction shifted WHICH
+    queries get refused. no_rag never abstains by construction.
   - pass-through sanity: on the rag_sc rows where NEITHER correction fired,
     rag_sc is by construction the same pipeline as plain rag, so those rows should
     reproduce their rag twin. ``sc_retry_breakdown`` counts them,
@@ -88,7 +95,8 @@ newest eval file, which may overlap partially or not at all.
 
 This runs the whole __main__ report, in three passes: what went WRONG (structural
 health check, token-cap truncation, the pass-through check on untouched rag_sc
-rows); what the pipeline MEASURED (confidence and retrieval summaries,
+rows, and — not a failure, but the other way a row comes back without an answer —
+the abstentions); what the pipeline MEASURED (confidence and retrieval summaries,
 self-correction retry rates, the retrieval- AND generation-trigger tallies); and
 whether correction PAID OFF (HyDE re-retrieval and generation-retry gains) —
 last, because that is where ``analysis.eval_analysis`` takes over. Then the PNGs.
@@ -103,6 +111,7 @@ mining — lives in ``analysis.eval_analysis`` (which imports ``link_eval`` /
 
 import difflib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -356,7 +365,22 @@ def _stats_by(df, by, col, dropna=True):
     return g.groupby(by, observed=True)["_v"].agg(**_STAT_AGGS)
 
 
-def _with_pooled_rows(base, pooled, order=None, level="variant", label="all"):
+def _int_counts(out, cols=("n",)):
+    """Cast count columns back to int, in place-ish, and return the frame.
+
+    Any table assembled row-wise from Series (``pd.DataFrame(rows)``, ``.to_frame().T``,
+    ``groupby.apply``) comes out all-float, which prints a row count as ``50.0``. Only
+    complete columns are cast, so a table with a gap comes back untouched rather than
+    raising.
+    """
+    for c in cols:
+        if c in out and out[c].notna().all():
+            out[c] = out[c].astype(int)
+    return out
+
+
+def _with_pooled_rows(base, pooled, order=None, level="variant", label="all",
+                      int_cols=("n",)):
     """Interleave a per-(source_dataset, group) stats table with one pooled row per
     dataset, appended after that dataset's group rows.
 
@@ -365,6 +389,11 @@ def _with_pooled_rows(base, pooled, order=None, level="variant", label="all"):
     means, so uneven group sizes don't misweight it. Shared by
     ``logprob_by_dataset_variant`` and ``retrieval_by_dataset_variant`` so both
     tables read the same way.
+
+    ``int_cols`` are cast back to int on the way out: stacking the rows as Series
+    upcasts every column to float, which turns a row COUNT into ``50.0``. Only
+    columns that are complete (no NaN) are cast, so a table with a missing group
+    still comes back rather than raising.
     """
     rows, idx = [], []
     for ds in base.index.get_level_values(0).unique():
@@ -378,7 +407,7 @@ def _with_pooled_rows(base, pooled, order=None, level="variant", label="all"):
             idx.append((str(ds), label))
     out = pd.DataFrame(rows).reset_index(drop=True)
     out.index = pd.MultiIndex.from_tuples(idx, names=["source_dataset", level])
-    return out
+    return _int_counts(out, int_cols)
 
 
 def logprob_summary(df, by="variant", col="gen_logprob_stats.mean"):
@@ -680,6 +709,391 @@ def truncation_summary(df, by="source_dataset", with_total=True):
     return out
 
 
+# --- Abstentions -------------------------------------------------------------
+
+# Why an answer collapsed onto the canonical rejection string (see
+# ``rag.utils._finalize_answer``):
+#   model_rejected — the model itself abstained: its answer opens with the canonical
+#                    rejection. The only abstention signal the thinking-off ``rag``
+#                    variant has, and the intended behaviour — saying "the context does
+#                    not cover this" instead of inventing an answer.
+#   empty          — nothing survived stripping the <think> block: the runaway rag_sc
+#                    regen that spends its whole budget reasoning. Counted here because
+#                    downstream it IS an abstention, but it is really the truncation
+#                    failure of ``truncation_summary`` wearing an abstention's clothes.
+# no_rag has no context to call insufficient, so it never abstains: a 0 there is
+# structural, not a finding about the variant.
+ABSTENTION_REASONS = ["model_rejected", "empty"]
+
+# Signals compared between the abstained and the answered rows, as
+# ``{display name: column}``. gen_tokens is included to expose the length difference
+# behind the logprob one (see the caveat on ``abstention_signals``).
+ABSTENTION_SIGNAL_COLS = {
+    "retrieval_best": "retrieval_best",
+    "retrieval_spread": "retrieval_spread",
+    "gen_logprob_mean": "gen_logprob_stats.mean",
+    "gen_tokens": "gen_logprob_stats.n",
+}
+
+
+def _abstained(df):
+    """Boolean 'this row abstained', from the pipeline's own ``rejected`` flag, falling
+    back to the presence of a ``rejection_reason``.
+
+    Deliberately never string-matches the answer: a run is multilingual, so the
+    canonical rejection has one form per language and matching only the English one
+    would silently miss the German abstentions (the same trap
+    ``analysis.analysis._rejection_mask`` documents)."""
+    if "rejected" in df:
+        return df["rejected"].fillna(False).astype(bool)
+    if REJECTION_REASON_COL in df:
+        return df[REJECTION_REASON_COL].notna()
+    return pd.Series(False, index=df.index)
+
+
+def abstention_summary(df, by="variant", with_total=True):
+    """How often the pipeline abstained instead of answering, grouped by ``by``.
+
+    Columns: ``n`` (rows in the group), ``abstained`` / ``abstention_rate``, then the
+    same abstentions split by ``rejection_reason`` — ``model_rejected`` (the intended
+    behaviour) vs ``empty`` (a runaway regen, i.e. a failure; see
+    ``ABSTENTION_REASONS``). The two reason columns sum to ``abstained`` on any file
+    that records a reason.
+
+    ``by`` takes anything a groupby does: ``"variant"``, ``"source_dataset"``,
+    ``["source_dataset", "variant"]``, or a column you attach at the call site (the
+    __main__ report passes ``retry_kind``). With ``with_total`` an ``ALL`` row is
+    appended, pooled over rows (total abstained / total rows, NOT the mean of the
+    per-group rates) — single-level ``by`` only, since a MultiIndex has no one place
+    to put it; use ``abstention_by_dataset_variant`` for the two-level table.
+    """
+    cols = ["n", "abstained", "abstention_rate"] + ABSTENTION_REASONS
+    if not len(df):
+        return pd.DataFrame(columns=cols)
+
+    sub = df.copy()
+    sub["_abstained"] = _abstained(df)
+    reason = (sub[REJECTION_REASON_COL].astype("string") if REJECTION_REASON_COL in sub
+              else pd.Series(pd.NA, index=sub.index, dtype="string"))
+    for r in ABSTENTION_REASONS:
+        sub[f"_{r}"] = reason.eq(r).fillna(False)
+
+    def _agg(g):
+        out = {"n": len(g), "abstained": int(g["_abstained"].sum()),
+               "abstention_rate": round(g["_abstained"].mean(), 3)}
+        out.update({r: int(g[f"_{r}"].sum()) for r in ABSTENTION_REASONS})
+        return pd.Series(out)
+
+    out = sub.groupby(by, observed=True).apply(_agg, include_groups=False)
+    if with_total and isinstance(by, str):
+        out.loc["ALL"] = _agg(sub)
+    for c in ["n", "abstained"] + ABSTENTION_REASONS:
+        out[c] = out[c].astype(int)
+    return out[cols]
+
+
+def abstention_by_dataset_variant(df, with_all=True):
+    """Abstentions per (source_dataset, variant), with an ``all`` row closing each
+    dataset — the abstention counterpart of ``logprob_by_dataset_variant``.
+
+    Same columns as ``abstention_summary``, every count of which is handed to
+    ``_with_pooled_rows`` as an ``int_col`` (the table is counts end to end and reads
+    badly as ``50.0``). The ``all`` row is pooled over that dataset's rows rather than
+    averaged from the per-variant rates. Feed it rag/rag_sc rows only if you want that
+    pooled rate to mean something: no_rag cannot abstain, so leaving it in drags every
+    ``all`` row down by a third for a structural reason (which is what the __main__
+    report does).
+    """
+    base = abstention_summary(df, by=["source_dataset", "variant"], with_total=False)
+    if not with_all or not len(base):
+        return base
+    pooled = abstention_summary(df, by="source_dataset", with_total=False)
+    return _with_pooled_rows(base, pooled, order=VARIANT_ORDER,
+                             int_cols=["n", "abstained"] + ABSTENTION_REASONS)
+
+
+def abstention_signals(df, by="variant", cols=None):
+    """What the pipeline's own signals looked like when it abstained: the mean of each
+    signal per group, split into the rows that ANSWERED and the rows that ABSTAINED.
+
+    Indexed by (group, ``answered`` / ``abstained``); columns are ``n`` plus the mean of
+    each of ``cols`` (default ``ABSTENTION_SIGNAL_COLS``). ``retrieval_best`` is the one
+    that validates the behaviour: an abstained cohort scoring markedly lower than the
+    answered one says abstention tracks weak retrieval, which is what it is for.
+
+    CAVEAT — ``gen_logprob_mean`` is NOT a confidence reading on abstained rows. The
+    canonical rejection is a short formulaic sentence whose tokens are trivially
+    predictable, so abstentions come out looking MORE confident (mean closer to 0) than
+    real answers; that number measures string predictability, not the model's certainty
+    about the question. ``gen_tokens`` shows the length gap behind it. This has a real
+    knock-on effect: the generation-correction trigger keys on exactly this mean, so an
+    abstaining first pass almost never trips a regeneration — which is why the retried
+    cohorts in ``abstention_summary(..., by="retry_kind")`` abstain less by selection,
+    not by rescue.
+    """
+    cols = ABSTENTION_SIGNAL_COLS if cols is None else cols
+    if not len(df):
+        return pd.DataFrame(columns=["n"] + list(cols))
+
+    sub = df.copy()
+    sub["_status"] = pd.Categorical(
+        _abstained(df).map({True: "abstained", False: "answered"}),
+        categories=["answered", "abstained"], ordered=True)
+    present = {name: c for name, c in cols.items() if c in sub}
+    for name, c in present.items():
+        sub[f"_{name}"] = pd.to_numeric(sub[c], errors="coerce")
+
+    keys = ([by] if isinstance(by, str) else list(by)) + ["_status"]
+    g = sub.groupby(keys, observed=True)
+    out = pd.DataFrame({"n": g.size(),
+                        **{name: g[f"_{name}"].mean() for name in present}})
+    out.index = out.index.set_names(keys[:-1] + ["status"])
+    return out
+
+
+def abstention_transitions(df, a="rag_sc", b="rag"):
+    """Per id, WHO abstained: variant ``a``, variant ``b``, both, or neither.
+
+    The rates alone cannot tell these apart — rag_sc abstaining 3 points more often
+    than rag could be a handful of new abstentions, or a hundred new ones against
+    ninety rescued. Counted over the ids that carry both variants: ``n_ids``,
+    ``both_answered``, ``only_<a>`` (a abstained where b answered — the corrections
+    made it give up), ``only_<b>`` (the reverse — rescued), ``both_abstained``, and
+    ``net`` = only_a − only_b, the change in abstention count the rate gap summarises.
+    """
+    tmp = pd.DataFrame({"id": df["id"], "variant": df["variant"].astype(str),
+                        "_a": _abstained(df).astype(float)})
+    w = tmp.pivot_table(index="id", columns="variant", values="_a", aggfunc="first")
+    if not {a, b} <= set(w.columns):
+        return pd.Series({"n_ids": 0})
+    m = w[a].notna() & w[b].notna()
+    x, y = w.loc[m, a] > 0.5, w.loc[m, b] > 0.5
+    return pd.Series({
+        "n_ids": int(m.sum()),
+        "both_answered": int((~x & ~y).sum()),
+        f"only_{a}": int((x & ~y).sum()),
+        f"only_{b}": int((y & ~x).sum()),
+        "both_abstained": int((x & y).sum()),
+        "net": int((x & ~y).sum() - (y & ~x).sum()),
+    })
+
+
+# A recorded trigger, e.g. ``"highest=0.710<0.73"`` — value, comparison, threshold.
+_TRIGGER_VALUE_RE = re.compile(
+    r"^(?P<name>[A-Za-z_]+)=(?P<value>-?[0-9.]+)(?P<op>[<>])(?P<threshold>-?[0-9.]+)$")
+
+# Columns carried by the false-refusal table, in print order. ``query`` last: it is the
+# wide one, and the point of the table is to read the questions by hand.
+FALSE_REFUSAL_COLS = ["id", "source_dataset", "variant", "lang", "retrieval_best",
+                     "retrieval_spread", "gen_logprob_stats.mean", "query"]
+
+
+def trigger_threshold(df, name="highest", stage="retrieval"):
+    """The threshold a named trigger was evaluated against IN THIS RUN, read back out
+    of the recorded trigger strings (``"highest=0.710<0.73"`` -> ``0.73``).
+
+    Taken from the data rather than imported from ``rag.llm_config``, so re-analysing an
+    old results file uses the threshold that file was actually produced with instead of
+    whatever the environment happens to say today. Returns ``None`` if no row fired that
+    trigger — the value is only ever written on a firing row, so there is nothing to
+    read; pass an explicit threshold in that case.
+    """
+    sc = df[df["variant"] == "rag_sc"]
+    col = _trigger_col(stage)
+    if col not in sc:
+        return None
+    for trigs in sc[col]:
+        for t in (trigs or []):
+            m = _TRIGGER_VALUE_RE.match(str(t).strip())
+            if m and m.group("name") == name:
+                return float(m.group("threshold"))
+    return None
+
+
+def false_refusals(df, threshold=None, variants=("rag", "rag_sc"), exclude_empty=True):
+    """The abstentions that had GOOD retrieval: rows that refused although their best
+    retrieval score cleared the self-correction threshold.
+
+    An abstention on a question the corpus does not cover is the pipeline working as
+    designed, and those rows dominate the counts (medqa, mmlu). This is the complement
+    — the set worth reading by hand, because the pipeline's OWN threshold judged the
+    retrieved context adequate (that score is exactly the level at which no HyDE
+    re-retrieval fires) and the model refused anyway. Every row here is either a
+    retrieval hit that was topically wrong, or an over-cautious refusal.
+
+    ``threshold=None`` reads the run's own value via ``trigger_threshold``; pass a float
+    to override or to sweep the cut. ``exclude_empty`` drops the ``empty`` abstentions,
+    which are runaway-regen truncations rather than refusals (``truncation_summary``
+    owns those). Returns the rows sorted by ``retrieval_best`` descending — the
+    best-supported refusal, i.e. the least defensible one, first — and an empty frame
+    when no threshold can be determined.
+    """
+    cols = [c for c in FALSE_REFUSAL_COLS if c in df]
+    if threshold is None:
+        threshold = trigger_threshold(df)
+    if threshold is None or "retrieval_best" not in df:
+        return pd.DataFrame(columns=cols)
+
+    sub = df[df["variant"].astype(str).isin(variants)]
+    keep = _abstained(sub) & (pd.to_numeric(sub["retrieval_best"], errors="coerce") >= threshold)
+    if exclude_empty and REJECTION_REASON_COL in sub:
+        keep = keep & sub[REJECTION_REASON_COL].astype("string").ne("empty").fillna(True)
+    return sub[keep].sort_values("retrieval_best", ascending=False)[cols]
+
+
+def abstention_transition_rows(df, a="rag_sc", b="rag", flips_only=True):
+    """The per-id table behind ``abstention_transitions``: the ids that abstain in one
+    variant but not the other, with both sides' signals so you can see WHY.
+
+    ``flip`` is ``only_<a>`` (a gave up where b answered) or ``only_<b>`` (the reverse);
+    with ``flips_only=False`` the agreeing ids come too, as ``both`` / ``neither``.
+    ``hyde_delta`` is a's final minus original best retrieval score, so the obvious
+    suspicion about a ``only_rag_sc`` row — the re-retrieval swapped good context for
+    bad and the model gave up — can be checked on the row instead of assumed. NaN there
+    means a never re-retrieved that id, which rules the explanation out entirely.
+
+    Sorted worst ``hyde_delta`` first within each flip. This is the eyeball list; the
+    counts are ``abstention_transitions``.
+    """
+    def _side(v, suffix, extra=()):
+        s = df[df["variant"].astype(str) == v]
+        out = pd.DataFrame({"id": s["id"], f"abstained{suffix}": _abstained(s)})
+        if "retrieval_best" in s:
+            out[f"retrieval_best{suffix}"] = pd.to_numeric(s["retrieval_best"], errors="coerce")
+        if "gen_logprob_stats.mean" in s:
+            out[f"logprob{suffix}"] = pd.to_numeric(s["gen_logprob_stats.mean"], errors="coerce")
+        for c in extra:
+            if c in s:
+                out[c if c in ("source_dataset", "lang", "query") else f"{c}{suffix}"] = s[c]
+        if {"retrieval_best", "retrieval_best_orig"} <= set(s.columns) and suffix == f"_{a}":
+            out["hyde_delta"] = (pd.to_numeric(s["retrieval_best"], errors="coerce")
+                                 - pd.to_numeric(s["retrieval_best_orig"], errors="coerce"))
+        return out
+
+    left = _side(a, f"_{a}", extra=("source_dataset", "lang", REJECTION_REASON_COL, "query"))
+    right = _side(b, f"_{b}")
+    if not len(left) or not len(right):
+        return pd.DataFrame(columns=["id", "flip"])
+
+    out = left.merge(right, on="id", how="inner")
+    x, y = out[f"abstained_{a}"], out[f"abstained_{b}"]
+    flip = pd.Series("neither", index=out.index, dtype="object")
+    flip[x & ~y] = f"only_{a}"
+    flip[~x & y] = f"only_{b}"
+    flip[x & y] = "both"
+    out.insert(1, "flip", flip)
+    if flips_only:
+        out = out[out["flip"].isin([f"only_{a}", f"only_{b}"])]
+    sort_cols = ["flip"] + (["hyde_delta"] if "hyde_delta" in out else [])
+    return out.sort_values(sort_cols).reset_index(drop=True)
+
+
+def sc_retrieval_deltas(df, retried_only=True):
+    """Row-level HyDE before/after: one row per rag_sc row with its original and final
+    best retrieval score, the ``delta``, and whether that row ended up abstaining.
+
+    ``sc_retrieval_gain`` averages exactly these deltas and reports ``frac_improved``;
+    this is the table underneath, for the question a mean cannot answer — WHICH queries
+    gained, and by how much. Sorted smallest delta first. ``retried_only`` keeps the
+    rows HyDE actually re-ran; the rest have delta 0 by construction and would pad the
+    table with non-events.
+
+    WHAT THE DELTA MEANS DEPENDS ON WHICH MERGE PRODUCED THE FILE
+    (``sc_metadata.merge_strategy``, absent on files written before 2026-08):
+
+      - ``score`` (the old merge): a negative delta is arithmetically impossible.
+        ``rag.utils._merge_by_score`` pooled both retrievals and kept the top-k by
+        score, so the final best is ``max(orig, hyde)``. Do NOT read "0 rows got
+        worse" off such a file as evidence that re-retrieval never hurts — the number
+        cannot express that. Worse, the two sides were scored against different
+        queries (question vs pseudo-answer), so the delta is not a like-for-like
+        comparison at all.
+      - ``rrf`` (current): the delta is identically ZERO, and this table is useless on
+        such a file. Survivors are rescored under the original question, and the RRF
+        tie-break always keeps the chunk that question ranked first — which held the
+        highest question-score in the corpus — so ``max(final) == max(orig)`` on every
+        row. Confirmed on the 2026-08-01 run: 0 of 368 rows differ.
+
+    So NEITHER merge lets the best score say anything about re-retrieval. Under ``rrf``
+    the effect shows up in the other two statistics instead: ``retrieval_spread`` widens
+    (the HyDE chunk scores lower on the question's scale — that gap IS the recall/
+    relevance trade, 0.039 -> 0.124 on the 2026-08-01 run), and
+    ``sc_context_displacement`` counts how many original chunks the HyDE ones pushed
+    out.
+
+    Either way the score cannot show that re-retrieval HELPED. That question needs the
+    gold context ids (synthetic subset) or the answer metrics — see
+    ``analysis.eval_analysis``.
+    """
+    cols = ["id", "source_dataset", "lang", "retrieval_best_orig", "retrieval_best",
+            "delta", "abstained", "query"]
+    sc = (_hyde_rows(df) if retried_only else df[df["variant"] == "rag_sc"])
+    if not len(sc) or "retrieval_best_orig" not in sc:
+        return pd.DataFrame(columns=cols)
+    out = sc.dropna(subset=["retrieval_best", "retrieval_best_orig"]).copy()
+    out["delta"] = (pd.to_numeric(out["retrieval_best"], errors="coerce")
+                    - pd.to_numeric(out["retrieval_best_orig"], errors="coerce"))
+    out["abstained"] = _abstained(out)
+    return out[[c for c in cols if c in out]].sort_values("delta").reset_index(drop=True)
+
+
+def sc_context_displacement(df, retried_only=True, by=None):
+    """How much of the ORIGINAL retrieved context each re-retrieved row kept.
+
+    The score deltas cannot show whether re-retrieval hurt (see
+    ``sc_retrieval_deltas``); this can, because it counts what actually reaches the
+    model. Per row: ``n_orig`` / ``n_final`` chunk ids, ``kept`` (in both), ``dropped``
+    = n_orig − kept, ``drop_rate``, plus whether the row abstained.
+    ``dropped == n_orig`` means the question's own chunks were replaced wholesale.
+
+    This is the metric that separates the two merge strategies
+    (``sc_metadata.merge_strategy``): the old ``score`` merge could evict every
+    original chunk and did so on 121 of 307 re-retrieved rows in the 2026-07-31 run;
+    the ``rrf`` merge breaks its rank ties toward the question, so the question's
+    top-ranked chunk always survives and ``dropped < n_orig`` holds by construction.
+    Run this on a file from each to quantify the change.
+
+    With ``by`` (e.g. ``"source_dataset"``) returns group means of the counts plus an
+    ``ALL`` row instead of the row-level table.
+    """
+    cols = ["id", "source_dataset", "lang", "n_orig", "n_final", "kept", "dropped",
+            "drop_rate", "abstained", "query"]
+    orig_col = "sc_metadata.original_context_ids"
+    sc = (_hyde_rows(df) if retried_only else df[df["variant"] == "rag_sc"])
+    if not len(sc) or orig_col not in sc or "retrieved_context_ids" not in sc:
+        return pd.DataFrame(columns=cols)
+
+    def _as_set(v):
+        return set(v) if isinstance(v, (list, tuple)) else set()
+
+    out = sc.copy()
+    o, f = out[orig_col].map(_as_set), out["retrieved_context_ids"].map(_as_set)
+    out["n_orig"] = o.map(len)
+    out["n_final"] = f.map(len)
+    out["kept"] = [len(a & b) for a, b in zip(o, f)]
+    out["dropped"] = out["n_orig"] - out["kept"]
+    out["drop_rate"] = (out["dropped"] / out["n_orig"].where(out["n_orig"] > 0)).round(3)
+    out["abstained"] = _abstained(out)
+    out = out[[c for c in cols if c in out]]
+    if by is None:
+        return (out.sort_values(["dropped", "drop_rate"], ascending=False)
+                .reset_index(drop=True))
+
+    def _agg(g):
+        return pd.Series({
+            "n": len(g),
+            "mean_dropped": g["dropped"].mean(),
+            "mean_drop_rate": g["drop_rate"].mean(),
+            "rows_all_replaced": int((g["dropped"] == g["n_orig"]).sum())
+            if "n_orig" in g else 0,
+            "abstention_rate": g["abstained"].mean(),
+        })
+
+    grouped = out.groupby(by, observed=True).apply(_agg, include_groups=False)
+    grouped.loc["ALL"] = _agg(out)
+    return _int_counts(grouped, ("n", "rows_all_replaced"))
+
+
 def sc_retrieval_gain(df, by=None, retried_only=True):
     """Did the HyDE re-retrieval actually raise retrieval scores?
 
@@ -688,6 +1102,12 @@ def sc_retrieval_gain(df, by=None, retried_only=True):
     re-retrieved (``retrieval_retried_count > 0``); otherwise the untouched rows
     would dilute the delta with zeros. Reports mean before/after, mean delta, and
     the fraction of rows that improved.
+
+    ONLY MEANINGFUL ON A ``score``-MERGE FILE, and even there it cannot go negative.
+    On an ``rrf``-merge file every column is 0 by construction (the question's own top
+    chunk always survives and is rescored to its original value), so read
+    ``sc_context_displacement`` and the spread instead. ``sc_retrieval_deltas`` spells
+    out both cases and is the row-level table behind this one.
 
     The same before/after pair, as distributions rather than a delta, is the
     ``rag_sc_hyde_orig`` / ``rag_sc_hyde_final`` split in ``retrieval_variant_long``.
@@ -706,8 +1126,8 @@ def sc_retrieval_gain(df, by=None, retried_only=True):
         })
 
     if by is None:
-        return _agg(sc).to_frame("all").T
-    return sc.groupby(by, observed=True).apply(_agg, include_groups=False)
+        return _int_counts(_agg(sc).to_frame("all").T)
+    return _int_counts(sc.groupby(by, observed=True).apply(_agg, include_groups=False))
 
 
 def retrieval_stage_long(df):
@@ -788,8 +1208,8 @@ def sc_generation_gain(df, by=None, retried_only=True):
         })
 
     if by is None:
-        return _agg(sc).to_frame("all").T
-    return sc.groupby(by, observed=True).apply(_agg, include_groups=False)
+        return _int_counts(_agg(sc).to_frame("all").T)
+    return _int_counts(sc.groupby(by, observed=True).apply(_agg, include_groups=False))
 
 
 # --- rag_sc without any retry vs plain rag (pass-through check) ---------------
@@ -1271,6 +1691,91 @@ if __name__ == "__main__":
     else:
         print("no untouched rag_sc rows with a rag twin in this file — nothing to compare")
 
+    # Abstentions. NOT an error — refusing on insufficient context is the behaviour the
+    # pipeline is built to have — but it belongs beside the error analyses, because it
+    # is the other way a row comes back without a real answer, and because the `empty`
+    # column below is exactly the thinking-loop failure counted above, wearing an
+    # abstention's clothes.
+    print("\n=== abstentions (answer collapsed onto the canonical rejection) ===")
+    # no_rag is excluded from the count and signal tables below: it has no context to
+    # call insufficient, so it cannot abstain by construction. Leaving it in would not
+    # add a 0 row, it would drag every pooled figure (the ALL row, each dataset's `all`
+    # row, the ratios in the signal table) down by a third for a structural reason.
+    _abst = d[d["variant"] != "no_rag"]
+    print("rag / rag_sc only — no_rag has no context to call insufficient, so it never "
+          "abstains and would only deflate the pooled rates.")
+    print("model_rejected = the model itself abstained (the intended behaviour); "
+          "empty = nothing survived stripping <think>, i.e. the runaway regen above.")
+    print(abstention_summary(_abst).to_string())
+    print("\n--- same, per dataset x variant (all = rag + rag_sc pooled per dataset) ---")
+    print(abstention_by_dataset_variant(_abst).to_string())
+
+    print("\n--- same, per language x variant ---")
+    print("The run is multilingual (one prompt language per query), so a refusal rate "
+          "that differs by language would be a retrieval-language problem, not a topic "
+          "one. Check n before reading anything into it — the two subsets are far apart "
+          "in size.")
+    print(abstention_summary(_abst, by=["lang", "variant"], with_total=False).to_string())
+
+    print("\n--- what the pipeline's own signals looked like when it abstained ---")
+    print("retrieval_best lower on the abstained rows = abstention tracks weak "
+          "retrieval, which is what it is for. gen_logprob_mean is NOT a confidence "
+          "reading here: the canonical rejection is a short formulaic sentence, so its "
+          "tokens are trivially predictable (gen_tokens shows the length gap behind it).")
+    print(abstention_signals(_abst).round(3).to_string())
+
+    # The false-refusal set: the abstentions the retrieval score does NOT excuse.
+    _thr = trigger_threshold(d)
+    _fr = false_refusals(d)
+    _n_abst = int(_abstained(_abst).sum())
+    print(f"\n--- false refusals: abstained although retrieval_best >= {_thr} "
+          f"({len(_fr)} of {_n_abst} abstentions) ---")
+    print(f"{_thr} is the run's OWN retrieval threshold, read back out of the recorded "
+          f"trigger strings: at or above it the pipeline judged the context good enough "
+          f"not to re-retrieve. So these rows are not 'the corpus does not cover it' — "
+          f"they are a topical retrieval miss or an over-cautious model, and they are "
+          f"the abstentions worth reading by hand. Best-supported (least defensible) "
+          f"first; `empty` rows excluded, those are truncations, not refusals.")
+    if len(_fr):
+        _show = [c for c in _fr.columns if c != "query"]
+        print(_fr[_show].round(3).to_string(index=False))
+        _fr.to_csv("analysis/rag_false_refusals.csv", index=False)
+        print(f"wrote analysis/rag_false_refusals.csv ({len(_fr)} rows, with the query text)")
+    else:
+        print("none — every abstention came with retrieval below the threshold")
+
+    print("\n--- did self-correction change WHO abstains? (per id, rag_sc vs rag) ---")
+    print("only_rag_sc = the corrections made it give up where plain rag answered; "
+          "only_rag = the reverse. net is the change in abstention count.")
+    print(abstention_transitions(d).to_string())
+
+    # Which ids those are, and whether HyDE explains them. hyde_delta = rag_sc's final
+    # minus original retrieval score: negative means the re-retrieval genuinely fetched
+    # worse context for that query, NaN means it never re-retrieved (so it cannot be
+    # the cause).
+    _flips = abstention_transition_rows(d)
+    if len(_flips):
+        _newly = _flips[_flips["flip"] == "only_rag_sc"]
+        _worse = int((_newly["hyde_delta"] < 0).sum()) if "hyde_delta" in _newly else 0
+        _untouched = int(_newly["hyde_delta"].isna().sum()) if "hyde_delta" in _newly else 0
+        print(f"\nthe {len(_flips)} ids that flipped, worst hyde_delta first "
+              f"(of the {len(_newly)} newly refusing: {_worse} lost retrieval score to "
+              f"HyDE, {_untouched} never re-retrieved at all):")
+        print(_flips[[c for c in _flips.columns if c != "query"]].round(3).to_string(index=False))
+        _flips.to_csv("analysis/rag_abstention_flips.csv", index=False)
+        print(f"wrote analysis/rag_abstention_flips.csv ({len(_flips)} rows, with the "
+              f"query text)")
+
+    print("\n--- rag_sc abstention rate by which corrections fired ---")
+    print("Read as selection, not effect: the generation trigger keys on the mean "
+          "logprob, which an abstention maximises, so an abstaining first pass hardly "
+          "ever trips a regeneration — the retried cohorts are pre-filtered to rows "
+          "that answered, they were not rescued by the retry.")
+    _sc = d[d["variant"] == "rag_sc"]
+    _by_kind = abstention_summary(_sc.assign(retry_kind=_retry_kind(_sc)), by="retry_kind")
+    print(_by_kind.reindex([k for k in RETRY_KINDS + ["ALL"] if k in _by_kind.index])
+          .to_string())
+
     print("\n=== retrieval best-score by variant ===")
     print("rag_sc = all its rows at their final score (the average); rag_sc_hyde_orig/"
           "_final = only the rows where HyDE re-retrieval was triggered, before vs after.")
@@ -1312,6 +1817,34 @@ if __name__ == "__main__":
     print(sc_retrieval_gain(d).round(3).to_string())
     print("\n--- same, per dataset ---")
     print(sc_retrieval_gain(d, by="source_dataset").round(3).to_string())
+
+    # The gain above cannot answer "did re-retrieval make anything worse" — on a
+    # `score`-merge file the delta cannot go negative, on an `rrf`-merge file it cannot
+    # go positive (sc_retrieval_deltas explains both). What DID change is which chunks
+    # reached the model, which is what displacement counts.
+    _disp = sc_context_displacement(d)
+    print(f"\n--- what re-retrieval did to the CONTEXT SET ({len(_disp)} re-retrieved "
+          f"rows) ---")
+    if len(_disp):
+        _merge = (d.get("sc_metadata.merge_strategy", pd.Series(dtype="object"))
+                  .dropna().unique())
+        print(f"merge strategy in this file: "
+              f"{', '.join(map(str, _merge)) if len(_merge) else 'score (pre-2026-08 file)'}")
+        print(f"{int((_disp['dropped'] > 0).sum())} rows lost at least one original "
+              f"chunk; {int((_disp['dropped'] == _disp['n_orig']).sum())} lost ALL of "
+              f"them (impossible under the rrf merge, which always keeps the question's "
+              f"top chunk); mean drop rate {_disp['drop_rate'].mean():.3f}.")
+        print(sc_context_displacement(d, by="source_dataset").round(3).to_string())
+        _disp.to_csv("analysis/rag_hyde_context_displacement.csv", index=False)
+        print(f"wrote analysis/rag_hyde_context_displacement.csv ({len(_disp)} rows "
+              f"with the query text, most displaced first)")
+        _deltas = sc_retrieval_deltas(d)
+        if len(_deltas):
+            _deltas.to_csv("analysis/rag_hyde_retrieval_deltas.csv", index=False)
+            print(f"wrote analysis/rag_hyde_retrieval_deltas.csv (per-row score deltas, "
+                  f"smallest first — read sc_retrieval_deltas' docstring first)")
+    else:
+        print("no re-retrieved rows with recorded context ids in this file")
 
     print("\n=== generation-retry confidence gain (retried rag_sc rows only) ===")
     gen_gain = sc_generation_gain(d)

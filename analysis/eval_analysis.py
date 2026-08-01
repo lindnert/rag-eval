@@ -424,7 +424,7 @@ def deepeval_reason_consistency(df, tol=0.011):
 
 # --- (3) Worst / best queries on the rag+eval join ---------------------------
 
-def extremes(linked, metric, frac=0.05, signals=None):
+def extremes(linked, metric, frac=0.01, signals=None):
     """The bottom and top ``frac`` of scored rows by ``metric``, with the pipeline
     signals attached. Returns ``(worst, best, k, n_scored)``; ``k`` is the count in
     each tail. Rows where the metric is NaN (not applicable / errored) are dropped
