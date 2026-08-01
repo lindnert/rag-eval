@@ -37,6 +37,42 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Generation model GGUF served by the RAG llama-server. Declared here — above
+# the dual-mode split — so the login-node submitter and the array workers
+# resolve the SAME repo/file, and the submitter can pre-stage it (see
+# stage_models). Family-distinct from the gemma judge in evaluation/ to avoid
+# self-reference bias. The embedding model is NOT staged here: it is fetched by
+# llama-server itself via `-hf` at server start (section 4) — a stable model
+# tied to the FAISS index, not a per-run swap.
+# ---------------------------------------------------------------------------
+GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/Qwen3.5-4B-GGUF}"
+GEN_FILE="${LLAMACPP_GEN_FILE:-Qwen3.5-4B-UD-Q4_K_XL.gguf}"
+
+# Download the gen GGUF into the shared model dir under $1 and set HF_HOME /
+# LLAMA_MODELS_DIR / GEN_PATH for the caller. Idempotent (warm cache = no-op).
+# The submitter calls this ONCE before fanning out the array so the workers hit
+# a warm cache instead of all racing to download a brand-new file into shared
+# NFS at once — the cold-cache race that fails a shard with a "failed to open
+# GGUF file (No such file or directory)" model-load error the first time a new
+# model is used. Uses the Python API directly — the `hf` CLI leaks a
+# click.exceptions.Exit(0) on success in some typer/click combos (trips set -e).
+stage_models() {
+  local work="$1"
+  export HF_HOME="${work}/.hf_cache"
+  export LLAMA_MODELS_DIR="${work}/.llamacpp_models"
+  mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
+  echo "Staging gen GGUF (cached in ${LLAMA_MODELS_DIR}/gen)..."
+  python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='${GEN_REPO}', filename='${GEN_FILE}', local_dir='${LLAMA_MODELS_DIR}/gen')"
+  GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
+  # Fail fast with a clear message instead of letting llama-server die later with
+  # the cryptic "failed to open GGUF file" above (a partial/absent download).
+  if [ ! -s "${GEN_PATH}" ]; then
+    echo "ERROR: model staging incomplete (GEN_PATH=${GEN_PATH})" >&2
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Dual-mode entry point.
 #   - On the LOGIN NODE (no SLURM_JOB_ID) this acts as a *submitter*: it
 #     sbatch-es the array job and exits, so you never type sbatch/--export
@@ -47,16 +83,19 @@ set -euo pipefail
 #     prompt selection), so there is one array job, not one per language.
 #
 # Job accounting (matters for the cluster's per-user submit cap, ~30 jobs):
+#   * The submitter first launches ONE stage job (downloads the gen GGUF to
+#     shared NFS) and holds the array behind it with --dependency=afterok.
 #   * The array submits ARRAY_MAX+1 independent tasks (default 15: indices
 #     0..14); SLURM counts each array task as one job.
 #   * The first task to start schedules ONE merge job, held by
 #     --dependency=afterok until every shard succeeds — a pending dependency
 #     job still counts against the cap.
-#   => one RAG run = 15 shards + 1 merge = 16 jobs. slurm/run_eval.sh is the
-#      same (16); run it after RAG finishes so the two don't queue together
-#      (16 + 16 would exceed 30). Raise ARRAY_MAX up to 28 (29 shards + 1
-#      merge = 30) for more parallelism. There is no %-throttle, so all shards
-#      can run at once (each is --exclusive → one node), nodes permitting.
+#   => one RAG run = 1 stage + 15 shards + 1 merge = 17 jobs. slurm/run_eval.sh
+#      is the same (17); run it after RAG finishes so the two don't queue
+#      together (17 + 17 would exceed 30). Raise ARRAY_MAX up to 27 (1 stage + 28
+#      shards + 1 merge = 30) for more parallelism. There is no %-throttle, so
+#      all shards can run at once (each is --exclusive → one node), nodes
+#      permitting.
 # ---------------------------------------------------------------------------
 if [ -z "${SLURM_JOB_ID:-}" ]; then
   ARRAY_MAX="${ARRAY_MAX:-14}"
@@ -67,8 +106,20 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
   SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
   cd "${REPO_ROOT}"
-  echo "Submitting RAG --array=0-${ARRAY_MAX} ($((ARRAY_MAX + 1)) shards) from ${REPO_ROOT}"
-  sbatch --array="0-${ARRAY_MAX}" --export=ALL "${SELF}"
+  # Download the gen GGUF in a dedicated one-off job (NOT on the login node),
+  # then hold the array behind it with afterok so every shard starts against a
+  # warm NFS cache and none cold-race. STAGE_ONLY=1 runs this same script in
+  # stage-and-exit mode (see the worker body); --array=0 collapses the #SBATCH
+  # --array header to a single task; --time is short since it only downloads.
+  # No GPU is needed to download, so the stage job runs on the CPU partition
+  # `All` (always available) by default; override with STAGE_PARTITION.
+  STAGE_PARTITION="${STAGE_PARTITION:-All}"
+  STAGE_ARGS=(--parsable --job-name=rag-stage --array=0 --time=00:40:00
+              --partition="${STAGE_PARTITION}" --export=ALL,STAGE_ONLY=1)
+  STAGE_JOBID=$(sbatch "${STAGE_ARGS[@]}" "${SELF}")
+  echo "Submitted rag-stage job ${STAGE_JOBID} (downloads gen GGUF to shared NFS)"
+  echo "Submitting RAG --array=0-${ARRAY_MAX} ($((ARRAY_MAX + 1)) shards), held on afterok:${STAGE_JOBID}"
+  sbatch --array="0-${ARRAY_MAX}" --dependency="afterok:${STAGE_JOBID}" --export=ALL "${SELF}"
   exit 0
 fi
 
@@ -84,6 +135,21 @@ export RAG_LANG="${RAG_LANG:-en}"
 export RESULTS_DIR="${WORKDIR}/results"
 mkdir -p "${RESULTS_DIR}" "${WORKDIR}/logs"
 echo "RAG_LANG=${RAG_LANG}  RESULTS_DIR=${RESULTS_DIR}"
+
+# STAGE-ONLY invocation: launched by the login-node submitter as a dedicated
+# download job that the real array waits on (afterok). Its only purpose is to
+# populate the shared NFS model cache so the shards never cold-race — no merge
+# job, no GPU, no servers. Activate the venv, stage, and exit.
+if [ "${STAGE_ONLY:-0}" = "1" ]; then
+  if [ ! -d "${WORKDIR}/.venv" ]; then
+    echo "ERROR: venv not found at ${WORKDIR}/.venv — run slurm/build_venv.sh on the login node" >&2
+    exit 1
+  fi
+  source "${WORKDIR}/.venv/bin/activate"
+  stage_models "${WORKDIR}"
+  echo "stage-only: models staged to ${LLAMA_MODELS_DIR}, exiting"
+  exit 0
+fi
 
 # First-firing task schedules the merge job; --dependency=afterok holds it
 # until all shards in the array finish successfully.
@@ -110,26 +176,23 @@ fi
 source "${WORKDIR}/.venv/bin/activate"
 
 # ---------------------------------------------------------------------------
-# 2. Download GGUFs from Hugging Face
+# 2. Stage gen GGUF (warm-cache hit — the submitter pre-staged it; this just
+#    resolves GEN_PATH and re-verifies it's present on this node). The emb model
+#    is fetched separately by llama-server via -hf in section 4.
 # ---------------------------------------------------------------------------
-export HF_HOME="${WORKDIR}/.hf_cache"
-export LLAMA_MODELS_DIR="${WORKDIR}/.llamacpp_models"
-mkdir -p "${HF_HOME}" "${LLAMA_MODELS_DIR}"
-
-GEN_REPO="${LLAMACPP_GEN_REPO:-unsloth/gemma-4-12b-it-GGUF}"
-GEN_FILE="${LLAMACPP_GEN_FILE:-gemma-4-12b-it-UD-Q4_K_XL.gguf}"
-
-# Family-distinct from the gemma judge in evaluation/, avoids self-reference bias.
-# Use the Python API directly — the `hf` CLI leaks a click.exceptions.Exit(0)
-# on success in some typer/click version combos, which trips `set -e`.
-echo "Downloading gen GGUF (cached in ${LLAMA_MODELS_DIR}/gen)..."
-python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='${GEN_REPO}', filename='${GEN_FILE}', local_dir='${LLAMA_MODELS_DIR}/gen')"
-GEN_PATH="${LLAMA_MODELS_DIR}/gen/${GEN_FILE}"
+stage_models "${WORKDIR}"
 echo "Gen GGUF: ${GEN_PATH}"
 
-# Tell rag/llm_config.py which model identifier to send in /v1/chat/completions.
-# (llama-server reports this string under /v1/models for the loaded model.)
-export LLAMACPP_RAG_MODEL="${LLAMACPP_RAG_MODEL:-unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL}"
+# Model identifier rag/llm_config.py sends in /v1/chat/completions and records
+# for provenance. DERIVED from GEN_REPO + the quant tag parsed out of GEN_FILE
+# (unsloth convention: repo ends in -GGUF, file is <stem>-<quant>.gguf) so it
+# cannot drift from the loaded weights (the gemma-12b/Qwen mismatch that prompted
+# this). An explicit env override still wins — e.g. pointing at a remote Ollama
+# endpoint with LLAMACPP_RAG_MODEL=qwen3.5:32b — and the local single-model
+# server ignores the field regardless.
+_stem="${GEN_REPO##*/}"; _stem="${_stem%-GGUF}"
+_quant="${GEN_FILE%.gguf}"; _quant="${_quant#${_stem}-}"
+export LLAMACPP_RAG_MODEL="${LLAMACPP_RAG_MODEL:-${GEN_REPO}:${_quant}}"
 
 # Embedding model is pulled by llama-server via -hf (cached in HF_HOME);
 # must match what built the FAISS index in slurm/build_faiss_index.sh.
