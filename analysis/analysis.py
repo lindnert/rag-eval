@@ -9,22 +9,48 @@
 numeric (the mixed-dtype sentinel strings such as "no rag - no retrieved
 contexts" and nulls become NaN, which plotting skips). Everything else is a
 plain DataFrame you can slice and plot however you like.
+
+Running from the console
+------------------------
+Run as a module from the repo root (the ``analysis.`` / ``common.`` imports need
+the package on the path, so ``python analysis/analysis.py`` will NOT work):
+
+    python -m analysis.analysis                       # uses DEFAULT_PATH
+    python -m analysis.analysis results/evaluated_results_20260701_112445.json
+
+This runs the whole __main__ report: cohort crosstab, evaluator-failure
+exclusion, per-metric summary, paired Wilcoxon comparisons, reason mining,
+logprob correlation, deciles, and the PNGs — writing the CSVs/PNGs and a
+timestamped health report into ``analysis/`` (see the bottom of this file for
+the exact outputs, and note fixed-name CSV/PNGs are overwritten each run).
 """
 
 import json
 import re
+from datetime import datetime
+from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+
+try:
+    from scipy.stats import wilcoxon
+except ImportError:  # scipy is optional; only compare_variants needs it
+    wilcoxon = None
 
 try:
     import seaborn as sns
 except ImportError:  # seaborn is optional; functions fall back to matplotlib
     sns = None
 
-# Canonical abstention string. rag.utils re-exports this, but we import from the
-# dependency-free source so the analysis module doesn't pull in torch/transformers.
-from common.constants import REJECTION_ANSWER
+# Canonical abstention strings (per language). We import from the dependency-free
+# source so the analysis module doesn't pull in torch/transformers. REJECTION_ANSWERS
+# holds every language variant; the single REJECTION_ANSWER depends on RAG_LANG, which
+# defaults to "en" — too narrow to match a multilingual run's German abstentions, so
+# `load` prefers the authoritative `rejected` field and only falls back to matching
+# against *all* language strings.
+from common.constants import REJECTION_ANSWERS
 
 VARIANT_ORDER = ["no_rag", "rag", "rag_sc"]
 
@@ -60,8 +86,16 @@ def load(path):
         df["variant"] = pd.Categorical(df["variant"], categories=VARIANT_ORDER, ordered=True)
     if "retrieval_scores" in df:
         df["retrieval_best"] = df["retrieval_scores"].apply(lambda s: max(s) if s else None)
-    if "answer" in df:
-        df["is_rejection"] = df["answer"].fillna("").str.strip().eq(REJECTION_ANSWER)
+
+    # Abstention flag. Prefer the pipeline's own language-agnostic `rejected`
+    # boolean; only fall back to string-matching the answer text — and then
+    # against *every* language's rejection string, since a run is multilingual
+    # (matching one language's string would miss the others).
+    if "rejected" in df:
+        df["is_rejection"] = df["rejected"].fillna(False).astype(bool)
+    elif "answer" in df:
+        rej_strings = {s.strip() for s in REJECTION_ANSWERS.values()}
+        df["is_rejection"] = df["answer"].fillna("").str.strip().isin(rej_strings)
 
     return df
 
@@ -126,14 +160,29 @@ def decile_breakdown(df, metric, n_bins=10, id_col="id"):
     Bins are cut on the *rank* (not the raw value) so metrics that pile up at
     0.0 / 1.0 still divide into equal-count groups instead of collapsing on
     duplicate quantile edges. Rows where the metric is NaN are dropped, so this
-    reflects only scored queries. Filter ``df`` first (e.g. one variant) when
-    the metric only makes sense within a variant.
+    reflects only scored queries.
+
+    The ``ids`` cell tags each id with its ``variant`` when that column exists
+    (e.g. ``mmlu_72[rag_sc]``). This matters because the pool is *unpaired*: a
+    question scored under all three variants contributes up to three rows, so the
+    same id can appear several times in one decile — the tag says which variant
+    each is (``mmlu_72[no_rag]`` being in the worst tenth is expected; ``[rag_sc]``
+    there is the interesting failure). For the "does rag_sc lift the *same*
+    question?" story use a *paired* view instead (``compare_variants`` /
+    ``slopegraph``); pass a single-variant slice here (``df[df.variant=="rag_sc"]``)
+    to read one variant's distribution cleanly, or the full frame to find questions
+    that score badly across *every* variant (intrinsically hard items / bad golds).
     """
     s = pd.to_numeric(df[metric], errors="coerce")
-    sub = df.loc[s.notna(), [id_col]].copy()
+    keep = [id_col] + (["variant"] if "variant" in df and id_col != "variant" else [])
+    sub = df.loc[s.notna(), keep].copy()
     sub["value"] = s[s.notna()].to_numpy()
     if sub.empty:
         return pd.DataFrame(columns=["n", "mean", "min", "max", "ids"])
+    if "variant" in sub:
+        sub["_label"] = sub[id_col].astype(str) + "[" + sub["variant"].astype(str) + "]"
+    else:
+        sub["_label"] = sub[id_col].astype(str)
     ranks = sub["value"].rank(method="first")
     sub["decile"] = pd.qcut(ranks, min(n_bins, len(sub)), labels=False) + 1
     out = sub.groupby("decile").agg(
@@ -141,33 +190,47 @@ def decile_breakdown(df, metric, n_bins=10, id_col="id"):
         mean=("value", "mean"),
         min=("value", "min"),
         max=("value", "max"),
-        ids=(id_col, lambda x: list(x)),
+        ids=("_label", lambda x: list(x)),
     )
     return out
 
 
-def health_report(df):
-    """Print quick 'is something broken?' checks and return a flags dict.
+def health_report(df, source=None, out_dir="analysis"):
+    """Quick 'is something broken?' checks; prints, and writes a timestamped
+    report file when ``source`` (the results path/name it ran on) is given.
 
     Surfaces the failure modes that silently poison aggregates: generation
     errors baked into the answer text, RAGAS scorer errors, metrics that never
     produced a value, degenerate (constant) metrics, and faithfulness scored on
     abstentions (ill-defined — an abstention makes no claim to be faithful to).
+
+    Returns the flags dict. When ``source`` is passed, the same lines are saved
+    to ``<out_dir>/health_<source-stem>_<timestamp>.txt`` so each check is
+    archived next to the file and run it describes (rather than only scrolling
+    past in the console).
     """
     flags = {}
+    lines = []
+
+    def emit(s):
+        lines.append(s)
+
     n = len(df)
-    print(f"health_report: {n} rows")
+    emit(f"health_report: {n} rows")
+    if source is not None:
+        emit(f"  source: {source}")
+        emit(f"  generated: {datetime.now().isoformat(timespec='seconds')}")
 
     if "answer" in df:
         gen_err = df["answer"].fillna("").str.contains(r"\[LLAMACPP", regex=True)
         flags["answer_generation_errors"] = int(gen_err.sum())
-        print(f"  answer generation errors ([LLAMACPP ...]): {int(gen_err.sum())}")
+        emit(f"  answer generation errors ([LLAMACPP ...]): {int(gen_err.sum())}")
 
     err_col = "ragas_scores.ragas_error"
     if err_col in df:
         ragas_err = df[err_col].notna() & df[err_col].astype(str).str.strip().ne("")
         flags["ragas_errors"] = int(ragas_err.sum())
-        print(f"  ragas scorer errors: {int(ragas_err.sum())}")
+        emit(f"  ragas scorer errors: {int(ragas_err.sum())}")
 
     empty, degenerate = [], []
     for m in metric_cols(df):
@@ -177,9 +240,9 @@ def health_report(df):
         elif s.nunique(dropna=True) == 1:
             degenerate.append((m, s.dropna().iloc[0]))
     for m in empty:
-        print(f"  [BROKEN] {m}: no numeric values at all")
+        emit(f"  [BROKEN] {m}: no numeric values at all")
     for m, v in degenerate:
-        print(f"  [DEGENERATE] {m}: constant = {v}")
+        emit(f"  [DEGENERATE] {m}: constant = {v}")
     flags["empty_metrics"] = empty
     flags["degenerate_metrics"] = degenerate
 
@@ -189,13 +252,32 @@ def health_report(df):
         for c in faith_cols:
             scored = pd.to_numeric(df.loc[reject.fillna(False), c], errors="coerce").notna().sum()
             if scored:
-                print(f"  [CHECK] {c} scored on {int(scored)} abstained rows "
-                      f"(faithfulness is ill-defined on abstentions)")
+                emit(f"  [CHECK] {c} scored on {int(scored)} abstained rows "
+                     f"(faithfulness is ill-defined on abstentions)")
         flags["faithfulness_on_rejections"] = {
             c: int(pd.to_numeric(df.loc[reject.fillna(False), c], errors="coerce").notna().sum())
             for c in faith_cols
         }
+
+    text = "\n".join(lines)
+    print(text)
+    if source is not None:
+        path = _write_report(text, "health", source, out_dir)
+        print(f"wrote {path}")
+        flags["report_path"] = str(path)
     return flags
+
+
+def _write_report(text, kind, source, out_dir="analysis"):
+    """Write ``text`` to ``<out_dir>/<kind>_<source-stem>_<timestamp>.txt`` and
+    return the path. Shared by the eval and rag health reports so both name their
+    source file and carry a run timestamp."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stem = Path(str(source)).stem
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    path = Path(out_dir) / f"{kind}_{stem}_{ts}.txt"
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 def _rejection_mask(df):
@@ -371,6 +453,177 @@ def abstention_adjusted(df, metrics=None, by=None):
     return pd.DataFrame(rows).T
 
 
+# --- Cohort description & evaluator-failure exclusion ------------------------
+
+def describe_cohort(df):
+    """Counts of what you're analysing: ``source_dataset`` x ``variant`` crosstab
+    with row/column totals, so 'how many datapoints of each type' is one table.
+
+    Run it before and after ``drop_eval_errors`` to see exactly what the exclusion
+    cost. Falls back to a single-axis count if either column is missing.
+    """
+    if "source_dataset" in df and "variant" in df:
+        ct = pd.crosstab(df["source_dataset"],
+                         df["variant"].astype("object"),
+                         margins=True, margins_name="All")
+        return ct
+    axis = "source_dataset" if "source_dataset" in df else "variant"
+    if axis in df:
+        return df[axis].value_counts().rename_axis(axis).to_frame("n")
+    return pd.DataFrame({"n": [len(df)]}, index=["all"])
+
+
+# Narrow, technical-failure patterns for DECIDING to drop a row — the evaluator
+# LLM crashed, not "the answer was weak". Deliberately much stricter than
+# FAILURE_PATTERNS (which is broad on purpose, for *eyeballing* leads): a
+# DeepEval reason that legitimately says "no relevant context" is a real low
+# score, not a failure, so it must NOT match here.
+EVAL_ERROR_PATTERNS = [
+    r"exception", r"traceback", r"failed to parse", r"parse error",
+    r"outputparser", r"json ?decode", r"could ?n[o']t parse",
+    r"rate ?limit", r"timed ?out", r"\btimeout\b", r"api error",
+    r"error (?:generating|calling|during|while)", r"\[llamacpp",
+]
+
+
+def drop_eval_errors(df, mask_metric_level=False):
+    """Exclude rows where a *technical failure* — not a low score — produced the
+    metric, and report how many and of what type were dropped.
+
+    Three failure signals:
+      - generation failure: ``answer`` contains ``[LLAMACPP ...]`` (no real
+        answer exists, so the whole row is meaningless -> always dropped);
+      - RAGAS failure: ``ragas_scores.ragas_error`` is non-empty (the RAGAS judge
+        raised, e.g. an OutputParserException);
+      - DeepEval failure: any ``deepeval_scores.*_reason`` matches the narrow
+        ``EVAL_ERROR_PATTERNS`` (DeepEval has no error field, so the judge crash
+        only shows up in its prose).
+
+    Returns ``(clean_df, report)``. ``report`` is a dict with: ``n_before`` /
+    ``n_after`` / ``n_dropped``; ``by_type`` (rows flagged per failure signal —
+    can overlap); ``by_dataset`` and ``by_variant`` (dropped counts); and
+    ``by_dataset_variant`` (the crosstab of what was dropped).
+
+    ``mask_metric_level=False`` (default) drops the whole row on any failure — a
+    clean uniform cohort for paired tables. It is not implemented to mask per
+    metric yet; the flag is a placeholder documenting the alternative (mask only
+    the failed evaluator's columns, keeping the other evaluator's valid scores).
+    """
+    if mask_metric_level:
+        raise NotImplementedError(
+            "metric-level masking not implemented; call with mask_metric_level=False "
+            "(whole-row drop). See docstring for the trade-off.")
+
+    idx = df.index
+    gen = (df["answer"].fillna("").str.contains(r"\[LLAMACPP", regex=True)
+           if "answer" in df else pd.Series(False, index=idx))
+
+    err_col = "ragas_scores.ragas_error"
+    ragas = (df[err_col].notna() & df[err_col].astype(str).str.strip().ne("")
+             if err_col in df else pd.Series(False, index=idx))
+
+    rx = re.compile("|".join(EVAL_ERROR_PATTERNS), re.IGNORECASE)
+    de_cols = [c for c in df.columns
+               if c.startswith("deepeval_scores.") and c.endswith("_reason")]
+    deepeval = pd.Series(False, index=idx)
+    for c in de_cols:
+        txt = df[c].astype("string").fillna("")
+        deepeval = deepeval | (txt.str.strip().ne("") & txt.str.contains(rx))
+
+    bad = gen | ragas | deepeval
+    dropped = df[bad]
+    report = {
+        "n_before": len(df),
+        "n_after": int((~bad).sum()),
+        "n_dropped": int(bad.sum()),
+        "by_type": pd.Series(
+            {"generation": int(gen.sum()),
+             "ragas": int(ragas.sum()),
+             "deepeval": int(deepeval.sum())}, dtype="int64"),
+        "by_dataset": (dropped["source_dataset"].value_counts()
+                       if "source_dataset" in dropped else pd.Series(dtype="int64")),
+        "by_variant": (dropped["variant"].astype("object").value_counts()
+                       if "variant" in dropped else pd.Series(dtype="int64")),
+        "by_dataset_variant": (describe_cohort(dropped) if len(dropped)
+                               else pd.DataFrame()),
+    }
+    return df[~bad].copy(), report
+
+
+# --- (b) Paired 'A beats B' variant comparison -------------------------------
+
+def _bootstrap_ci(diffs, n_boot=2000, alpha=0.05, seed=0):
+    """Percentile bootstrap CI for the mean of ``diffs``."""
+    diffs = np.asarray(diffs, dtype=float)
+    if len(diffs) == 0:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    means = rng.choice(diffs, size=(n_boot, len(diffs)), replace=True).mean(axis=1)
+    lo, hi = np.quantile(means, [alpha / 2, 1 - alpha / 2])
+    return float(lo), float(hi)
+
+
+def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=2000):
+    """Paired 'does variant ``a`` beat variant ``b``' on one metric, matched per id.
+
+    The core results-chapter test. Pairs each question's ``a`` and ``b`` score
+    (pivot on ``id``, keep ids present in both), then reports on the paired
+    differences ``a - b``:
+      - ``n_pairs`` (and ``n_unpaired`` dropped for lacking a partner);
+      - ``mean_a`` / ``mean_b`` / ``mean_diff`` / ``median_diff``;
+      - ``frac_a_gt_b``: share of questions where a strictly beat b;
+      - ``wilcoxon_p``: two-sided Wilcoxon signed-rank p-value (non-parametric,
+        the right test for these bounded, non-normal scores);
+      - ``rank_biserial``: matched-pairs effect size in [-1, 1] (magnitude, since a
+        p-value alone doesn't say *how much*); positive favours ``a``;
+      - ``ci_low`` / ``ci_high``: bootstrap 95% CI on the mean difference.
+
+    ``by="source_dataset"`` adds one row per dataset beneath the ``overall`` row —
+    the per-dataset twin that often carries the interesting finding. Ties (zero
+    differences) are dropped from the signed-rank test per Wilcoxon convention;
+    an all-tie or empty pairing yields NaN stats rather than raising.
+    """
+    def _one(sub):
+        wide = sub.pivot_table(index="id", columns="variant", values=metric,
+                               observed=True, aggfunc="mean")
+        have = [v for v in (a, b) if v in wide.columns]
+        if len(have) < 2:
+            return pd.Series({"n_pairs": 0, "n_unpaired": len(wide),
+                              "note": f"missing variant(s): {set((a, b)) - set(have)}"})
+        pair = wide[[a, b]].dropna()
+        n = len(pair)
+        diffs = (pair[a] - pair[b]).to_numpy()
+        nonzero = diffs[diffs != 0]
+        row = {
+            "n_pairs": n,
+            "n_unpaired": int(len(wide) - n),
+            "mean_a": pair[a].mean(),
+            "mean_b": pair[b].mean(),
+            "mean_diff": diffs.mean() if n else float("nan"),
+            "median_diff": float(np.median(diffs)) if n else float("nan"),
+            "frac_a_gt_b": float((diffs > 0).mean()) if n else float("nan"),
+        }
+        if wilcoxon is None or len(nonzero) == 0:
+            row["wilcoxon_p"] = float("nan") if wilcoxon is not None else float("nan")
+            row["rank_biserial"] = 0.0 if len(nonzero) == 0 else float("nan")
+        else:
+            row["wilcoxon_p"] = float(wilcoxon(nonzero)[1])
+            ranks = pd.Series(np.abs(nonzero)).rank().to_numpy()
+            t_plus = ranks[nonzero > 0].sum()
+            t_minus = ranks[nonzero < 0].sum()
+            total = t_plus + t_minus
+            row["rank_biserial"] = float((t_plus - t_minus) / total) if total else 0.0
+        lo, hi = _bootstrap_ci(diffs, n_boot=n_boot)
+        row["ci_low"], row["ci_high"] = lo, hi
+        return pd.Series(row)
+
+    rows = {"overall": _one(df)}
+    if by is not None and by in df:
+        for g, sub in df.groupby(by, observed=True):
+            rows[str(g)] = _one(sub)
+    return pd.DataFrame(rows).T
+
+
 def metric_boxplot(df, metric, by="variant", ax=None):
     """Distribution of a metric column across variants (or any category)."""
     ax = ax or plt.subplots(figsize=(6, 4))[1]
@@ -407,9 +660,15 @@ def coverage_violin(df, ax=None):
 
 
 def rejection_bars(df, ax=None):
-    """Fraction of answers that are the abstention string, per variant."""
+    """Fraction of answers that abstained, per variant.
+
+    Routes through ``_rejection_mask`` (the single source of truth: the pipeline's
+    ``rejected`` flag, falling back to ``is_rejection``) rather than reading a raw
+    column, so it can never diverge from the other abstention consumers.
+    """
     ax = ax or plt.subplots(figsize=(6, 4))[1]
-    rate = df.groupby("variant", observed=True)["is_rejection"].mean().reindex(_order(df))
+    rate = (_rejection_mask(df).groupby(df["variant"], observed=True)
+            .mean().reindex(_order(df)))
     rate.plot.bar(ax=ax)
     ax.set_ylabel("rejection rate")
     ax.set_ylim(0, 1)
@@ -467,6 +726,23 @@ if __name__ == "__main__":
           f"variants={list(d['variant'].cat.categories)}")
     print(d.groupby("variant", observed=True)["is_rejection"].mean().round(3).to_string())
 
+    # --- Cohort + evaluator-failure exclusion --------------------------------
+    print("\n=== cohort before exclusion (source_dataset x variant) ===")
+    print(describe_cohort(d).to_string())
+
+    d, drop_report = drop_eval_errors(d)
+    print(f"\n=== dropped {drop_report['n_dropped']} evaluator-failure rows "
+          f"({drop_report['n_before']} -> {drop_report['n_after']}) ===")
+    print("by failure type (rows can overlap):")
+    print(drop_report["by_type"].to_string())
+    if drop_report["n_dropped"]:
+        print("by dataset:")
+        print(drop_report["by_dataset"].to_string())
+        print("by variant:")
+        print(drop_report["by_variant"].to_string())
+    print("\n=== cohort after exclusion (what is actually analysed) ===")
+    print(describe_cohort(d).to_string())
+
     # --- Tabular summaries: print to console and save as CSV -----------------
     print("\n=== per-metric summary (coverage / mean / degeneracy) ===")
     summary = metric_summary(d)
@@ -479,8 +755,18 @@ if __name__ == "__main__":
         print(table.round(3).to_string())
         table.to_csv(f"analysis/means_by_{by}.csv")
 
-    print("\n=== broken-signal checks ===")
-    health_report(d)
+    print("\n=== broken-signal checks (also written to a timestamped file) ===")
+    health_report(d, source=path)
+
+    # --- Paired 'A beats B' comparisons (the results-chapter spine) -----------
+    print("\n=== paired variant comparisons (Wilcoxon signed-rank) ===")
+    for metric in ("ragas_scores.ragas_answer_correctness",
+                   "deepeval_scores.deepeval_relevance"):
+        for a, b in (("rag", "no_rag"), ("rag_sc", "rag")):
+            cmp = compare_variants(d, metric, a=a, b=b)
+            print(f"\n{metric}: {a} vs {b}")
+            print(cmp.round(3).to_string())
+            cmp.to_csv(f"analysis/compare_{a}_vs_{b}_{metric.split('.')[-1]}.csv")
 
     print("\n=== reason-string mining (failure-phrase hit rate per judge) ===")
     reasons = mine_reasons(d)
