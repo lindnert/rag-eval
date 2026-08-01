@@ -68,6 +68,36 @@ RAG_SC_RETRIEVAL_SPREAD_THRESHOLD = float(
     os.getenv("RAG_SC_RETRIEVAL_SPREAD_THRESHOLD", "0.04")
 )
 
+# How the HyDE re-retrieval is combined with the original retrieval.
+#
+#   "rrf"   → Reciprocal Rank Fusion (Cormack, Clarke & Büttcher, SIGIR 2009).
+#             The two result lists are merged by RANK, and the surviving chunks are
+#             then rescored under the ORIGINAL QUESTION, so every retrieval score
+#             the pipeline records means the same thing.
+#   "score" → the pre-2026-08 behaviour: pool both lists, keep each chunk's own
+#             score, sort by it. Kept so earlier runs stay reproducible.
+#
+# Why the switch: a fused score is `alpha * cosine + (1-alpha) * bm25/max_bm25`, and
+# that BM25 half is normalised by the best chunk FOR THAT QUERY — so the top chunk
+# scores 1.0 in every search, however good the match actually was. Sound within one
+# search, meaningless between two, because the original list is measured against the
+# question and the HyDE list against a generated pseudo-answer. Sorting the pooled
+# list compared the two directly, and could evict the question's OWN best chunk: on
+# the 2026-07-31 run, 121 of 307 re-retrieved rows lost their entire original top-k.
+# The measured tilt is modest — on rows where only the spread trigger fired (so the
+# original was not capped by the trigger that caused the re-retrieval) the two lists
+# score about the same, 0.757 vs 0.752 — so this is about not comparing incomparable
+# numbers, and about guaranteeing the question's best chunk survives. It is not a
+# correction for a large observed bias.
+RAG_SC_MERGE_STRATEGY = os.getenv("RAG_SC_MERGE_STRATEGY", "rrf").lower()
+
+# RRF damping constant: a chunk's vote from one list is 1 / (RAG_SC_RRF_K + rank),
+# summed over the lists it appears in. 60 is the value from the paper. At 60 a chunk
+# found by BOTH searches always outranks one that a single search ranked first —
+# agreement between two independent retrievals is the strongest signal available
+# here. Lower it to let a single list's rank-1 win instead.
+RAG_SC_RRF_K = int(os.getenv("RAG_SC_RRF_K", "60"))
+
 # Trigger U: mean token logprob below this → low overall confidence.
 RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD = float(
     os.getenv("RAG_SC_GEN_MEAN_LOGPROB_THRESHOLD", "-0.09")
