@@ -173,8 +173,19 @@ def _build_llm() -> ChatOpenAI:
 
 
 def _build_metrics(model):
+    # penalize_ambiguous_claims: DeepEval's verdict prompt mandates "idk" for any
+    # claim the context does not back up ("Only use 'no' if retrieval context
+    # DIRECTLY CONTRADICTS the claim"), and by default "idk" still counts toward
+    # the numerator. The default score is therefore a NON-CONTRADICTION rate, on
+    # which an invented-but-uncontradicted claim — the dominant RAG hallucination
+    # mode — scores as faithful. With the flag on, "idk" contributes 0, making the
+    # score a CONTEXT-SUPPORT rate: supported claims / all claims. That is what
+    # faithfulness is meant to mean here, and it is the same quantity RAGAS
+    # faithfulness computes, so the two become comparable rather than measuring
+    # different things.
     return (
-        FaithfulnessMetric(model=model, async_mode=True),
+        FaithfulnessMetric(model=model, async_mode=True,
+                           penalize_ambiguous_claims=True),
         AnswerRelevancyMetric(model=model, async_mode=True),
         ContextualRelevancyMetric(model=model, async_mode=True),
     )
@@ -188,6 +199,37 @@ def _metric_reason(metric) -> str:
     if reason is None or (isinstance(reason, str) and not reason.strip()):
         return _NO_REASON_FALLBACK
     return reason
+
+
+def _verdict_counts(metric) -> dict:
+    """The yes/no/idk tally behind a DeepEval score.
+
+    All three metrics score as ``count(verdict != "no") / n_verdicts``, so the
+    final float discards how it was reached. Persisting the tally costs no extra
+    LLM call (``metric.verdicts`` is already populated once ``a_measure``
+    returns) and makes three things answerable offline, from a single run:
+
+      - Both score definitions. ``yes / n`` is the context-support score we now
+        record (``penalize_ambiguous_claims=True``); ``(yes + idk) / n`` is
+        DeepEval's default non-contradiction score. Either can be recomputed
+        later without re-running the judge.
+      - The resolution ceiling. A score over 3 verdicts can only take 4 distinct
+        values — the reason these metrics look coarse however good the judge is.
+      - The silent perfect scores. ``_calculate_score`` returns 1 outright when
+        there are no verdicts (nothing was extracted to judge — an abstention,
+        say), which is indistinguishable from a genuine 1.0 in the float alone.
+        ``n_verdicts == 0`` identifies exactly those rows.
+
+    ``n_verdicts`` counts claims for faithfulness, answer statements for answer
+    relevancy, and context statements for contextual relevancy.
+    """
+    verdicts = getattr(metric, "verdicts", None) or []
+    counts = {"n_verdicts": len(verdicts), "yes": 0, "no": 0, "idk": 0}
+    for v in verdicts:
+        key = str(getattr(v, "verdict", "")).strip().lower()
+        if key in counts:
+            counts[key] += 1
+    return counts
 
 
 """def run_deepeval(sample):
@@ -252,7 +294,13 @@ async def arun_deepeval(sample, semaphore: asyncio.Semaphore | None = None, idx:
                     reason_key: _NO_REASON_FALLBACK,
                     f"{score_key}_error": f"{type(outcome).__name__}: {outcome}",
                 }
-            return {score_key: metric.score, reason_key: _metric_reason(metric)}
+            # The verdict tally is only meaningful for a metric that actually ran,
+            # so the sentinel/error paths above deliberately omit it.
+            return {
+                score_key: metric.score,
+                reason_key: _metric_reason(metric),
+                f"{score_key}_verdicts": _verdict_counts(metric),
+            }
 
         # Faithfulness + contextual_relevance require retrieved contexts; for
         # the no_rag variant we only run AnswerRelevancy. AnswerRelevancy is

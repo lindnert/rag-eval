@@ -323,18 +323,24 @@ def prepare(df):
 # --- (2a) Metric validation: is each metric discriminative on its own? -------
 
 def score_cols(df):
-    """``ev.metric_cols`` minus the per-metric error bookkeeping fields.
+    """``ev.metric_cols`` minus the bookkeeping fields that are not scores.
 
     ``metric_cols`` keeps everything under ``ragas_scores.`` / ``deepeval_scores.``
-    that is not prose, which sweeps in ``ragas_metric_errors[.<metric>]`` and the
-    ``deepeval_*_error`` flags. Those are never numeric scores, so in a
-    distribution table they would only add all-NaN rows — and truncating
+    that is not prose, which sweeps in three things that are not metrics:
+    ``ragas_metric_errors[.<metric>]``, the ``deepeval_*_error`` flags, and the
+    ``deepeval_*_verdicts.{n_verdicts,yes,no,idk}`` tallies. In a distribution
+    table the first two would only add all-NaN rows — and truncating
     ``ragas_metric_errors.ragas_answer_correctness`` to its last segment collides
-    with the real metric of that name. Whether a metric errored is
-    ``metric_error_report``'s question, not this table's.
+    with the real metric of that name — while the verdict counts are integer
+    tallies on a different scale entirely, whose min/max/median next to a 0-1
+    score would be nonsense. Whether a metric errored is
+    ``metric_error_report``'s question; what the verdicts were is an input to the
+    score, not a score.
     """
     return [c for c in ev.metric_cols(df)
-            if "metric_errors" not in c and not c.endswith("_error")]
+            if "metric_errors" not in c
+            and "_verdicts." not in c
+            and not c.endswith(("_error", "_verdicts"))]
 
 
 def metric_distribution(df, by=None, metrics=None):
