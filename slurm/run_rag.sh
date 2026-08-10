@@ -5,7 +5,7 @@
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
 #SBATCH --output=/home/l/lindnerti/rag-eval/logs/rag.%A_%a.%N.out
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=0
@@ -14,7 +14,8 @@
 #SBATCH --exclusive
 # Default array for a bare `sbatch slurm/run_rag.sh`; the login-node submitter
 # below overrides it with --array=0-${ARRAY_MAX} (see the job-accounting note).
-#SBATCH --array=0-14
+#SBATCH --array=0-12
+# 1 stage job + 13 regular jobs + 1 merge job = 15
 
 ## Two ways to start it (this script is dual-mode — see the SLURM_JOB_ID branch
 ## below). Both produce one array run covering both languages (per-query prompt
@@ -98,7 +99,8 @@ stage_models() {
 #      permitting.
 # ---------------------------------------------------------------------------
 if [ -z "${SLURM_JOB_ID:-}" ]; then
-  ARRAY_MAX="${ARRAY_MAX:-14}"
+  ARRAY_MAX="${ARRAY_MAX:-12}"
+  # 1 stage job + 13 regular jobs + 1 merge job = 15
   # Resolve absolute paths so submission is independent of the cwd the user
   # launched from. This script lives in <repo>/slurm/, so REPO_ROOT is its
   # parent dir. cd there before sbatch so the array job's SLURM_SUBMIT_DIR

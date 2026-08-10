@@ -5,14 +5,16 @@
 #SBATCH --mail-user=tim.lindner@campus.lmu.de
 #SBATCH --chdir=/home/l/lindnerti/rag-eval
 #SBATCH --output=/home/l/lindnerti/rag-eval/logs/eval.%A_%a.%N.out
-#SBATCH --time=08:00:00
+#SBATCH --time=12:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=0
 #SBATCH --partition=NvidiaAll
 # Default array for a bare `sbatch slurm/run_eval.sh`; the login-node submitter
 # below overrides it with --array=0-${ARRAY_MAX} (see the job-accounting note).
-#SBATCH --array=0-14
+#SBATCH --array=0-12
+# balance out workload across shards (should be not dividable by 3 variants) + 1 stage + 1 merge job
+
 
 ## Two ways to start it (this script is dual-mode — see the SLURM_JOB_ID branch
 ## below). It reads the NEWEST results/rag_results_<timestamp>.json and writes
@@ -103,7 +105,8 @@ stage_models() {
 #      RAG run finishes so the two (17 each) don't queue together and exceed 30.
 # ---------------------------------------------------------------------------
 if [ -z "${SLURM_JOB_ID:-}" ]; then
-  ARRAY_MAX="${ARRAY_MAX:-14}"
+  ARRAY_MAX="${ARRAY_MAX:-12}"
+  # balance out workload across shards (should be not dividable by 3 variants) + 1 stage + 1 merge job
   # Resolve absolute paths so submission is independent of the cwd the user
   # launched from. This script lives in <repo>/slurm/, so REPO_ROOT is its
   # parent dir. cd there before sbatch so the array job's SLURM_SUBMIT_DIR
