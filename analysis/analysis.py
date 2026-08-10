@@ -115,6 +115,13 @@ def metric_summary(df, metrics=None):
         A near-zero coverage means the metric was (almost) never computed —
         the evaluation step for it is broken or was skipped.
       - ``mean`` / ``std`` / ``min`` / ``max``: the usual location/spread.
+      - ``q25`` / ``median`` / ``q75``: the quantiles. They are what separate a
+        *discriminative* metric from a skewed one that the mean flatters: a
+        median of 1.0 with a mean of 0.8 means the metric says "perfect" for
+        most queries and only a tail carries any signal. ``q75 - q25`` (the IQR)
+        collapsing to 0 while min < max is exactly that pile-up.
+      - ``n_unique``: distinct scored values. A metric that only ever emits a
+        handful of levels cannot rank ~1000 queries however good its mean looks.
       - ``frac_zero`` / ``frac_one``: share of scored rows pinned at the 0.0 /
         1.0 rails. A metric that is ~all-0 or ~all-1 (std ~ 0) is degenerate —
         often a scorer default firing on every row rather than a real signal.
@@ -131,7 +138,11 @@ def metric_summary(df, metrics=None):
             "mean": s.mean(),
             "std": s.std(),
             "min": s.min(),
+            "q25": s.quantile(0.25) if n else float("nan"),
+            "median": s.median(),
+            "q75": s.quantile(0.75) if n else float("nan"),
             "max": s.max(),
+            "n_unique": int(s.nunique()),
             "frac_zero": round((s == 0).sum() / n, 3) if n else float("nan"),
             "frac_one": round((s == 1).sum() / n, 3) if n else float("nan"),
         }

@@ -22,7 +22,16 @@ It answers four things, in the order __main__ runs them:
      those rows drop out of RAGAS aggregates while their independent DeepEval
      scores survive.
 
-  2. Metric validation. Do metrics that measure the same thing agree?
+  2. Metric validation, in two parts.
+
+     (a) Is each metric discriminative on its own? ``metric_distribution`` gives
+     min / q25 / median / q75 / max, spread, distinct-value count and the 0/1 rail
+     fractions per metric — overall and per dataset x variant, since a metric can
+     spread over one dataset and collapse on another. A metric whose IQR sits on a
+     rail ranks nothing, and its mean in the results chapter means nothing either,
+     so this comes before every aggregate below.
+
+     (b) Do metrics that measure the same thing agree?
      ``ragas_answer_relevancy`` vs ``deepeval_relevance``; the three faithfulness
      metrics against each other — overall and per dataset / per variant
      (correlation, bias, agreement-within-tolerance). Plus
@@ -311,7 +320,65 @@ def prepare(df):
     return clean, report
 
 
-# --- (2a) Metric validation: do comparable metrics agree? --------------------
+# --- (2a) Metric validation: is each metric discriminative on its own? -------
+
+def score_cols(df):
+    """``ev.metric_cols`` minus the per-metric error bookkeeping fields.
+
+    ``metric_cols`` keeps everything under ``ragas_scores.`` / ``deepeval_scores.``
+    that is not prose, which sweeps in ``ragas_metric_errors[.<metric>]`` and the
+    ``deepeval_*_error`` flags. Those are never numeric scores, so in a
+    distribution table they would only add all-NaN rows — and truncating
+    ``ragas_metric_errors.ragas_answer_correctness`` to its last segment collides
+    with the real metric of that name. Whether a metric errored is
+    ``metric_error_report``'s question, not this table's.
+    """
+    return [c for c in ev.metric_cols(df)
+            if "metric_errors" not in c and not c.endswith("_error")]
+
+
+def metric_distribution(df, by=None, metrics=None):
+    """Per-metric location and spread — ``ev.metric_summary`` overall, or once per
+    ``by`` group with the group as the leading index level.
+
+    This is the "does this metric separate anything?" table that must be read
+    before any mean in the results chapter is trusted. Beyond mean/std it carries
+    min / q25 / median / q75 / max, ``n_unique`` and the 0/1 rail fractions, so the
+    three failure modes are visible at a glance: a metric pinned at one rail
+    (frac_one ~ 1), a metric whose IQR is 0 while min < max (all mass on one value,
+    signal only in a thin tail), and a metric emitting too few distinct levels to
+    rank queries at all.
+
+    Grouping matters because discriminativeness is not a property of the metric
+    alone: a metric can spread nicely over NGQA and collapse to 1.0 on MMLU, and a
+    single pooled row hides that. ``by=["source_dataset", "variant"]`` is the
+    default cut used by ``__main__``.
+
+    Note on ``coverage`` within a group: it is scored-rows / group-rows, so the
+    legitimately not-applicable cells (faithfulness on ``no_rag``, the ID-context
+    metrics off the synthetic set) read as low coverage here by design. Which
+    zeros are expected and which are real failures is ``metric_error_report``'s
+    job, not this table's.
+    """
+    metrics = metrics or score_cols(df)
+    if by is None:
+        return ev.metric_summary(df, metrics)
+    keys = [by] if isinstance(by, str) else list(by)
+    frames = {}
+    for g, sub in df.groupby(keys, observed=True):
+        if not len(sub):
+            continue
+        frames[g if isinstance(g, tuple) else (g,)] = ev.metric_summary(sub, metrics)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames.values(), keys=frames.keys(),
+                    names=keys + ["metric"]).reset_index()
+    for k in keys:
+        out[k] = out[k].astype(str)
+    return out.set_index(keys + ["metric"])
+
+
+# --- (2b) Metric validation: do comparable metrics agree? --------------------
 
 def _corr(x, y):
     """(n, pearson, spearman) over the rows where both are numeric."""
@@ -652,7 +719,21 @@ if __name__ == "__main__":
         print("\nprepared for analysis: no row-level RAGAS scorer errors to mask "
               "(individual missing metric cells are still excluded per metric).")
 
-    # (2a) metric validation ----------------------------------------------------
+    # (2a) metric distribution / discriminativeness -----------------------------
+    print("\n=== per-metric distribution (is the metric discriminative?) ===")
+    print("read before any mean below: median/IQR at a rail, or a tiny n_unique, "
+          "means the metric separates nothing and its mean is not interpretable.")
+    dist = metric_distribution(d)
+    print(dist.round(3).to_string())
+    dist.to_csv("analysis/eval_metric_distribution.csv")
+
+    print("\n--- per dataset x variant (a metric can discriminate on one and not "
+          "another; low coverage here is often legitimate — see the report above) ---")
+    dist_g = metric_distribution(d, by=["source_dataset", "variant"])
+    print(dist_g.round(3).to_string())
+    dist_g.to_csv("analysis/eval_metric_distribution_by_dataset_variant.csv")
+
+    # (2b) metric validation ----------------------------------------------------
     print("\n=== metric agreement (comparable metrics, overall) ===")
     ag = metric_agreement(d)
     print(ag.round(3).to_string(index=False))
