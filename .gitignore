@@ -225,10 +225,9 @@ dataset/synthetic/generated*/*
 
 # Results
 results/
-analysis/*.csv
-analysis/*.png
-analysis/*.txt
-analysis/*.parquet
+# Everything the analysis scripts generate (see analysis/paths.py). All of it is
+# reproducible from the JSON in results/, so none of it is tracked.
+analysis/out/
 
 # Models & HF
 .ollama_models/

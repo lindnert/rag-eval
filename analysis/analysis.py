@@ -1,14 +1,18 @@
-"""Lightweight loading and plotting for evaluated RAG results.
+"""Lightweight loading and summary tables for evaluated RAG results.
 
-    from analysis.analysis import load, coverage_violin, metric_boxplot, \
-        rejection_bars, ragas_vs_deepeval
+    from analysis.analysis import load, metric_summary, compare_variants
+    from analysis import plots
     df = load("evaluated_results_YYYYMMDD.json")
-    metric_boxplot(df, "ragas_scores.ragas_faithfulness")
+    plots.metric_boxplot(df, "ragas_scores.ragas_faithfulness")
 
 `load` flattens the nested JSON with pandas and coerces the metric columns to
 numeric (the mixed-dtype sentinel strings such as "no rag - no retrieved
 contexts" and nulls become NaN, which plotting skips). Everything else is a
 plain DataFrame you can slice and plot however you like.
+
+The figures that used to live here are in ``analysis.plots`` — one module for
+every figure the analysis produces, so the three analysis modules keep only the
+tables and statistics.
 
 Running from the console
 ------------------------
@@ -20,29 +24,24 @@ the package on the path, so ``python analysis/analysis.py`` will NOT work):
 
 This runs the whole __main__ report: cohort crosstab, evaluator-failure
 exclusion, per-metric summary, paired Wilcoxon comparisons, reason mining,
-logprob correlation, deciles, and the PNGs — writing the CSVs/PNGs and a
-timestamped health report into ``analysis/`` (see the bottom of this file for
-the exact outputs, and note fixed-name CSV/PNGs are overwritten each run).
+logprob correlation, deciles, and the PNGs. Every artifact goes to
+``analysis/out/<results-stem>/`` (tables/, figures/, reports/), named for the
+results file it came from — see ``analysis.paths``.
 """
 
 import json
 import re
 from datetime import datetime
-from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from analysis import paths
 
 try:
     from scipy.stats import wilcoxon
 except ImportError:  # scipy is optional; only compare_variants needs it
     wilcoxon = None
-
-try:
-    import seaborn as sns
-except ImportError:  # seaborn is optional; functions fall back to matplotlib
-    sns = None
 
 # Canonical abstention strings (per language). We import from the dependency-free
 # source so the analysis module doesn't pull in torch/transformers. REJECTION_ANSWERS
@@ -206,19 +205,18 @@ def decile_breakdown(df, metric, n_bins=10, id_col="id"):
     return out
 
 
-def health_report(df, source=None, out_dir="analysis"):
-    """Quick 'is something broken?' checks; prints, and writes a timestamped
-    report file when ``source`` (the results path/name it ran on) is given.
+def health_report(df, source=None):
+    """Quick 'is something broken?' checks. Prints; ``source`` (the results
+    path/name it ran on) only adds the provenance header lines.
 
     Surfaces the failure modes that silently poison aggregates: generation
     errors baked into the answer text, RAGAS scorer errors, metrics that never
     produced a value, degenerate (constant) metrics, and faithfulness scored on
     abstentions (ill-defined — an abstention makes no claim to be faithful to).
 
-    Returns the flags dict. When ``source`` is passed, the same lines are saved
-    to ``<out_dir>/health_<source-stem>_<timestamp>.txt`` so each check is
-    archived next to the file and run it describes (rather than only scrolling
-    past in the console).
+    Returns the flags dict. The printed lines are saved along with the rest of
+    the run's console output by ``analysis.paths.capture``, which the __main__
+    block wraps around everything — this function no longer writes its own file.
     """
     flags = {}
     lines = []
@@ -270,25 +268,8 @@ def health_report(df, source=None, out_dir="analysis"):
             for c in faith_cols
         }
 
-    text = "\n".join(lines)
-    print(text)
-    if source is not None:
-        path = _write_report(text, "health", source, out_dir)
-        print(f"wrote {path}")
-        flags["report_path"] = str(path)
+    print("\n".join(lines))
     return flags
-
-
-def _write_report(text, kind, source, out_dir="analysis"):
-    """Write ``text`` to ``<out_dir>/<kind>_<source-stem>_<timestamp>.txt`` and
-    return the path. Shared by the eval and rag health reports so both name their
-    source file and carry a run timestamp."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stem = Path(str(source)).stem
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
-    path = Path(out_dir) / f"{kind}_{stem}_{ts}.txt"
-    path.write_text(text, encoding="utf-8")
-    return path
 
 
 def _rejection_mask(df):
@@ -412,22 +393,7 @@ def logprob_correlation(df, metric="ragas_scores.ragas_answer_correctness",
     return pd.DataFrame(rows).T
 
 
-def logprob_scatter(df, metric="ragas_scores.ragas_answer_correctness",
-                    logprob_col="gen_logprob_stats.mean", ax=None):
-    """Scatter of mean token logprob vs a quality metric, coloured by variant."""
-    ax = ax or plt.subplots(figsize=(6, 5))[1]
-    x = pd.to_numeric(df[logprob_col], errors="coerce")
-    y = pd.to_numeric(df[metric], errors="coerce")
-    m = x.notna() & y.notna()
-    if sns is not None:
-        sns.scatterplot(x=x[m], y=y[m], hue=df.loc[m, "variant"],
-                        hue_order=_order(df), ax=ax)
-    else:
-        ax.scatter(x[m], y[m], alpha=0.6)
-    ax.set_xlabel(logprob_col)
-    ax.set_ylabel(metric)
-    ax.set_title("Generation confidence vs answer quality")
-    return ax
+# The scatter of this correlation is ``plots.logprob_scatter``.
 
 
 # --- (5) Abstention-adjusted metrics ----------------------------------------
@@ -635,192 +601,106 @@ def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=2000):
     return pd.DataFrame(rows).T
 
 
-def metric_boxplot(df, metric, by="variant", ax=None):
-    """Distribution of a metric column across variants (or any category)."""
-    ax = ax or plt.subplots(figsize=(6, 4))[1]
-    order = _order(df) if by == "variant" else None
-    if sns is not None:
-        sns.boxplot(data=df, x=by, y=metric, order=order, ax=ax)
-    else:
-        groups = order or list(df[by].dropna().unique())
-        ax.boxplot([df.loc[df[by] == g, metric].dropna() for g in groups], labels=groups)
-        ax.set_xlabel(by)
-        ax.set_ylabel(metric)
-    ax.set_title(f"{metric} by {by}")
-    return ax
-
-
-def coverage_violin(df, ax=None):
-    """Best hybrid retrieval score per record, split by dataset (coverage proxy).
-
-    NOTE: retrieval_scores are hybrid dense+BM25 ranking scores, not pure cosine,
-    so read this as relative KB coverage per dataset rather than absolute similarity.
-    """
-    ax = ax or plt.subplots(figsize=(7, 4))[1]
-    sub = df.dropna(subset=["retrieval_best"])
-    if sns is not None:
-        sns.violinplot(data=sub, x="source_dataset", y="retrieval_best", cut=0, ax=ax)
-    else:
-        cats = list(sub["source_dataset"].unique())
-        ax.violinplot([sub.loc[sub["source_dataset"] == c, "retrieval_best"] for c in cats])
-        ax.set_xticks(range(1, len(cats) + 1))
-        ax.set_xticklabels(cats, rotation=30, ha="right")
-    ax.set_title("Best retrieval score by dataset (hybrid, KB-coverage proxy)")
-    ax.tick_params(axis="x", rotation=30)
-    return ax
-
-
-def rejection_bars(df, ax=None):
-    """Fraction of answers that abstained, per variant.
-
-    Routes through ``_rejection_mask`` (the single source of truth: the pipeline's
-    ``rejected`` flag, falling back to ``is_rejection``) rather than reading a raw
-    column, so it can never diverge from the other abstention consumers.
-    """
-    ax = ax or plt.subplots(figsize=(6, 4))[1]
-    rate = (_rejection_mask(df).groupby(df["variant"], observed=True)
-            .mean().reindex(_order(df)))
-    rate.plot.bar(ax=ax)
-    ax.set_ylabel("rejection rate")
-    ax.set_ylim(0, 1)
-    ax.set_title("Abstention rate by variant")
-    return ax
-
-
-def slopegraph(df, metric, ax=None, sample=None):
-    """Per-id lines across no_rag -> rag -> rag_sc for one metric."""
-    ax = ax or plt.subplots(figsize=(6, 5))[1]
-    wide = df.pivot_table(index="id", columns="variant", values=metric, observed=True)
-    wide = wide.reindex(columns=_order(df)).dropna(how="all")
-    if sample:
-        wide = wide.sample(min(sample, len(wide)), random_state=0)
-    for _, row in wide.iterrows():
-        ax.plot(range(len(wide.columns)), row.values, color="gray", alpha=0.3, marker="o")
-    ax.plot(range(len(wide.columns)), wide.mean().values, color="crimson", marker="o", lw=2, label="mean")
-    ax.set_xticks(range(len(wide.columns)))
-    ax.set_xticklabels(list(wide.columns))
-    ax.set_ylabel(metric)
-    ax.set_title(f"{metric} per id across variants")
-    ax.legend()
-    return ax
-
-
-def ragas_vs_deepeval(df, ragas_col, deepeval_col, ax=None):
-    """Scatter of a RAGAS metric against a comparable DeepEval metric.
-
-    Faithfulness is only meaningful on answered rows (an abstention makes no
-    domain claim), so those are dropped when comparing faithfulness columns.
-    """
-    ax = ax or plt.subplots(figsize=(5, 5))[1]
-    sub = df
-    if "faithful" in ragas_col and "is_rejection" in df:
-        sub = df[~df["is_rejection"]]
-    sub = sub.dropna(subset=[ragas_col, deepeval_col])
-    if sns is not None:
-        sns.scatterplot(data=sub, x=ragas_col, y=deepeval_col, hue="variant",
-                        hue_order=_order(df), ax=ax)
-    else:
-        ax.scatter(sub[ragas_col], sub[deepeval_col], alpha=0.6)
-    ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1)  # y = x reference
-    ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_title("RAGAS vs DeepEval")
-    return ax
-
-
 if __name__ == "__main__":
     import sys
 
+    # Imported here, not at module level: plots imports this module back, and a
+    # top-level import would make that a cycle.
+    from analysis import plots
+
     path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATH
     d = load(path)
-    print(f"{path}: {len(d)} rows, {d['id'].nunique()} ids, "
-          f"variants={list(d['variant'].cat.categories)}")
-    print(d.groupby("variant", observed=True)["is_rejection"].mean().round(3).to_string())
 
-    # --- Cohort + evaluator-failure exclusion --------------------------------
-    print("\n=== cohort before exclusion (source_dataset x variant) ===")
-    print(describe_cohort(d).to_string())
+    # Everything printed below is collected and saved to this run's
+    # reports/ folder, then echoed to the console.
+    with paths.capture(path, "analysis_report"):
+        print(f"{path}: {len(d)} rows, {d['id'].nunique()} ids, "
+              f"variants={list(d['variant'].cat.categories)}")
+        print(f"writing every artifact to {paths.rel(paths.run_dir(path))}")
+        print(d.groupby("variant", observed=True)["is_rejection"].mean().round(3).to_string())
 
-    d, drop_report = drop_eval_errors(d)
-    print(f"\n=== dropped {drop_report['n_dropped']} evaluator-failure rows "
-          f"({drop_report['n_before']} -> {drop_report['n_after']}) ===")
-    print("by failure type (rows can overlap):")
-    print(drop_report["by_type"].to_string())
-    if drop_report["n_dropped"]:
-        print("by dataset:")
-        print(drop_report["by_dataset"].to_string())
-        print("by variant:")
-        print(drop_report["by_variant"].to_string())
-    print("\n=== cohort after exclusion (what is actually analysed) ===")
-    print(describe_cohort(d).to_string())
+        # --- Cohort + evaluator-failure exclusion ----------------------------
+        print("\n=== cohort before exclusion (source_dataset x variant) ===")
+        print(describe_cohort(d).to_string())
 
-    # --- Tabular summaries: print to console and save as CSV -----------------
-    print("\n=== per-metric summary (coverage / mean / degeneracy) ===")
-    summary = metric_summary(d)
-    print(summary.round(3).to_string())
-    summary.to_csv("analysis/metric_summary.csv")
+        d, drop_report = drop_eval_errors(d)
+        print(f"\n=== dropped {drop_report['n_dropped']} evaluator-failure rows "
+              f"({drop_report['n_before']} -> {drop_report['n_after']}) ===")
+        print("by failure type (rows can overlap):")
+        print(drop_report["by_type"].to_string())
+        if drop_report["n_dropped"]:
+            print("by dataset:")
+            print(drop_report["by_dataset"].to_string())
+            print("by variant:")
+            print(drop_report["by_variant"].to_string())
+        print("\n=== cohort after exclusion (what is actually analysed) ===")
+        print(describe_cohort(d).to_string())
 
-    for by in ("source_dataset", "variant"):
-        print(f"\n=== metric means by {by} ===")
-        table = means_by(d, by=by)
-        print(table.round(3).to_string())
-        table.to_csv(f"analysis/means_by_{by}.csv")
+        # --- Tabular summaries: print to console and save as CSV -------------
+        print("\n=== per-metric summary (coverage / mean / degeneracy) ===")
+        summary = metric_summary(d)
+        print(summary.round(3).to_string())
+        summary.to_csv(paths.table(path, "metric_summary"))
 
-    print("\n=== broken-signal checks (also written to a timestamped file) ===")
-    health_report(d, source=path)
+        for by in ("source_dataset", "variant"):
+            print(f"\n=== metric means by {by} ===")
+            tbl = means_by(d, by=by)
+            print(tbl.round(3).to_string())
+            tbl.to_csv(paths.table(path, f"means_by_{by}"))
 
-    # --- Paired 'A beats B' comparisons (the results-chapter spine) -----------
-    print("\n=== paired variant comparisons (Wilcoxon signed-rank) ===")
-    for metric in ("ragas_scores.ragas_answer_correctness",
-                   "deepeval_scores.deepeval_relevance"):
-        for a, b in (("rag", "no_rag"), ("rag_sc", "rag")):
-            cmp = compare_variants(d, metric, a=a, b=b)
-            print(f"\n{metric}: {a} vs {b}")
-            print(cmp.round(3).to_string())
-            cmp.to_csv(f"analysis/compare_{a}_vs_{b}_{metric.split('.')[-1]}.csv")
+        print("\n=== broken-signal checks ===")
+        health_report(d, source=path)
 
-    print("\n=== reason-string mining (failure-phrase hit rate per judge) ===")
-    reasons = mine_reasons(d)
-    print(reasons.to_string())
-    reasons.to_csv("analysis/reason_mining.csv")
+        # --- Paired 'A beats B' comparisons (the results-chapter spine) ------
+        print("\n=== paired variant comparisons (Wilcoxon signed-rank) ===")
+        for metric in ("ragas_scores.ragas_answer_correctness",
+                       "deepeval_scores.deepeval_relevance"):
+            for a, b in (("rag", "no_rag"), ("rag_sc", "rag")):
+                cmp = compare_variants(d, metric, a=a, b=b)
+                print(f"\n{metric}: {a} vs {b}")
+                print(cmp.round(3).to_string())
+                cmp.to_csv(paths.table(
+                    path, f"compare_{a}_vs_{b}_{metric.split('.')[-1]}"))
 
-    print("\n=== logprob vs answer correctness (want positive) ===")
-    corr = logprob_correlation(d)
-    print(corr.round(3).to_string())
-    corr.to_csv("analysis/logprob_correlation.csv")
+        print("\n=== reason-string mining (failure-phrase hit rate per judge) ===")
+        reasons = mine_reasons(d)
+        print(reasons.to_string())
+        reasons.to_csv(paths.table(path, "reason_mining"))
 
-    print("\n=== abstention-adjusted metrics (all rows vs answered only) ===")
-    adj = abstention_adjusted(d)
-    print(adj.round(3).to_string())
-    adj.to_csv("analysis/abstention_adjusted.csv")
+        print("\n=== logprob vs answer correctness (want positive) ===")
+        corr = logprob_correlation(d)
+        print(corr.round(3).to_string())
+        corr.to_csv(paths.table(path, "logprob_correlation"))
 
-    # Decile drill-down: worst-scoring tenth of queries per metric, with IDs.
-    print("\n=== decile drill-down (decile 1 = worst) ===")
-    for metric in ("ragas_scores.ragas_answer_correctness",
-                   "deepeval_scores.deepeval_relevance"):
-        dec = decile_breakdown(d, metric)
-        if dec.empty:
-            print(f"{metric}: no scored rows")
-            continue
-        print(f"\n{metric}:")
-        print(dec[["n", "mean", "min", "max"]].round(3).to_string())
-        worst = dec.iloc[0]
-        print(f"  worst-decile ids: {worst['ids']}")
-        dec.to_csv(f"analysis/deciles_{metric.split('.')[-1]}.csv")
+        print("\n=== abstention-adjusted metrics (all rows vs answered only) ===")
+        adj = abstention_adjusted(d)
+        print(adj.round(3).to_string())
+        adj.to_csv(paths.table(path, "abstention_adjusted"))
 
-    # Render the standard plots next to this script.
-    figs = {
-        "boxplot_faithfulness": lambda ax: metric_boxplot(d, "ragas_scores.ragas_faithfulness", ax=ax),
-        "coverage": lambda ax: coverage_violin(d, ax=ax),
-        "rejection": lambda ax: rejection_bars(d, ax=ax),
-        "slope_relevance": lambda ax: slopegraph(d, "deepeval_scores.deepeval_relevance", ax=ax),
-        "ragas_vs_deepeval_faithfulness": lambda ax: ragas_vs_deepeval(
-            d, "ragas_scores.ragas_faithfulness", "deepeval_scores.deepeval_faithfulness", ax=ax),
-        "logprob_vs_correctness": lambda ax: logprob_scatter(d, ax=ax),
-    }
-    for name, fn in figs.items():
-        fig, ax = plt.subplots(figsize=(7, 5))
-        fn(ax)
-        fig.savefig(f"analysis/{name}.png", dpi=100, bbox_inches="tight")
-        plt.close(fig)
-        print(f"wrote analysis/{name}.png")
+        # Decile drill-down: worst-scoring tenth of queries per metric, with IDs.
+        print("\n=== decile drill-down (decile 1 = worst) ===")
+        for metric in ("ragas_scores.ragas_answer_correctness",
+                       "deepeval_scores.deepeval_relevance"):
+            dec = decile_breakdown(d, metric)
+            if dec.empty:
+                print(f"{metric}: no scored rows")
+                continue
+            print(f"\n{metric}:")
+            print(dec[["n", "mean", "min", "max"]].round(3).to_string())
+            worst = dec.iloc[0]
+            print(f"  worst-decile ids: {worst['ids']}")
+            dec.to_csv(paths.table(path, f"deciles_{metric.split('.')[-1]}"))
+
+        print("\n=== figures ===")
+        plots.save_all({
+            "boxplot_faithfulness": lambda ax: plots.metric_boxplot(
+                d, "ragas_scores.ragas_faithfulness", ax=ax),
+            "coverage": lambda ax: plots.coverage_violin(d, ax=ax),
+            "rejection": lambda ax: plots.rejection_bars(d, ax=ax),
+            "slope_relevance": lambda ax: plots.slopegraph(
+                d, "deepeval_scores.deepeval_relevance", ax=ax),
+            "ragas_vs_deepeval_faithfulness": lambda ax: plots.ragas_vs_deepeval(
+                d, "ragas_scores.ragas_faithfulness",
+                "deepeval_scores.deepeval_faithfulness", ax=ax),
+            "logprob_vs_correctness": lambda ax: plots.logprob_scatter(d, ax=ax),
+        }, path)

@@ -1,11 +1,12 @@
-"""Loading + plotting for the raw RAG pipeline results (pre-evaluation).
+"""Loading + summary tables for the raw RAG pipeline results (pre-evaluation).
 
-    from analysis.rag_analysis import load, logprob_summary, retrieval_stage_boxplot
+    from analysis.rag_analysis import load, logprob_summary
+    from analysis import plots
     from common.results_io import RAG_PREFIX, latest_results
     df = load(latest_results(RAG_PREFIX))     # or load("results/rag_results_<ts>.json")
     logprob_summary(df)                       # confidence per variant
     retrieval_by_dataset_variant(df)          # retrieval per dataset x variant (+HyDE split)
-    retrieval_stage_boxplot(df)               # rag vs rag_sc-orig vs rag_sc-final
+    plots.retrieval_stage_boxplot(df)         # rag vs rag_sc-orig vs rag_sc-final
 
 This is the companion to ``analysis.analysis`` (which works on the *evaluated*
 results). Here we look only at signals the pipeline emits itself, before any
@@ -100,8 +101,9 @@ the abstentions); what the pipeline MEASURED (confidence and retrieval summaries
 self-correction retry rates, the retrieval- AND generation-trigger tallies); and
 whether correction PAID OFF (HyDE re-retrieval and generation-retry gains) —
 last, because that is where ``analysis.eval_analysis`` takes over. Then the PNGs.
-It writes the ``rag_*.png`` files and a timestamped ``rag_health_*.txt`` into
-``analysis/``.
+Every artifact goes to ``analysis/out/<rag-stem>/`` (tables/, figures/,
+reports/), named for the results file it came from — see ``analysis.paths``. The
+figures themselves live in ``analysis.plots``.
 
 The cross-link with the evaluated results — the ``link_eval`` join, the joined
 ``analysis/linked_<rag_stem>.parquet`` base table, and the worst/best-query
@@ -113,17 +115,11 @@ import difflib
 import json
 import re
 from datetime import datetime
-from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
+from analysis import paths
 from common.results_io import RAG_PREFIX, latest_results
-
-try:
-    import seaborn as sns
-except ImportError:  # seaborn is optional; functions fall back to matplotlib
-    sns = None
 
 VARIANT_ORDER = ["no_rag", "rag", "rag_sc"]
 # Retrieval "stages": plain rag, plus rag_sc before/after the HyDE re-retrieval.
@@ -242,9 +238,10 @@ REQUIRED_FIELDS = ["id", "variant", "source_dataset", "answer",
                    "retrieval_scores", "gen_logprob_stats.mean"]
 
 
-def rag_health_report(df, source=None, out_dir="analysis"):
-    """Structural sanity check on the *raw* pipeline results; prints, and writes a
-    timestamped file when ``source`` is given (companion to ``analysis.health_report``).
+def rag_health_report(df, source=None):
+    """Structural sanity check on the *raw* pipeline results (companion to
+    ``analysis.health_report``). Prints; ``source`` only adds the provenance
+    header lines — the whole console report is saved by ``analysis.paths.capture``.
 
     Verifies the things that must hold before any downstream analysis is trusted:
       - required fields present (missing => pipeline writer bug);
@@ -332,16 +329,7 @@ def rag_health_report(df, source=None, out_dir="analysis"):
     emit(f"  self-correction metadata columns: "
          f"{len(sc_cols)}{'' if sc_cols else ' (none — rag_sc SC signals unavailable)'}")
 
-    text = "\n".join(lines)
-    print(text)
-    if source is not None:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        stem = Path(str(source)).stem
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-        p = Path(out_dir) / f"rag_health_{stem}_{ts}.txt"
-        p.write_text(text, encoding="utf-8")
-        print(f"wrote {p}")
-        flags["report_path"] = str(p)
+    print("\n".join(lines))
     return flags
 
 
@@ -1526,348 +1514,264 @@ def top_n(df, by, n=10, ascending=True, cols=None):
     return df.sort_values(by, ascending=ascending).head(n)[show]
 
 
-# --- Plots -------------------------------------------------------------------
-
-def _boxplot(df, x, y, ax=None, order=None):
-    ax = ax or plt.subplots(figsize=(6, 4))[1]
-    sub = df.dropna(subset=[y])
-    if sns is not None:
-        sns.boxplot(data=sub, x=x, y=y, order=order, ax=ax)
-    else:
-        groups = order or list(sub[x].dropna().unique())
-        ax.boxplot([sub.loc[sub[x] == g, y].dropna() for g in groups], labels=groups)
-        ax.set_xlabel(x)
-        ax.set_ylabel(y)
-    return ax
-
-
-def confidence_boxplot(df, by="variant", ax=None):
-    """Generation confidence (mean token logprob) by variant (or any category)."""
-    order = _order(df) if by == "variant" else None
-    ax = _boxplot(df, by, "gen_logprob_stats.mean", ax=ax, order=order)
-    ax.set_title(f"Generation confidence (mean logprob) by {by}")
-    return ax
-
-
-def confidence_by_dataset(df, ax=None):
-    """Mean-logprob distribution per dataset, split by variant."""
-    ax = ax or plt.subplots(figsize=(8, 5))[1]
-    if sns is not None:
-        sns.boxplot(data=df, x="source_dataset", y="gen_logprob_stats.mean",
-                    hue="variant", hue_order=_order(df), ax=ax)
-    else:
-        ax = _boxplot(df, "source_dataset", "gen_logprob_stats.mean", ax=ax)
-    ax.set_title("Generation confidence by dataset and variant")
-    ax.tick_params(axis="x", rotation=30)
-    return ax
-
-
-def retrieval_stage_boxplot(df, ax=None):
-    """Best retrieval score across rag / rag_sc-orig / rag_sc-final stages."""
-    long = retrieval_stage_long(df)
-    order = [s for s in STAGE_ORDER if s in long["stage"].unique()]
-    ax = _boxplot(long, "stage", "value", ax=ax, order=order)
-    ax.set_title("Best retrieval score by stage (hybrid dense+BM25)")
-    return ax
-
-
-def confidence_stage_boxplot(df, ax=None):
-    """Generation confidence across no_rag / rag / rag_sc-orig / rag_sc-final stages.
-    The rag_sc_orig box appears only once a run has retried generation."""
-    long = confidence_stage_long(df)
-    order = [s for s in CONF_STAGE_ORDER if s in long["stage"].unique()]
-    ax = _boxplot(long, "stage", "value", ax=ax, order=order)
-    ax.set_title("Generation confidence (mean logprob) by stage")
-    return ax
-
-
-def retrieval_by_dataset(df, ax=None, col="retrieval_best"):
-    """Best retrieval score per dataset, split by retrieval variant: rag, the rag_sc
-    average, and the HyDE-retried rag_sc rows before/after re-retrieval — the plot of
-    ``retrieval_by_dataset_variant`` (the two hyde boxes cover that subset only)."""
-    ax = ax or plt.subplots(figsize=(9, 5))[1]
-    long = retrieval_variant_long(df, col=col)
-    order = [v for v in RETRIEVAL_VARIANT_ORDER if v in set(long["variant"])]
-    if sns is not None:
-        sns.boxplot(data=long, x="source_dataset", y="value",
-                    hue="variant", hue_order=order, ax=ax)
-    else:
-        ax = _boxplot(long, "source_dataset", "value", ax=ax)
-    ax.set_ylabel(col)
-    ax.set_title("Best retrieval score by dataset and variant")
-    ax.tick_params(axis="x", rotation=30)
-    return ax
-
-
-def sc_retrieval_slope(df, ax=None):
-    """Per-id lines from original -> re-retrieved best score, for the rag_sc rows
-    whose retrieval was actually re-run (shows whether HyDE re-retrieval helped)."""
-    ax = ax or plt.subplots(figsize=(6, 5))[1]
-    sc = _hyde_rows(df).dropna(subset=["retrieval_best", "retrieval_best_orig"]).copy()
-    for _, row in sc.iterrows():
-        improved = row["retrieval_best"] >= row["retrieval_best_orig"]
-        ax.plot([0, 1], [row["retrieval_best_orig"], row["retrieval_best"]],
-                color="seagreen" if improved else "crimson", alpha=0.4, marker="o")
-    if len(sc):
-        ax.plot([0, 1], [sc["retrieval_best_orig"].mean(), sc["retrieval_best"].mean()],
-                color="black", marker="o", lw=2.5, label="mean")
-        ax.legend()
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(["original", "re-retrieved"])
-    ax.set_ylabel("best retrieval score")
-    ax.set_title("rag_sc HyDE re-retrieval: score before vs after")
-    return ax
-
-
 if __name__ == "__main__":
     import sys
 
+    # Imported here, not at module level: plots imports this module back, and a
+    # top-level import would make that a cycle.
+    from analysis import plots
+
     path = sys.argv[1] if len(sys.argv) > 1 else latest_results(RAG_PREFIX)
     d = load(path)
-    # These are the TOTAL rows loaded (no cross-linking yet). Every id should carry
-    # every variant, so a complete file has n_ids x n_variants rows; `missing` counts
-    # the (id, variant) combinations absent from that full grid and should be 0.
-    n_ids = d["id"].nunique()
-    present_variants = [v for v in d["variant"].cat.categories
-                        if v in set(d["variant"].dropna())]
-    full_grid = n_ids * len(present_variants)
-    missing = full_grid - len(d.drop_duplicates(["id", "variant"]))
-    print(f"{path}: {len(d)} total rows = {n_ids} ids x {len(present_variants)} "
-          f"variants {present_variants} (full grid {full_grid}); "
-          f"{missing} id x variant combos missing (0 = every id has every variant)")
 
-    print("\n=== rag health check (also written to a timestamped file) ===")
-    rag_health_report(d, source=path)
+    # Everything printed below is collected and saved to this run's
+    # reports/ folder, then echoed to the console.
+    with paths.capture(path, "rag_analysis_report"):
+        # These are the TOTAL rows loaded (no cross-linking yet). Every id should carry
+        # every variant, so a complete file has n_ids x n_variants rows; `missing` counts
+        # the (id, variant) combinations absent from that full grid and should be 0.
+        n_ids = d["id"].nunique()
+        present_variants = [v for v in d["variant"].cat.categories
+                            if v in set(d["variant"].dropna())]
+        full_grid = n_ids * len(present_variants)
+        missing = full_grid - len(d.drop_duplicates(["id", "variant"]))
+        print(f"{path}: {len(d)} total rows = {n_ids} ids x {len(present_variants)} "
+              f"variants {present_variants} (full grid {full_grid}); "
+              f"{missing} id x variant combos missing (0 = every id has every variant)")
 
-    # --- Error analyses: what went WRONG in the run, before any results are read --
-    print("\n=== generations cut off at the token cap, by dataset (rag_sc only) ===")
-    print(f"finish_reason covers {coverage_note(d)}; n below counts those rows only.")
-    print("Restricted to rag_sc: only its regeneration can loop, so pooling in the "
-          "single-pass no_rag/rag rows would just dilute length_rate.")
-    print("length = hit max_tokens; thinking_loop = cut off with no answer text "
-          "(runaway regen); answer_truncated = answer written but tail lost.")
-    _trunc = truncation_summary(d[d["variant"] == "rag_sc"])
-    if len(_trunc):
-        print(_trunc.to_string())
-    else:
-        print("no finish_reason in this file")
+        print(f"writing every artifact to {paths.rel(paths.run_dir(path))}")
 
-    # Pass-through check: rag_sc rows that fired NEITHER correction ran the identical
-    # pipeline to rag, so any divergence is noise (answers) or a bug (contexts). The
-    # per-correction breakdown of all rag_sc rows sits further down, with the triggers.
-    pairs = sc_untouched_pairs(d)
-    n_untouched = int((_retry_kind(d[d["variant"] == "rag_sc"]) == "none").sum())
-    print(f"\n=== pass-through check: the {n_untouched} rag_sc rows that fired NEITHER "
-          f"correction, vs their rag twin ===")
-    print(f"{len(pairs)} of them have a rag row for the same id "
-          f"({n_untouched - len(pairs)} unpaired). These rows ran the identical pipeline "
-          f"to rag (same retrieval, same prompts, greedy decoding), so every field below "
-          f"should match; answer mismatches are llama.cpp run-to-run noise, context "
-          f"mismatches would be a bug.")
-    if len(pairs):
-        print("\nagreement rates:")
-        print(sc_passthrough_agreement(d, pairs=pairs).to_string())
+        print("\n=== rag health check ===")
+        rag_health_report(d, source=path)
+
+        # --- Error analyses: what went WRONG in the run, before any results are read --
+        print("\n=== generations cut off at the token cap, by dataset (rag_sc only) ===")
+        print(f"finish_reason covers {coverage_note(d)}; n below counts those rows only.")
+        print("Restricted to rag_sc: only its regeneration can loop, so pooling in the "
+              "single-pass no_rag/rag rows would just dilute length_rate.")
+        print("length = hit max_tokens; thinking_loop = cut off with no answer text "
+              "(runaway regen); answer_truncated = answer written but tail lost.")
+        _trunc = truncation_summary(d[d["variant"] == "rag_sc"])
+        if len(_trunc):
+            print(_trunc.to_string())
+        else:
+            print("no finish_reason in this file")
+
+        # Pass-through check: rag_sc rows that fired NEITHER correction ran the identical
+        # pipeline to rag, so any divergence is noise (answers) or a bug (contexts). The
+        # per-correction breakdown of all rag_sc rows sits further down, with the triggers.
+        pairs = sc_untouched_pairs(d)
+        n_untouched = int((_retry_kind(d[d["variant"] == "rag_sc"]) == "none").sum())
+        print(f"\n=== pass-through check: the {n_untouched} rag_sc rows that fired NEITHER "
+              f"correction, vs their rag twin ===")
+        print(f"{len(pairs)} of them have a rag row for the same id "
+              f"({n_untouched - len(pairs)} unpaired). These rows ran the identical pipeline "
+              f"to rag (same retrieval, same prompts, greedy decoding), so every field below "
+              f"should match; answer mismatches are llama.cpp run-to-run noise, context "
+              f"mismatches would be a bug.")
+        if len(pairs):
+            print("\nagreement rates:")
+            print(sc_passthrough_agreement(d, pairs=pairs).to_string())
+            print("\n--- same, per dataset ---")
+            print(sc_passthrough_agreement(d, by="source_dataset", pairs=pairs).to_string())
+
+            print("\naverages over the same ids (delta should be ~0):")
+            print(sc_passthrough_means(d, pairs=pairs).round(4).to_string())
+
+            diffs = sc_passthrough_diffs(d, pairs=pairs)
+            print(f"\nconcrete diverging answers ({int((~pairs['same_answer_norm']).sum())} of "
+                  f"{len(pairs)}), least similar first:")
+            print(diffs.round(3).to_string(index=False) if len(diffs)
+                  else "none — every untouched rag_sc answer reproduced its rag twin")
+
+            ctx_diffs = sc_passthrough_diffs(d, pairs=pairs, on="same_contexts")
+            if len(ctx_diffs):
+                print(f"\n[CHECK] {len(ctx_diffs)} untouched pairs retrieved DIFFERENT contexts "
+                      f"— the untouched path never re-retrieves, so this is a bug:")
+                print(ctx_diffs[[c for c in ctx_diffs.columns
+                                 if c not in ("answer_rag", "answer_sc")]].to_string(index=False))
+
+            _p = paths.table(path, "rag_sc_passthrough_pairs")
+            pairs.to_csv(_p, index=False)
+            print(f"\nwrote {paths.rel(_p)} (one row per untouched pair)")
+        else:
+            print("no untouched rag_sc rows with a rag twin in this file — nothing to compare")
+
+        # Abstentions. NOT an error — refusing on insufficient context is the behaviour the
+        # pipeline is built to have — but it belongs beside the error analyses, because it
+        # is the other way a row comes back without a real answer, and because the `empty`
+        # column below is exactly the thinking-loop failure counted above, wearing an
+        # abstention's clothes.
+        print("\n=== abstentions (answer collapsed onto the canonical rejection) ===")
+        # no_rag is excluded from the count and signal tables below: it has no context to
+        # call insufficient, so it cannot abstain by construction. Leaving it in would not
+        # add a 0 row, it would drag every pooled figure (the ALL row, each dataset's `all`
+        # row, the ratios in the signal table) down by a third for a structural reason.
+        _abst = d[d["variant"] != "no_rag"]
+        print("rag / rag_sc only — no_rag has no context to call insufficient, so it never "
+              "abstains and would only deflate the pooled rates.")
+        print("model_rejected = the model itself abstained (the intended behaviour); "
+              "empty = nothing survived stripping <think>, i.e. the runaway regen above.")
+        print(abstention_summary(_abst).to_string())
+        print("\n--- same, per dataset x variant (all = rag + rag_sc pooled per dataset) ---")
+        print(abstention_by_dataset_variant(_abst).to_string())
+
+        print("\n--- same, per language x variant ---")
+        print("The run is multilingual (one prompt language per query), so a refusal rate "
+              "that differs by language would be a retrieval-language problem, not a topic "
+              "one. Check n before reading anything into it — the two subsets are far apart "
+              "in size.")
+        print(abstention_summary(_abst, by=["lang", "variant"], with_total=False).to_string())
+
+        print("\n--- what the pipeline's own signals looked like when it abstained ---")
+        print("retrieval_best lower on the abstained rows = abstention tracks weak "
+              "retrieval, which is what it is for. gen_logprob_mean is NOT a confidence "
+              "reading here: the canonical rejection is a short formulaic sentence, so its "
+              "tokens are trivially predictable (gen_tokens shows the length gap behind it).")
+        print(abstention_signals(_abst).round(3).to_string())
+
+        # The false-refusal set: the abstentions the retrieval score does NOT excuse.
+        _thr = trigger_threshold(d)
+        _fr = false_refusals(d)
+        _n_abst = int(_abstained(_abst).sum())
+        print(f"\n--- false refusals: abstained although retrieval_best >= {_thr} "
+              f"({len(_fr)} of {_n_abst} abstentions) ---")
+        print(f"{_thr} is the run's OWN retrieval threshold, read back out of the recorded "
+              f"trigger strings: at or above it the pipeline judged the context good enough "
+              f"not to re-retrieve. So these rows are not 'the corpus does not cover it' — "
+              f"they are a topical retrieval miss or an over-cautious model, and they are "
+              f"the abstentions worth reading by hand. Best-supported (least defensible) "
+              f"first; `empty` rows excluded, those are truncations, not refusals.")
+        if len(_fr):
+            _show = [c for c in _fr.columns if c != "query"]
+            print(_fr[_show].round(3).to_string(index=False))
+            _p = paths.table(path, "rag_false_refusals")
+            _fr.to_csv(_p, index=False)
+            print(f"wrote {paths.rel(_p)} ({len(_fr)} rows, with the query text)")
+        else:
+            print("none — every abstention came with retrieval below the threshold")
+
+        print("\n--- did self-correction change WHO abstains? (per id, rag_sc vs rag) ---")
+        print("only_rag_sc = the corrections made it give up where plain rag answered; "
+              "only_rag = the reverse. net is the change in abstention count.")
+        print(abstention_transitions(d).to_string())
+
+        # Which ids those are, and whether HyDE explains them. hyde_delta = rag_sc's final
+        # minus original retrieval score: negative means the re-retrieval genuinely fetched
+        # worse context for that query, NaN means it never re-retrieved (so it cannot be
+        # the cause).
+        _flips = abstention_transition_rows(d)
+        if len(_flips):
+            _newly = _flips[_flips["flip"] == "only_rag_sc"]
+            _worse = int((_newly["hyde_delta"] < 0).sum()) if "hyde_delta" in _newly else 0
+            _untouched = int(_newly["hyde_delta"].isna().sum()) if "hyde_delta" in _newly else 0
+            print(f"\nthe {len(_flips)} ids that flipped, worst hyde_delta first "
+                  f"(of the {len(_newly)} newly refusing: {_worse} lost retrieval score to "
+                  f"HyDE, {_untouched} never re-retrieved at all):")
+            print(_flips[[c for c in _flips.columns if c != "query"]].round(3).to_string(index=False))
+            _p = paths.table(path, "rag_abstention_flips")
+            _flips.to_csv(_p, index=False)
+            print(f"wrote {paths.rel(_p)} ({len(_flips)} rows, with the query text)")
+
+        print("\n--- rag_sc abstention rate by which corrections fired ---")
+        print("Read as selection, not effect: the generation trigger keys on the mean "
+              "logprob, which an abstention maximises, so an abstaining first pass hardly "
+              "ever trips a regeneration — the retried cohorts are pre-filtered to rows "
+              "that answered, they were not rescued by the retry.")
+        _sc = d[d["variant"] == "rag_sc"]
+        _by_kind = abstention_summary(_sc.assign(retry_kind=_retry_kind(_sc)), by="retry_kind")
+        print(_by_kind.reindex([k for k in RETRY_KINDS + ["ALL"] if k in _by_kind.index])
+              .to_string())
+
+        print("\n=== retrieval best-score by variant ===")
+        print("rag_sc = all its rows at their final score (the average); rag_sc_hyde_orig/"
+              "_final = only the rows where HyDE re-retrieval was triggered, before vs after.")
+        print(retrieval_variant_summary(d).round(3).to_string())
+        print("\n=== retrieval best-score by dataset x variant "
+              "(all = rag + rag_sc pooled per dataset) ===")
+        print(retrieval_by_dataset_variant(d).round(3).to_string())
+
+        print("\n=== generation confidence (mean logprob) by variant ===")
+        print(logprob_summary(d).round(3).to_string())
+        print("\n=== generation confidence by dataset x variant "
+              "(all = variants pooled per dataset) ===")
+        print(logprob_by_dataset_variant(d).round(3).to_string())
+
+        print("\n=== self-correction retry rates by dataset ===")
+        print(trigger_summary(d).to_string())
+        print("\n=== which retrieval triggers fired (all rag_sc rows) ===")
+        print("total firings per trigger (a row can fire more than one):")
+        print(trigger_reasons(d).to_string())
+        print("\nretrieval per trigger combination (only-highest / only-spread / both):")
+        print(trigger_combinations(d).to_string())
+
+        print("\n=== which generation triggers fired (all rag_sc rows) ===")
+        print("total firings per trigger (a row can fire more than one):")
+        print(trigger_reasons(d, stage="generation").to_string())
+        print("\ngeneration per trigger combination (only-mean / only-min / both):")
+        print(trigger_combinations(d, stage="generation").to_string())
+
+        print("\n=== rag_sc rows by which corrections fired ===")
+        print(sc_retry_breakdown(d).to_string())
         print("\n--- same, per dataset ---")
-        print(sc_passthrough_agreement(d, by="source_dataset", pairs=pairs).to_string())
+        print(sc_retry_breakdown(d, by="source_dataset").to_string())
 
-        print("\naverages over the same ids (delta should be ~0):")
-        print(sc_passthrough_means(d, pairs=pairs).round(4).to_string())
+        # --- Did the corrections pay off? The hand-over to analysis.eval_analysis ---
+        # Last, because these are the only blocks that ask whether self-correction
+        # IMPROVED anything; eval_analysis picks the same question back up against the
+        # quality metrics (`reretrieval_gain` vs metric, paired confidence deltas).
+        print("\n=== HyDE re-retrieval gain (retried rag_sc rows only) ===")
+        print(sc_retrieval_gain(d).round(3).to_string())
+        print("\n--- same, per dataset ---")
+        print(sc_retrieval_gain(d, by="source_dataset").round(3).to_string())
 
-        diffs = sc_passthrough_diffs(d, pairs=pairs)
-        print(f"\nconcrete diverging answers ({int((~pairs['same_answer_norm']).sum())} of "
-              f"{len(pairs)}), least similar first:")
-        print(diffs.round(3).to_string(index=False) if len(diffs)
-              else "none — every untouched rag_sc answer reproduced its rag twin")
+        # The gain above cannot answer "did re-retrieval make anything worse" — on a
+        # `score`-merge file the delta cannot go negative, on an `rrf`-merge file it cannot
+        # go positive (sc_retrieval_deltas explains both). What DID change is which chunks
+        # reached the model, which is what displacement counts.
+        _disp = sc_context_displacement(d)
+        print(f"\n--- what re-retrieval did to the CONTEXT SET ({len(_disp)} re-retrieved "
+              f"rows) ---")
+        if len(_disp):
+            _merge = (d.get("sc_metadata.merge_strategy", pd.Series(dtype="object"))
+                      .dropna().unique())
+            print(f"merge strategy in this file: "
+                  f"{', '.join(map(str, _merge)) if len(_merge) else 'score (pre-2026-08 file)'}")
+            print(f"{int((_disp['dropped'] > 0).sum())} rows lost at least one original "
+                  f"chunk; {int((_disp['dropped'] == _disp['n_orig']).sum())} lost ALL of "
+                  f"them (impossible under the rrf merge, which always keeps the question's "
+                  f"top chunk); mean drop rate {_disp['drop_rate'].mean():.3f}.")
+            print(sc_context_displacement(d, by="source_dataset").round(3).to_string())
+            _p = paths.table(path, "rag_hyde_context_displacement")
+            _disp.to_csv(_p, index=False)
+            print(f"wrote {paths.rel(_p)} ({len(_disp)} rows with the query text, "
+                  f"most displaced first)")
+            _deltas = sc_retrieval_deltas(d)
+            if len(_deltas):
+                _p = paths.table(path, "rag_hyde_retrieval_deltas")
+                _deltas.to_csv(_p, index=False)
+                print(f"wrote {paths.rel(_p)} (per-row score deltas, smallest first "
+                      f"— read sc_retrieval_deltas' docstring first)")
+        else:
+            print("no re-retrieved rows with recorded context ids in this file")
 
-        ctx_diffs = sc_passthrough_diffs(d, pairs=pairs, on="same_contexts")
-        if len(ctx_diffs):
-            print(f"\n[CHECK] {len(ctx_diffs)} untouched pairs retrieved DIFFERENT contexts "
-                  f"— the untouched path never re-retrieves, so this is a bug:")
-            print(ctx_diffs[[c for c in ctx_diffs.columns
-                             if c not in ("answer_rag", "answer_sc")]].to_string(index=False))
+        print("\n=== generation-retry confidence gain (retried rag_sc rows only) ===")
+        gen_gain = sc_generation_gain(d)
+        print(gen_gain.round(3).to_string() if len(gen_gain)
+              else "no generation retries in this file (sc_metadata.original_gen_logprob_stats absent)")
 
-        pairs.to_csv("analysis/rag_sc_passthrough_pairs.csv", index=False)
-        print("\nwrote analysis/rag_sc_passthrough_pairs.csv (one row per untouched pair)")
-    else:
-        print("no untouched rag_sc rows with a rag twin in this file — nothing to compare")
+        # Both gains are raw pipeline signals — whether they translate into better
+        # answers is the cross-link with the evaluated results (link_eval join,
+        # linked_*.parquet base table, worst/best-query mining), which now lives in
+        # analysis.eval_analysis; `link_eval` / `top_n` remain here as the join helpers
+        # it imports. Run `python -m analysis.eval_analysis` for that step.
 
-    # Abstentions. NOT an error — refusing on insufficient context is the behaviour the
-    # pipeline is built to have — but it belongs beside the error analyses, because it
-    # is the other way a row comes back without a real answer, and because the `empty`
-    # column below is exactly the thinking-loop failure counted above, wearing an
-    # abstention's clothes.
-    print("\n=== abstentions (answer collapsed onto the canonical rejection) ===")
-    # no_rag is excluded from the count and signal tables below: it has no context to
-    # call insufficient, so it cannot abstain by construction. Leaving it in would not
-    # add a 0 row, it would drag every pooled figure (the ALL row, each dataset's `all`
-    # row, the ratios in the signal table) down by a third for a structural reason.
-    _abst = d[d["variant"] != "no_rag"]
-    print("rag / rag_sc only — no_rag has no context to call insufficient, so it never "
-          "abstains and would only deflate the pooled rates.")
-    print("model_rejected = the model itself abstained (the intended behaviour); "
-          "empty = nothing survived stripping <think>, i.e. the runaway regen above.")
-    print(abstention_summary(_abst).to_string())
-    print("\n--- same, per dataset x variant (all = rag + rag_sc pooled per dataset) ---")
-    print(abstention_by_dataset_variant(_abst).to_string())
-
-    print("\n--- same, per language x variant ---")
-    print("The run is multilingual (one prompt language per query), so a refusal rate "
-          "that differs by language would be a retrieval-language problem, not a topic "
-          "one. Check n before reading anything into it — the two subsets are far apart "
-          "in size.")
-    print(abstention_summary(_abst, by=["lang", "variant"], with_total=False).to_string())
-
-    print("\n--- what the pipeline's own signals looked like when it abstained ---")
-    print("retrieval_best lower on the abstained rows = abstention tracks weak "
-          "retrieval, which is what it is for. gen_logprob_mean is NOT a confidence "
-          "reading here: the canonical rejection is a short formulaic sentence, so its "
-          "tokens are trivially predictable (gen_tokens shows the length gap behind it).")
-    print(abstention_signals(_abst).round(3).to_string())
-
-    # The false-refusal set: the abstentions the retrieval score does NOT excuse.
-    _thr = trigger_threshold(d)
-    _fr = false_refusals(d)
-    _n_abst = int(_abstained(_abst).sum())
-    print(f"\n--- false refusals: abstained although retrieval_best >= {_thr} "
-          f"({len(_fr)} of {_n_abst} abstentions) ---")
-    print(f"{_thr} is the run's OWN retrieval threshold, read back out of the recorded "
-          f"trigger strings: at or above it the pipeline judged the context good enough "
-          f"not to re-retrieve. So these rows are not 'the corpus does not cover it' — "
-          f"they are a topical retrieval miss or an over-cautious model, and they are "
-          f"the abstentions worth reading by hand. Best-supported (least defensible) "
-          f"first; `empty` rows excluded, those are truncations, not refusals.")
-    if len(_fr):
-        _show = [c for c in _fr.columns if c != "query"]
-        print(_fr[_show].round(3).to_string(index=False))
-        _fr.to_csv("analysis/rag_false_refusals.csv", index=False)
-        print(f"wrote analysis/rag_false_refusals.csv ({len(_fr)} rows, with the query text)")
-    else:
-        print("none — every abstention came with retrieval below the threshold")
-
-    print("\n--- did self-correction change WHO abstains? (per id, rag_sc vs rag) ---")
-    print("only_rag_sc = the corrections made it give up where plain rag answered; "
-          "only_rag = the reverse. net is the change in abstention count.")
-    print(abstention_transitions(d).to_string())
-
-    # Which ids those are, and whether HyDE explains them. hyde_delta = rag_sc's final
-    # minus original retrieval score: negative means the re-retrieval genuinely fetched
-    # worse context for that query, NaN means it never re-retrieved (so it cannot be
-    # the cause).
-    _flips = abstention_transition_rows(d)
-    if len(_flips):
-        _newly = _flips[_flips["flip"] == "only_rag_sc"]
-        _worse = int((_newly["hyde_delta"] < 0).sum()) if "hyde_delta" in _newly else 0
-        _untouched = int(_newly["hyde_delta"].isna().sum()) if "hyde_delta" in _newly else 0
-        print(f"\nthe {len(_flips)} ids that flipped, worst hyde_delta first "
-              f"(of the {len(_newly)} newly refusing: {_worse} lost retrieval score to "
-              f"HyDE, {_untouched} never re-retrieved at all):")
-        print(_flips[[c for c in _flips.columns if c != "query"]].round(3).to_string(index=False))
-        _flips.to_csv("analysis/rag_abstention_flips.csv", index=False)
-        print(f"wrote analysis/rag_abstention_flips.csv ({len(_flips)} rows, with the "
-              f"query text)")
-
-    print("\n--- rag_sc abstention rate by which corrections fired ---")
-    print("Read as selection, not effect: the generation trigger keys on the mean "
-          "logprob, which an abstention maximises, so an abstaining first pass hardly "
-          "ever trips a regeneration — the retried cohorts are pre-filtered to rows "
-          "that answered, they were not rescued by the retry.")
-    _sc = d[d["variant"] == "rag_sc"]
-    _by_kind = abstention_summary(_sc.assign(retry_kind=_retry_kind(_sc)), by="retry_kind")
-    print(_by_kind.reindex([k for k in RETRY_KINDS + ["ALL"] if k in _by_kind.index])
-          .to_string())
-
-    print("\n=== retrieval best-score by variant ===")
-    print("rag_sc = all its rows at their final score (the average); rag_sc_hyde_orig/"
-          "_final = only the rows where HyDE re-retrieval was triggered, before vs after.")
-    print(retrieval_variant_summary(d).round(3).to_string())
-    print("\n=== retrieval best-score by dataset x variant "
-          "(all = rag + rag_sc pooled per dataset) ===")
-    print(retrieval_by_dataset_variant(d).round(3).to_string())
-
-    print("\n=== generation confidence (mean logprob) by variant ===")
-    print(logprob_summary(d).round(3).to_string())
-    print("\n=== generation confidence by dataset x variant "
-          "(all = variants pooled per dataset) ===")
-    print(logprob_by_dataset_variant(d).round(3).to_string())
-
-    print("\n=== self-correction retry rates by dataset ===")
-    print(trigger_summary(d).to_string())
-    print("\n=== which retrieval triggers fired (all rag_sc rows) ===")
-    print("total firings per trigger (a row can fire more than one):")
-    print(trigger_reasons(d).to_string())
-    print("\nretrieval per trigger combination (only-highest / only-spread / both):")
-    print(trigger_combinations(d).to_string())
-
-    print("\n=== which generation triggers fired (all rag_sc rows) ===")
-    print("total firings per trigger (a row can fire more than one):")
-    print(trigger_reasons(d, stage="generation").to_string())
-    print("\ngeneration per trigger combination (only-mean / only-min / both):")
-    print(trigger_combinations(d, stage="generation").to_string())
-
-    print("\n=== rag_sc rows by which corrections fired ===")
-    print(sc_retry_breakdown(d).to_string())
-    print("\n--- same, per dataset ---")
-    print(sc_retry_breakdown(d, by="source_dataset").to_string())
-
-    # --- Did the corrections pay off? The hand-over to analysis.eval_analysis ---
-    # Last, because these are the only blocks that ask whether self-correction
-    # IMPROVED anything; eval_analysis picks the same question back up against the
-    # quality metrics (`reretrieval_gain` vs metric, paired confidence deltas).
-    print("\n=== HyDE re-retrieval gain (retried rag_sc rows only) ===")
-    print(sc_retrieval_gain(d).round(3).to_string())
-    print("\n--- same, per dataset ---")
-    print(sc_retrieval_gain(d, by="source_dataset").round(3).to_string())
-
-    # The gain above cannot answer "did re-retrieval make anything worse" — on a
-    # `score`-merge file the delta cannot go negative, on an `rrf`-merge file it cannot
-    # go positive (sc_retrieval_deltas explains both). What DID change is which chunks
-    # reached the model, which is what displacement counts.
-    _disp = sc_context_displacement(d)
-    print(f"\n--- what re-retrieval did to the CONTEXT SET ({len(_disp)} re-retrieved "
-          f"rows) ---")
-    if len(_disp):
-        _merge = (d.get("sc_metadata.merge_strategy", pd.Series(dtype="object"))
-                  .dropna().unique())
-        print(f"merge strategy in this file: "
-              f"{', '.join(map(str, _merge)) if len(_merge) else 'score (pre-2026-08 file)'}")
-        print(f"{int((_disp['dropped'] > 0).sum())} rows lost at least one original "
-              f"chunk; {int((_disp['dropped'] == _disp['n_orig']).sum())} lost ALL of "
-              f"them (impossible under the rrf merge, which always keeps the question's "
-              f"top chunk); mean drop rate {_disp['drop_rate'].mean():.3f}.")
-        print(sc_context_displacement(d, by="source_dataset").round(3).to_string())
-        _disp.to_csv("analysis/rag_hyde_context_displacement.csv", index=False)
-        print(f"wrote analysis/rag_hyde_context_displacement.csv ({len(_disp)} rows "
-              f"with the query text, most displaced first)")
-        _deltas = sc_retrieval_deltas(d)
-        if len(_deltas):
-            _deltas.to_csv("analysis/rag_hyde_retrieval_deltas.csv", index=False)
-            print(f"wrote analysis/rag_hyde_retrieval_deltas.csv (per-row score deltas, "
-                  f"smallest first — read sc_retrieval_deltas' docstring first)")
-    else:
-        print("no re-retrieved rows with recorded context ids in this file")
-
-    print("\n=== generation-retry confidence gain (retried rag_sc rows only) ===")
-    gen_gain = sc_generation_gain(d)
-    print(gen_gain.round(3).to_string() if len(gen_gain)
-          else "no generation retries in this file (sc_metadata.original_gen_logprob_stats absent)")
-
-    # Both gains are raw pipeline signals — whether they translate into better
-    # answers is the cross-link with the evaluated results (link_eval join,
-    # linked_*.parquet base table, worst/best-query mining), which now lives in
-    # analysis.eval_analysis; `link_eval` / `top_n` remain here as the join helpers
-    # it imports. Run `python -m analysis.eval_analysis` for that step.
-
-    figs = {
-        "rag_confidence_by_variant": lambda ax: confidence_boxplot(d, ax=ax),
-        "rag_confidence_by_dataset": lambda ax: confidence_by_dataset(d, ax=ax),
-        "rag_confidence_by_stage": lambda ax: confidence_stage_boxplot(d, ax=ax),
-        "rag_retrieval_by_stage": lambda ax: retrieval_stage_boxplot(d, ax=ax),
-        "rag_retrieval_by_dataset": lambda ax: retrieval_by_dataset(d, ax=ax),
-        "rag_sc_reretrieval_slope": lambda ax: sc_retrieval_slope(d, ax=ax),
-    }
-    for name, fn in figs.items():
-        fig, ax = plt.subplots(figsize=(7, 5))
-        fn(ax)
-        fig.savefig(f"analysis/{name}.png", dpi=100, bbox_inches="tight")
-        plt.close(fig)
-        print(f"wrote analysis/{name}.png")
+        print("\n=== figures ===")
+        plots.save_all({
+            "rag_confidence_by_variant": lambda ax: plots.confidence_boxplot(d, ax=ax),
+            "rag_confidence_by_dataset": lambda ax: plots.confidence_by_dataset(d, ax=ax),
+            "rag_confidence_by_stage": lambda ax: plots.confidence_stage_boxplot(d, ax=ax),
+            "rag_retrieval_by_stage": lambda ax: plots.retrieval_stage_boxplot(d, ax=ax),
+            "rag_retrieval_by_dataset": lambda ax: plots.retrieval_by_dataset(d, ax=ax),
+            "rag_sc_reretrieval_slope": lambda ax: plots.sc_retrieval_slope(d, ax=ax),
+        }, path)

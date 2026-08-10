@@ -62,29 +62,28 @@ the package on the path, so ``python analysis/eval_analysis.py`` will NOT work):
 The two files are told apart by their name prefix (``evaluated_results`` vs
 ``rag_results``), so they may be passed in either order. With no RAG file the
 matching one is found from the eval name's ``_from_<stamp>``
-(see ``common.results_io``), falling back to the newest RAG file. This writes the
-``eval_*.csv`` tables, a timestamped ``metric_error_*.txt`` report, the joined
-base table ``analysis/linked_<rag_stem>.parquet`` (one row per id x variant,
-pipeline signals + every evaluated metric), and the ``eval_*.png`` figures into
-``analysis/``.
+(see ``common.results_io``), falling back to the newest RAG file.
+
+Every artifact goes to ``analysis/out/<eval-stem>/`` — the tables, the full
+console report, the joined base table ``linked/`` (one row per id x variant,
+pipeline signals + every evaluated metric) and the figures. Anything derived from
+BOTH files is named for both, so a cross-linked plot says which rag run it was
+paired with; see ``analysis.paths``. The figures themselves live in
+``analysis.plots``.
 """
 
 import math
 import re
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from common.results_io import EVAL_PREFIX, RAG_PREFIX, latest_results
 from analysis import analysis as ev
+from analysis import paths
+from analysis import plots
 from analysis import rag_analysis as ra
-
-try:
-    import seaborn as sns
-except ImportError:  # seaborn is optional; plots fall back to matplotlib
-    sns = None
 
 # --- Metric applicability (which metrics a cell is even supposed to carry) ----
 # Answer-only metrics need just the answer + reference, so they apply to EVERY
@@ -219,10 +218,11 @@ def classify_metrics(df):
     return pd.concat(frames, ignore_index=True)
 
 
-def metric_error_report(df, cls=None, source=None, out_dir="analysis"):
-    """Prints (and, given ``source``, writes) the metric-computation sanity report:
-    how many metric values are genuinely errors vs legitimately not applicable,
-    broken down by dataset x variant. Returns a flags dict.
+def metric_error_report(df, cls=None, source=None):
+    """Prints the metric-computation sanity report: how many metric values are
+    genuinely errors vs legitimately not applicable, broken down by dataset x
+    variant. Returns a flags dict. ``source`` only adds the provenance header
+    lines — the whole console report is saved by ``analysis.paths.capture``.
 
     Sections: RAGAS scorer errors (count, error-type, dataset x variant);
     DeepEval judge crashes (count, dataset x variant); the per-metric status
@@ -291,12 +291,7 @@ def metric_error_report(df, cls=None, source=None, out_dir="analysis"):
         emit(_indent(err["metric"].map(lambda m: m.split(".")[-1])
                      .value_counts().to_string()))
 
-    text = "\n".join(lines)
-    print(text)
-    if source is not None:
-        path = ev._write_report(text, "metric_error", source, out_dir)
-        print(f"wrote {path}")
-        flags["report_path"] = str(path)
+    print("\n".join(lines))
     return flags
 
 
@@ -599,45 +594,6 @@ def signal_vs_metric(df, signal, metrics=RETRIEVAL_METRICS, by=None, rows_mask=N
                      ignore_index=True)
 
 
-# --- Plots -------------------------------------------------------------------
-
-def retrieval_metric_scatter(linked, metric, retrieval_col="retrieval_best", ax=None):
-    """Best retrieval score vs a context/faithfulness metric, coloured by variant."""
-    ax = ax or plt.subplots(figsize=(6, 5))[1]
-    x = pd.to_numeric(linked[retrieval_col], errors="coerce")
-    y = pd.to_numeric(linked[metric], errors="coerce")
-    m = x.notna() & y.notna()
-    if sns is not None and "variant" in linked:
-        sns.scatterplot(x=x[m], y=y[m], hue=linked.loc[m, "variant"], ax=ax)
-    else:
-        ax.scatter(x[m], y[m], alpha=0.6)
-    ax.set_xlabel(retrieval_col)
-    ax.set_ylabel(metric.split(".")[-1])
-    ax.set_title(f"retrieval score vs {metric.split('.')[-1]}")
-    return ax
-
-
-def delta_scatter(df, x_col, y_col, a, b, ax=None):
-    """Per-id Δx vs Δy between variants ``a`` and ``b`` (quadrant reference lines)."""
-    ax = ax or plt.subplots(figsize=(6, 5))[1]
-    tmp = pd.DataFrame({
-        "id": df["id"], "variant": df["variant"].astype(str),
-        "x": pd.to_numeric(df[x_col], errors="coerce"),
-        "y": pd.to_numeric(df[y_col], errors="coerce"),
-    })
-    wx = tmp.pivot_table(index="id", columns="variant", values="x", observed=True)
-    wy = tmp.pivot_table(index="id", columns="variant", values="y", observed=True)
-    dx, dy = wx[a] - wx[b], wy[a] - wy[b]
-    m = dx.notna() & dy.notna()
-    ax.axhline(0, color="gray", lw=1, ls="--")
-    ax.axvline(0, color="gray", lw=1, ls="--")
-    ax.scatter(dx[m], dy[m], alpha=0.6)
-    ax.set_xlabel(f"Δ {x_col.split('.')[-1]} ({a}−{b})")
-    ax.set_ylabel(f"Δ {y_col.split('.')[-1]} ({a}−{b})")
-    ax.set_title("confidence change vs metric change")
-    return ax
-
-
 # --- helpers -----------------------------------------------------------------
 
 def _indent(text, n=4):
@@ -704,143 +660,158 @@ if __name__ == "__main__":
         sys.exit(f"{eval_path} has no ragas_scores.*/deepeval_scores.* columns — that "
                  f"looks like a raw rag file. Pass the evaluated_results_*.json "
                  f"(order does not matter).")
-    print(f"{eval_path}: {len(d)} rows, {d['id'].nunique()} ids, "
-          f"variants={list(d['variant'].cat.categories)}")
-    print("\n=== cohort (source_dataset x variant) ===")
-    print(ev.describe_cohort(d).to_string())
+    # Everything printed below is collected and saved to this run's
+    # reports/ folder, then echoed to the console.
+    with paths.capture(eval_path, "eval_analysis_report"):
+        print(f"{eval_path}: {len(d)} rows, {d['id'].nunique()} ids, "
+              f"variants={list(d['variant'].cat.categories)}")
+        print(f"writing every artifact to {paths.rel(paths.run_dir(eval_path))}")
+        print("\n=== cohort (source_dataset x variant) ===")
+        print(ev.describe_cohort(d).to_string())
 
-    # (1) metric-computation sanity + prepare -----------------------------------
-    print("\n=== metric-computation sanity (also written to a timestamped file) ===")
-    cls = classify_metrics(d)
-    metric_error_report(d, cls, source=eval_path)
+        # (1) metric-computation sanity + prepare -----------------------------------
+        print("\n=== metric-computation sanity ===")
+        cls = classify_metrics(d)
+        metric_error_report(d, cls, source=eval_path)
 
-    d, prep = prepare(d)
-    if prep["n_ragas_error_rows"]:
-        print(f"\nprepared for analysis: on the {prep['n_ragas_error_rows']} rows whose RAGAS "
-              f"scorer raised, every ragas_scores.* value is set to NaN, so those rows no "
-              f"longer contribute to any RAGAS mean/correlation below. The rows themselves "
-              f"are kept — their DeepEval scores are independent of the RAGAS failure and "
-              f"stay in the DeepEval numbers.")
-    else:
-        print("\nprepared for analysis: no row-level RAGAS scorer errors to mask "
-              "(individual missing metric cells are still excluded per metric).")
+        d, prep = prepare(d)
+        if prep["n_ragas_error_rows"]:
+            print(f"\nprepared for analysis: on the {prep['n_ragas_error_rows']} rows whose RAGAS "
+                  f"scorer raised, every ragas_scores.* value is set to NaN, so those rows no "
+                  f"longer contribute to any RAGAS mean/correlation below. The rows themselves "
+                  f"are kept — their DeepEval scores are independent of the RAGAS failure and "
+                  f"stay in the DeepEval numbers.")
+        else:
+            print("\nprepared for analysis: no row-level RAGAS scorer errors to mask "
+                  "(individual missing metric cells are still excluded per metric).")
 
-    # (2a) metric distribution / discriminativeness -----------------------------
-    print("\n=== per-metric distribution (is the metric discriminative?) ===")
-    print("read before any mean below: median/IQR at a rail, or a tiny n_unique, "
-          "means the metric separates nothing and its mean is not interpretable.")
-    dist = metric_distribution(d)
-    print(dist.round(3).to_string())
-    dist.to_csv("analysis/eval_metric_distribution.csv")
+        # (2a) metric distribution / discriminativeness -----------------------------
+        print("\n=== per-metric distribution (is the metric discriminative?) ===")
+        print("read before any mean below: median/IQR at a rail, or a tiny n_unique, "
+              "means the metric separates nothing and its mean is not interpretable.")
+        dist = metric_distribution(d)
+        print(dist.round(3).to_string())
+        dist.to_csv(paths.table(eval_path, "eval_metric_distribution"))
 
-    print("\n--- per dataset x variant (a metric can discriminate on one and not "
-          "another; low coverage here is often legitimate — see the report above) ---")
-    dist_g = metric_distribution(d, by=["source_dataset", "variant"])
-    print(dist_g.round(3).to_string())
-    dist_g.to_csv("analysis/eval_metric_distribution_by_dataset_variant.csv")
+        print("\n--- per dataset x variant (a metric can discriminate on one and not "
+              "another; low coverage here is often legitimate — see the report above) ---")
+        dist_g = metric_distribution(d, by=["source_dataset", "variant"])
+        print(dist_g.round(3).to_string())
+        dist_g.to_csv(paths.table(
+            eval_path, "eval_metric_distribution_by_dataset_variant"))
 
-    # (2b) metric validation ----------------------------------------------------
-    print("\n=== metric agreement (comparable metrics, overall) ===")
-    ag = metric_agreement(d)
-    print(ag.round(3).to_string(index=False))
-    ag.to_csv("analysis/eval_metric_agreement.csv", index=False)
-    for by in ("source_dataset", "variant"):
-        print(f"\n--- agreement by {by} ---")
-        tab = metric_agreement(d, by=by)
-        print(tab.round(3).to_string(index=False))
-        tab.to_csv(f"analysis/eval_metric_agreement_by_{by}.csv", index=False)
+        # (2b) metric validation ----------------------------------------------------
+        print("\n=== metric agreement (comparable metrics, overall) ===")
+        ag = metric_agreement(d)
+        print(ag.round(3).to_string(index=False))
+        ag.to_csv(paths.table(eval_path, "eval_metric_agreement"), index=False)
+        for by in ("source_dataset", "variant"):
+            print(f"\n--- agreement by {by} ---")
+            tab = metric_agreement(d, by=by)
+            print(tab.round(3).to_string(index=False))
+            tab.to_csv(paths.table(eval_path, f"eval_metric_agreement_by_{by}"),
+                       index=False)
 
-    print("\n=== DeepEval reason vs recorded score (internal consistency) ===")
-    rc, rc_mism = deepeval_reason_consistency(d)
-    print(rc.to_string(index=False))
-    rc.to_csv("analysis/eval_reason_consistency.csv", index=False)
-    if len(rc_mism):
-        print(f"\n{len(rc_mism)} mismatches (reason states a different number than the field):")
-        print(rc_mism.head(20).to_string(index=False))
-        rc_mism.to_csv("analysis/eval_reason_mismatches.csv", index=False)
+        print("\n=== DeepEval reason vs recorded score (internal consistency) ===")
+        rc, rc_mism = deepeval_reason_consistency(d)
+        print(rc.to_string(index=False))
+        rc.to_csv(paths.table(eval_path, "eval_reason_consistency"), index=False)
+        if len(rc_mism):
+            print(f"\n{len(rc_mism)} mismatches (reason states a different number than the field):")
+            print(rc_mism.head(20).to_string(index=False))
+            rc_mism.to_csv(paths.table(eval_path, "eval_reason_mismatches"),
+                           index=False)
 
-    # (3) cross-link + worst/best ----------------------------------------------
-    import os
-    if rag_path and os.path.exists(rag_path):
-        linked = ra.link_eval(ra.load(rag_path), d)
-        print(f"\n=== linked rag+eval: {len(linked)} rows shared (over id x variant) ===")
-        print(f"  rag file:  {rag_path}")
-        print(f"  eval file: {eval_path}")
-        if len(linked):
-            base = f"analysis/linked_{Path(rag_path).stem}.parquet"
-            linked.to_parquet(base, index=False)
-            print(f"  wrote {base}  ({len(linked)} rows x {linked.shape[1]} cols) — base table")
+        # Figures that need only the evaluated file. These used to sit inside the
+        # cross-link block below and were silently skipped whenever no rag file was
+        # found, although not one of them touches the joined frame.
+        print("\n=== figures (evaluated results) ===")
+        plots.save_all({
+            "eval_agreement_relevancy": lambda ax: plots.ragas_vs_deepeval(
+                d, "ragas_scores.ragas_answer_relevancy",
+                "deepeval_scores.deepeval_relevance", ax=ax),
+            "eval_agreement_faithfulness": lambda ax: plots.ragas_vs_deepeval(
+                d, "ragas_scores.ragas_faithfulness",
+                "deepeval_scores.deepeval_faithfulness", ax=ax),
+            "eval_confidence_delta_vs_correctness": lambda ax: plots.delta_scatter(
+                d, "gen_logprob_stats.mean", "ragas_scores.ragas_answer_correctness",
+                "rag_sc", "no_rag", ax=ax),
+        }, eval_path)
 
-            print("\n=== worst / best 10% per metric (with pipeline signals) ===")
-            for metric in EXTREME_METRICS:
-                if metric not in linked:
-                    continue
-                worst, best, k, n = extremes(linked, metric)
-                label = metric.split(".")[-1]
-                if not n:
-                    print(f"\n{label}: no scored rows")
-                    continue
-                print(f"\n--- {label}: worst {k} of {n} scored ---")
-                print(worst.round(3).to_string(index=False))
-                print(f"  worst by dataset: {worst['source_dataset'].value_counts().to_dict()}")
-                print(f"  worst by variant: {worst['variant'].value_counts().to_dict()}")
-                print(f"--- {label}: best {k} of {n} scored ---")
-                print(best.round(3).to_string(index=False))
-                print(f"  best by dataset: {best['source_dataset'].value_counts().to_dict()}")
-                print(f"  best by variant: {best['variant'].value_counts().to_dict()}")
-                prof = extremes_profile(linked, metric)
-                if len(prof):
-                    print("  signal profile (worst / rest / best):")
-                    print(_indent(prof.round(3).to_string()))
+        # (3) cross-link + worst/best ----------------------------------------------
+        import os
+        if rag_path and os.path.exists(rag_path):
+            linked = ra.link_eval(ra.load(rag_path), d)
+            print(f"\n=== linked rag+eval: {len(linked)} rows shared (over id x variant) ===")
+            print(f"  rag file:  {rag_path}")
+            print(f"  eval file: {eval_path}")
+            if len(linked):
+                # Everything below is derived from BOTH files, so both name it.
+                both = [eval_path, rag_path]
+                base = paths.linked(both, "linked")
+                linked.to_parquet(base, index=False)
+                print(f"  wrote {paths.rel(base)}  ({len(linked)} rows x "
+                      f"{linked.shape[1]} cols) — base table")
 
-            # (4) signal -> metric -------------------------------------------------
-            print("\n=== is the confidence gain reflected in the metrics? "
-                  "(paired per-id Δ, want positive) ===")
-            print("logprob vs correctness within each variant (want positive):")
-            print(ev.logprob_correlation(
-                d, metric="ragas_scores.ragas_answer_correctness").round(3).to_string())
-            rows = {}
-            for a, b in (("rag", "no_rag"), ("rag_sc", "no_rag"), ("rag_sc", "rag")):
-                for metric in ("ragas_scores.ragas_answer_correctness",
-                               "deepeval_scores.deepeval_relevance"):
-                    key = f"Δconf vs Δ{metric.split('.')[-1]}: {a}-{b}"
-                    rows[key] = paired_delta(d, "gen_logprob_stats.mean", metric, a, b)
-            print("\npaired deltas (confidence change vs metric change):")
-            print(pd.DataFrame(rows).T.round(3).to_string())
+                print("\n=== worst / best 10% per metric (with pipeline signals) ===")
+                for metric in EXTREME_METRICS:
+                    if metric not in linked:
+                        continue
+                    worst, best, k, n = extremes(linked, metric)
+                    label = metric.split(".")[-1]
+                    if not n:
+                        print(f"\n{label}: no scored rows")
+                        continue
+                    print(f"\n--- {label}: worst {k} of {n} scored ---")
+                    print(worst.round(3).to_string(index=False))
+                    print(f"  worst by dataset: {worst['source_dataset'].value_counts().to_dict()}")
+                    print(f"  worst by variant: {worst['variant'].value_counts().to_dict()}")
+                    print(f"--- {label}: best {k} of {n} scored ---")
+                    print(best.round(3).to_string(index=False))
+                    print(f"  best by dataset: {best['source_dataset'].value_counts().to_dict()}")
+                    print(f"  best by variant: {best['variant'].value_counts().to_dict()}")
+                    prof = extremes_profile(linked, metric)
+                    if len(prof):
+                        print("  signal profile (worst / rest / best):")
+                        print(_indent(prof.round(3).to_string()))
 
-            print("\n=== do faithfulness/context metrics reflect retrieval scores? ===")
-            has_retr = linked["variant"].astype(str).isin(["rag", "rag_sc"])
-            rv = signal_vs_metric(linked, "retrieval_best", by="variant", rows_mask=has_retr)
-            print("retrieval_best vs metric, by variant (want positive):")
-            print(rv.round(3).to_string(index=False))
-            rv.to_csv("analysis/eval_retrieval_vs_metric.csv", index=False)
-            if "reretrieval_gain" in linked:
-                sc = (linked["variant"].astype(str).eq("rag_sc")
-                      & linked["reretrieval_gain"].notna())
-                if sc.any():
-                    print("\nHyDE re-retrieval gain vs metric (rag_sc rows, want positive):")
-                    gv = signal_vs_metric(linked, "reretrieval_gain", rows_mask=sc)
-                    print(gv.round(3).to_string(index=False))
-                    gv.to_csv("analysis/eval_reretrieval_gain_vs_metric.csv", index=False)
+                # (4) signal -> metric -------------------------------------------------
+                print("\n=== is the confidence gain reflected in the metrics? "
+                      "(paired per-id Δ, want positive) ===")
+                print("logprob vs correctness within each variant (want positive):")
+                print(ev.logprob_correlation(
+                    d, metric="ragas_scores.ragas_answer_correctness").round(3).to_string())
+                rows = {}
+                for a, b in (("rag", "no_rag"), ("rag_sc", "no_rag"), ("rag_sc", "rag")):
+                    for metric in ("ragas_scores.ragas_answer_correctness",
+                                   "deepeval_scores.deepeval_relevance"):
+                        key = f"Δconf vs Δ{metric.split('.')[-1]}: {a}-{b}"
+                        rows[key] = paired_delta(d, "gen_logprob_stats.mean", metric, a, b)
+                print("\npaired deltas (confidence change vs metric change):")
+                print(pd.DataFrame(rows).T.round(3).to_string())
 
-            figs = {
-                "eval_agreement_relevancy": lambda ax: ev.ragas_vs_deepeval(
-                    d, "ragas_scores.ragas_answer_relevancy",
-                    "deepeval_scores.deepeval_relevance", ax=ax),
-                "eval_agreement_faithfulness": lambda ax: ev.ragas_vs_deepeval(
-                    d, "ragas_scores.ragas_faithfulness",
-                    "deepeval_scores.deepeval_faithfulness", ax=ax),
-                "eval_retrieval_vs_faithfulness": lambda ax: retrieval_metric_scatter(
-                    linked, "deepeval_scores.deepeval_faithfulness", ax=ax),
-                "eval_confidence_delta_vs_correctness": lambda ax: delta_scatter(
-                    d, "gen_logprob_stats.mean", "ragas_scores.ragas_answer_correctness",
-                    "rag_sc", "no_rag", ax=ax),
-            }
-            for name, fn in figs.items():
-                fig, ax = plt.subplots(figsize=(7, 5))
-                fn(ax)
-                fig.savefig(f"analysis/{name}.png", dpi=100, bbox_inches="tight")
-                plt.close(fig)
-                print(f"wrote analysis/{name}.png")
-    else:
-        print(f"\n(no RAG file at {rag_path!r}; cross-link, worst/best and signal->metric skipped)")
+                print("\n=== do faithfulness/context metrics reflect retrieval scores? ===")
+                has_retr = linked["variant"].astype(str).isin(["rag", "rag_sc"])
+                rv = signal_vs_metric(linked, "retrieval_best", by="variant", rows_mask=has_retr)
+                print("retrieval_best vs metric, by variant (want positive):")
+                print(rv.round(3).to_string(index=False))
+                rv.to_csv(paths.table(both, "eval_retrieval_vs_metric"), index=False)
+                if "reretrieval_gain" in linked:
+                    sc = (linked["variant"].astype(str).eq("rag_sc")
+                          & linked["reretrieval_gain"].notna())
+                    if sc.any():
+                        print("\nHyDE re-retrieval gain vs metric (rag_sc rows, want positive):")
+                        gv = signal_vs_metric(linked, "reretrieval_gain", rows_mask=sc)
+                        print(gv.round(3).to_string(index=False))
+                        gv.to_csv(paths.table(both, "eval_reretrieval_gain_vs_metric"),
+                                  index=False)
+
+                # The only figure that actually reads the joined frame, so the only
+                # one named for both files.
+                print("\n=== figures (linked rag+eval) ===")
+                plots.save_all({
+                    "eval_retrieval_vs_faithfulness": lambda ax: plots.retrieval_metric_scatter(
+                        linked, "deepeval_scores.deepeval_faithfulness", ax=ax),
+                }, both)
+        else:
+            print(f"\n(no RAG file at {rag_path!r}; cross-link, worst/best and signal->metric skipped)")
