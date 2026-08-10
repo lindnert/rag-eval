@@ -25,10 +25,8 @@ from rag.llm_config import (
     RAG_SC_REGEN_MAX_TOKENS,
     RAG_SC_REGEN_REPEAT_LAST_N,
     RAG_SC_REGEN_REPEAT_PENALTY,
-    RAG_SC_MERGE_STRATEGY,
     RAG_SC_RETRIEVAL_BEST_THRESHOLD,
     RAG_SC_RETRIEVAL_SPREAD_THRESHOLD,
-    RAG_SC_RRF_K,
     RAG_SC_SCORE_DIRECTION,
 )
 from common.constants import RAG_LANG, REJECTION_ANSWER, REJECTION_ANSWERS
@@ -399,22 +397,14 @@ def _generation_correction_triggers(logprobs):
     return triggers
 
 
-def _merge_by_score(
+def _merge_and_rerank(
     ctx_orig, retr_scores_orig, ids_orig,
     ctx_hyde, retr_scores_hyde, ids_hyde,
     k=RAG_K,
 ):
     """Union both retrievals, dedupe by context text, keep best score per doc,
     sort by direction, truncate to k. `chunk_id` rides along with each doc's
-    score so the merged list keeps ids aligned to contexts (retrieval order).
-
-    The pre-2026-08 merge, reachable via RAG_SC_MERGE_STRATEGY=score and kept so
-    runs made with it stay reproducible. It sorts the pooled list by scores taken
-    from two different queries, whose BM25 halves were each normalised against
-    their own query's best match (retrieval.hybrid.fused_scores) — see the
-    RAG_SC_MERGE_STRATEGY comment in llm_config for why that comparison does not
-    hold, and _rrf_merge for the replacement.
-    """
+    score so the merged list keeps ids aligned to contexts (retrieval order)."""
     pool = {}  # context text -> (score, chunk_id)
     for context, score, cid in (
         list(zip(ctx_orig, retr_scores_orig, ids_orig))
@@ -437,97 +427,7 @@ def _merge_by_score(
     contexts = [c for c, _ in items]
     scores = [v[0] for _, v in items]
     ids = [v[1] for _, v in items]
-    return contexts, scores, ids, {"merge_strategy": "score"}
-
-
-def _rrf_merge(
-    retriever, query,
-    ctx_orig, ids_orig,
-    ctx_hyde, ids_hyde,
-    k=RAG_K, rrf_k=RAG_SC_RRF_K,
-):
-    """Merge the original and HyDE retrievals by RANK, then score the survivors
-    under the ORIGINAL question. Splits apart the two jobs the old score-sort
-    conflated:
-
-      - WHICH chunks survive is decided by position, never by value. Each list
-        gives a chunk a vote worth 1/(rrf_k + rank) and the votes are summed
-        (Reciprocal Rank Fusion). Positions are scale-free, so a number measured
-        against the question is never weighed against one measured against the
-        pseudo-answer. At the default rrf_k a chunk BOTH searches returned beats
-        one that only a single search ranked first: two independent retrievals
-        agreeing is the strongest signal available here.
-      - WHAT SCORE is recorded is recomputed for every survivor under the
-        question, with the same corpus-wide normalisation `search_with_score`
-        uses. So a rag_sc row's retrieval_scores mean exactly what a rag row's
-        do, re-retrieved or not, and original_retrieval_scores vs
-        retrieval_scores is finally like-for-like — which also means the delta
-        can now be NEGATIVE, i.e. re-retrieval trading question-relevance for
-        HyDE recall becomes a visible, measurable outcome instead of an
-        arithmetic impossibility.
-
-    RRF ties are inevitable (rank 1 in one list is worth exactly rank 1 in the
-    other), and they break toward the higher question score — so the chunk the
-    question itself ranked best can never be evicted. With k=3 and no overlap
-    that yields the question's top 2 plus HyDE's top 1; every chunk both
-    searches found displaces one of those.
-
-    Output order is the FUSION ranking, so the recorded scores are not
-    monotonically decreasing the way a single search's are (the question's rank-2
-    chunk can sit behind HyDE's rank-1 while scoring higher). Nothing downstream
-    reads them positionally — every consumer takes max/min — and the contexts go
-    into the prompt in the order the fusion ranked them.
-
-    Returns (contexts, scores, ids, info); `info` records the votes and each
-    survivor's source for sc_metadata.
-    """
-    pool = {}  # context text -> [chunk_id, rrf_vote, [sources]]
-    for source, ctxs, ids in (("question", ctx_orig, ids_orig),
-                              ("hyde", ctx_hyde, ids_hyde)):
-        for rank, (context, cid) in enumerate(zip(ctxs, ids), start=1):
-            entry = pool.setdefault(context, [cid, 0.0, []])
-            entry[1] += 1.0 / (rrf_k + rank)
-            entry[2].append(source)
-
-    contexts = list(pool)
-    cids = [pool[c][0] for c in contexts]
-    # One embed + one BM25 pass; every candidate lands on the question's scale.
-    q_scores = retriever.score_ids(query, cids)
-
-    def _rank_key(i):
-        score = q_scores[i]
-        # NaN (an id outside the corpus) must sort last, not unpredictably.
-        return (-pool[contexts[i]][1],
-                -(score if score == score else float("-inf")),
-                cids[i])
-
-    order = sorted(range(len(contexts)), key=_rank_key)[:k]
-    info = {
-        "merge_strategy": "rrf",
-        "rrf_k": rrf_k,
-        "merged_rrf_votes": [round(pool[contexts[i]][1], 6) for i in order],
-        "merged_sources": [
-            "both" if len(set(pool[contexts[i]][2])) > 1 else pool[contexts[i]][2][0]
-            for i in order
-        ],
-    }
-    return ([contexts[i] for i in order], [q_scores[i] for i in order],
-            [cids[i] for i in order], info)
-
-
-def _merge_and_rerank(
-    retriever, query,
-    ctx_orig, retr_scores_orig, ids_orig,
-    ctx_hyde, retr_scores_hyde, ids_hyde,
-    k=RAG_K, strategy=RAG_SC_MERGE_STRATEGY,
-):
-    """Dispatch to the configured merge (see RAG_SC_MERGE_STRATEGY). Returns
-    (contexts, scores, ids, info) either way; blocking (the rrf path embeds the
-    question), so call it through an executor."""
-    if strategy == "rrf":
-        return _rrf_merge(retriever, query, ctx_orig, ids_orig, ctx_hyde, ids_hyde, k=k)
-    return _merge_by_score(ctx_orig, retr_scores_orig, ids_orig,
-                           ctx_hyde, retr_scores_hyde, ids_hyde, k=k)
+    return contexts, scores, ids
 
 
 def build_user_prompt(query, contexts, lang=None):
@@ -711,21 +611,10 @@ async def process_single_query(
                     sc_metadata["original_contexts"] = list(contexts)
                     sc_metadata["original_retrieval_scores"] = list(retrieval_scores)
                     sc_metadata["original_context_ids"] = list(retrieved_ids)
-                    # The HyDE list as retrieved, i.e. on the pseudo-answer's own
-                    # scale. Kept for transparency only — never comparable with the
-                    # question-scale scores above (see _rrf_merge).
-                    sc_metadata["hyde_retrieval_scores"] = list(hyde_retrieval_scores)
-                    sc_metadata["hyde_context_ids"] = list(hyde_ids)
-                    merged = await loop.run_in_executor(
-                        None,
-                        lambda: _merge_and_rerank(
-                            retriever, query,
-                            contexts, retrieval_scores, retrieved_ids,
-                            hyde_ctx, hyde_retrieval_scores, hyde_ids,
-                        ),
+                    contexts, retrieval_scores, retrieved_ids = _merge_and_rerank(
+                        contexts, retrieval_scores, retrieved_ids,
+                        hyde_ctx, hyde_retrieval_scores, hyde_ids,
                     )
-                    contexts, retrieval_scores, retrieved_ids, merge_info = merged
-                    sc_metadata.update(merge_info)
                     sc_metadata["retrieval_retried_count"] += 1
                 except Exception as exc:
                     sc_metadata["retrieval_error"] = str(exc)
