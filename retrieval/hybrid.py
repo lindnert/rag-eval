@@ -145,21 +145,8 @@ class HybridRetriever:
 
         self._bm25 = BM25Okapi([bm25_tokenize(t) for t in self._texts])
 
-    def fused_scores(self, query, alpha=None):
-        """Fused score of EVERY document for `query`, in FAISS-position order.
-
-        Split out of `search_with_score` so callers that need the score of a
-        *specific* document under a *given* query can get it on exactly the same
-        scale as a normal search — see `score_ids`, used by the rag_sc merge to
-        put HyDE-retrieved docs back onto the original question's scale.
-
-        Note the BM25 half is max-normalised per query (`sparse / smax`), which
-        makes the best-matching doc score exactly 1.0 for EVERY query. That is
-        what puts BM25 on the same [0, 1] range as cosine, and it is harmless
-        within one ranking — but it means fused scores from two different queries
-        are not comparable, so never sort a pooled candidate set by scores taken
-        from two separate calls.
-        """
+    def search_with_score(self, query, k, alpha=None):
+        """Return [(Document, fused_score), ...] sorted by fused score desc."""
         alpha = self.alpha if alpha is None else alpha
 
         q = np.asarray(self.embeddings.embed_query(QUERY_PREFIX + query), dtype=np.float32)
@@ -172,22 +159,7 @@ class HybridRetriever:
         smax = float(sparse.max()) if sparse.size else 0.0
         sparse_norm = sparse / smax if smax > 0 else np.zeros_like(sparse)
 
-        return alpha * dense + (1.0 - alpha) * sparse_norm
-
-    def score_ids(self, query, ids, alpha=None):
-        """Fused score under `query` for the given `chunk_id`s (FAISS positions).
-
-        One embed + one BM25 pass over the corpus, so scores come back identical
-        to what `search_with_score(query, ...)` would report for those docs. Ids
-        outside the corpus yield NaN rather than raising.
-        """
-        fused = self.fused_scores(query, alpha)
-        n = len(fused)
-        return [float(fused[i]) if 0 <= int(i) < n else float("nan") for i in ids]
-
-    def search_with_score(self, query, k, alpha=None):
-        """Return [(Document, fused_score), ...] sorted by fused score desc."""
-        fused = self.fused_scores(query, alpha)
+        fused = alpha * dense + (1.0 - alpha) * sparse_norm
 
         top = np.argsort(-fused)[:k]
         # Attach the FAISS position as `chunk_id` so downstream eval can match
