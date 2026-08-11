@@ -24,9 +24,12 @@ RAGAS/DeepEval scoring:
     FINAL one, so we can measure whether re-retrieval actually raised the scores.
   - truncation: ``finish_reason == "length"`` marks a generation cut off at
     max_tokens, split by ``truncation_summary`` into runaway thinking loops (no
-    answer text) and genuinely truncated answers. Runs made before finish_reason
-    was hoisted to top level only carry it for rag_sc rows; ``truncation_coverage``
-    reports how many rows actually have one.
+    answer text) and genuinely truncated answers. Hitting the cap is possible in
+    EVERY variant, so that table is read over all of them; a thinking loop is not
+    (only the rag_sc regeneration runs with thinking enabled), so it gets its own
+    ``thinking_loop_summary`` over the rows that actually regenerated. Runs made
+    before finish_reason was hoisted to top level only carry it for rag_sc rows;
+    ``truncation_coverage`` reports how many rows actually have one.
   - abstentions: ``rejected`` marks an answer the pipeline replaced with the
     canonical "the context does not cover this" rejection, ``rejection_reason``
     says why (the model abstained, vs nothing surviving a runaway regen).
@@ -85,14 +88,10 @@ package on the path, so ``python analysis/rag_analysis.py`` will NOT work):
 
     python -m analysis.rag_analysis                      # newest rag_results_<ts>.json
     python -m analysis.rag_analysis results/rag_results_20260723_141500.json
-    python -m analysis.rag_analysis RAG_FILE EVAL_FILE   # explicit eval file to link
 
-The optional 2nd argument is the evaluated-results JSON to cross-link against.
-Omitted, it defaults to the eval run built from the rag file in use — eval
-outputs are named ``evaluated_results_<evalts>_from_<ragts>.json``, so the
-matching pair is found by the rag stamp and the (id x variant) overlap is
-complete. Only when no eval was run over that rag file does it fall back to the
-newest eval file, which may overlap partially or not at all.
+One argument only: the rag file to analyse. Nothing here touches the evaluated
+results any more, so there is no second argument — the cross-link moved to
+``analysis.eval_analysis`` (see the note at the end of this docstring).
 
 This runs the whole __main__ report, in three passes: what went WRONG (structural
 health check, token-cap truncation, the pass-through check on untouched rag_sc
@@ -119,6 +118,11 @@ from datetime import datetime
 import pandas as pd
 
 from analysis import paths
+# Imported from the dependency-free source so the analysis modules don't pull in
+# torch/transformers. Holds the canonical rejection string for EVERY language,
+# which is what `_abstained` needs — the single-language REJECTION_ANSWER would
+# miss a multilingual run's German abstentions.
+from common.constants import REJECTION_ANSWERS
 from common.results_io import RAG_PREFIX, latest_results
 
 VARIANT_ORDER = ["no_rag", "rag", "rag_sc"]
@@ -228,6 +232,36 @@ def load(path):
 
 def _order(df):
     return [v for v in VARIANT_ORDER if v in df["variant"].unique()]
+
+
+def sample_overview(df, by="source_dataset"):
+    """How many samples the run actually produced, per ``by`` group x variant.
+
+    The first thing to read in any report: every later table is a slice of this
+    one, and a per-variant table only compares like with like if the three columns
+    below hold the same ids. Columns: ``ids`` (distinct question ids in the group),
+    one row count per variant present, and ``total`` (the group's rows). An ``ALL``
+    row closes the table, whose ``total`` is the row count of the whole file.
+
+    On a complete run every id carries every variant, so each variant column equals
+    ``ids`` and ``total == ids * n_variants``. A short variant column means that
+    variant's rows are missing for some ids — a shard that did not finish — and the
+    per-variant comparisons downstream are then run on different question sets.
+    ``ids`` counts distinct ids, so it is NOT the sum of the per-group ids if the
+    same id appears under two groups (it does not, ids are dataset-prefixed).
+    """
+    if not len(df) or "variant" not in df or by not in df:
+        return pd.DataFrame(columns=["ids", "total"])
+
+    variants = [v for v in VARIANT_ORDER if v in set(df["variant"].dropna().astype(str))]
+    out = (pd.crosstab(df[by], df["variant"].astype(str))
+           .reindex(columns=variants, fill_value=0))
+    out.columns.name = None
+    out.insert(0, "ids", df.groupby(by, observed=True)["id"].nunique())
+    out["total"] = out[variants].sum(axis=1)
+    out.loc["ALL"] = {"ids": df["id"].nunique(), "total": len(df),
+                      **{v: int((df["variant"].astype(str) == v).sum()) for v in variants}}
+    return out.astype(int)
 
 
 # --- Health check ------------------------------------------------------------
@@ -452,6 +486,20 @@ def _hyde_rows(df):
     return sc[pd.to_numeric(sc[RETRIEVAL_RETRY_COL], errors="coerce").fillna(0) > 0]
 
 
+def _regen_rows(df):
+    """The rag_sc rows whose generation the correction actually re-ran.
+
+    The generation counterpart of ``_hyde_rows``, and the honest denominator for
+    anything that can only happen on the regeneration — it is the one pass that runs
+    with ``enable_thinking=True`` (see ``thinking_loop_summary``). A missing
+    retry-counter column means 'never fired', so this returns no rows.
+    """
+    sc = df[df["variant"] == "rag_sc"]
+    if GENERATION_RETRY_COL not in sc:
+        return sc.iloc[0:0]
+    return sc[pd.to_numeric(sc[GENERATION_RETRY_COL], errors="coerce").fillna(0) > 0]
+
+
 def retrieval_variant_long(df, col="retrieval_best", col_orig="retrieval_best_orig"):
     """Long-form retrieval scores tagged by retrieval variant, HyDE cohort split out.
 
@@ -643,28 +691,38 @@ def truncation_summary(df, by="source_dataset", with_total=True):
     """How often generation hit the token cap instead of stopping on its own.
 
     ``finish_reason == "length"`` means the model never emitted a stop token and was
-    cut off at max_tokens. Two very different failures hide behind that one value,
-    split apart here by whether any answer text survived:
+    cut off at max_tokens. EVERY variant can end that way — a long answer runs past
+    the cap regardless of which pipeline produced it — so this table is meant to be
+    read over all of them (``by="variant"`` or ``truncation_by_dataset_variant``), and
+    ``length`` / ``length_rate`` are comparable across variants.
 
+    Two very different failures hide behind the one finish_reason value, split apart
+    here by whether any answer text survived:
+
+      - ``answer_truncated``: cut off but an answer WAS written — a genuine answer that
+        ran past the cap and lost its tail. This is what truncation means in the
+        ordinary sense, and the only kind a no_rag / rag row can have.
       - ``thinking_loop``: cut off with NO answer text (``rejection_reason == "empty"``)
         — the runaway rag_sc regen that burns its whole budget reasoning and never
         answers. The pipeline substitutes the canonical rejection, so downstream it
         looks like an ordinary abstention; this count is what unmasks it.
-      - ``answer_truncated``: cut off but an answer WAS written — a genuine answer that
-        ran past the cap and lost its tail.
+
+    ``length == thinking_loop + answer_truncated`` by construction. The thinking_loop
+    column is kept here so that decomposition is visible, but it is NOT comparable
+    across variants: only the rag_sc regeneration runs with thinking enabled, so a 0
+    elsewhere is structural. ``thinking_loop_summary`` is the table that rates it
+    against a denominator it can actually happen in.
 
     ``length_rate`` is the share of the group's rows that were cut off. With
     ``with_total`` an ``ALL`` row is appended, pooled over every row (total cut off /
     total rows, NOT the mean of the per-group rates, which would misweight uneven
-    groups) — the same convention as ``trigger_summary``.
+    groups) — the same convention as ``trigger_summary``. Single-level ``by`` only,
+    since a MultiIndex has no one place to put it; ``truncation_by_dataset_variant``
+    is the two-level table.
 
     Coverage caveat: ``n`` counts only rows that carry a finish_reason. On a current
     run that is every row; on one made before finish_reason was hoisted to top level
     it is the rag_sc rows alone — pair this with ``truncation_coverage``.
-
-    Takes whatever rows you hand it, so filter first if the variants aren't comparable:
-    the __main__ report passes rag_sc only, since single-pass no_rag/rag rows cannot
-    loop and would deflate ``length_rate``.
     """
     cols = ["n", "length", "length_rate", "thinking_loop", "answer_truncated"]
     if FINISH_REASON_COL not in df:
@@ -690,11 +748,71 @@ def truncation_summary(df, by="source_dataset", with_total=True):
         })
 
     out = sub.groupby(by, observed=True).apply(_agg, include_groups=False)
-    if with_total:
+    if with_total and isinstance(by, str):
         out.loc["ALL"] = _agg(sub)
     for c in ("n", "length", "thinking_loop", "answer_truncated"):
         out[c] = out[c].astype(int)
     return out
+
+
+def truncation_by_dataset_variant(df, with_all=True):
+    """Token-cap truncation per (source_dataset, variant), with an ``all`` row closing
+    each dataset — the truncation counterpart of ``abstention_by_dataset_variant``.
+
+    Same columns as ``truncation_summary``. The ``all`` row is pooled over that
+    dataset's rows across all three variants rather than averaged from the per-variant
+    rates. Unlike the abstention table this one may keep no_rag: hitting the token cap
+    is something a single-pass generation can do, so its rows belong in the pooled rate
+    (its ``thinking_loop`` column is structurally 0 — see ``truncation_summary``).
+    """
+    int_cols = ["n", "length", "thinking_loop", "answer_truncated"]
+    base = truncation_summary(df, by=["source_dataset", "variant"], with_total=False)
+    if not with_all or not len(base):
+        return base
+    pooled = truncation_summary(df, by="source_dataset", with_total=False)
+    return _with_pooled_rows(base, pooled, order=VARIANT_ORDER, int_cols=int_cols)
+
+
+def thinking_loop_summary(df, by="source_dataset", with_total=True):
+    """Runaway regenerations, over the rows that could actually have one.
+
+    A thinking loop — ``finish_reason == "length"`` with no answer text surviving the
+    ``<think>`` strip — is only reachable on the rag_sc REGENERATION: that is the one
+    pass run with ``enable_thinking=True`` (``rag/utils.py``), so it is the only one
+    that can spend its whole budget reasoning and emit nothing. Restricting to rag_sc
+    is therefore not enough, because the rag_sc rows whose generation trigger never
+    fired did not regenerate either. The denominator here is ``_regen_rows`` — the
+    rag_sc rows with ``generation_retried_count > 0`` — which is the only denominator
+    ``loop_rate`` can be honestly divided by.
+
+    Columns: ``n_regen`` (rows that regenerated), ``thinking_loop``, ``loop_rate``.
+    With ``with_total`` an ``ALL`` row is appended, pooled over rows (single-level
+    ``by`` only). Empty frame when nothing regenerated in this file.
+
+    The same loops appear in ``truncation_summary`` as its ``thinking_loop`` column,
+    there divided by ALL rows of the group — a rate that is diluted by every row the
+    correction never touched, and meaningless in the no_rag / rag rows.
+    """
+    cols = ["n_regen", "thinking_loop", "loop_rate"]
+    sub = _regen_rows(df)
+    if not len(sub) or FINISH_REASON_COL not in sub:
+        return pd.DataFrame(columns=cols)
+
+    sub = sub.copy()
+    rej = (sub[REJECTION_REASON_COL] if REJECTION_REASON_COL in sub
+           else pd.Series("", index=sub.index))
+    sub["_loop"] = ((sub[FINISH_REASON_COL].astype(str) == "length")
+                    & (rej.astype(str) == "empty"))
+
+    def _agg(g):
+        return pd.Series({"n_regen": len(g),
+                          "thinking_loop": int(g["_loop"].sum()),
+                          "loop_rate": round(g["_loop"].mean(), 3)})
+
+    out = sub.groupby(by, observed=True).apply(_agg, include_groups=False)
+    if with_total and isinstance(by, str):
+        out.loc["ALL"] = _agg(sub)
+    return _int_counts(out, ("n_regen", "thinking_loop"))
 
 
 # --- Abstentions -------------------------------------------------------------
@@ -725,17 +843,27 @@ ABSTENTION_SIGNAL_COLS = {
 
 
 def _abstained(df):
-    """Boolean 'this row abstained', from the pipeline's own ``rejected`` flag, falling
-    back to the presence of a ``rejection_reason``.
+    """Boolean 'this row abstained' — THE abstention detector, for rag frames and
+    evaluated frames alike (``analysis.eval_analysis`` and ``analysis.plots``
+    import this one; there is deliberately no second copy).
 
-    Deliberately never string-matches the answer: a run is multilingual, so the
-    canonical rejection has one form per language and matching only the English one
-    would silently miss the German abstentions (the same trap
-    ``analysis.analysis._rejection_mask`` documents)."""
+    Prefers the pipeline's own language-agnostic ``rejected`` flag, which every
+    result file written under the current schema carries on every row. The
+    fallback matches the answer against the canonical rejection string of *every*
+    language in ``REJECTION_ANSWERS``, never just one: a run is multilingual, so
+    matching only the English form would silently miss the German abstentions.
+
+    It used to fall back to ``rejection_reason.notna()`` instead. That was unsafe
+    in a way worth recording: the field is absent from 11 of the 13 result files
+    in ``results/``, so on any of them the fallback would have reported ZERO
+    abstentions (196 of them, on the main run) rather than raising. The
+    string-match fallback below reproduces ``rejected`` exactly on all 13.
+    """
     if "rejected" in df:
         return df["rejected"].fillna(False).astype(bool)
-    if REJECTION_REASON_COL in df:
-        return df[REJECTION_REASON_COL].notna()
+    if "answer" in df:
+        rej_strings = {s.strip() for s in REJECTION_ANSWERS.values()}
+        return df["answer"].fillna("").str.strip().isin(rej_strings)
     return pd.Series(False, index=df.index)
 
 
@@ -1527,6 +1655,14 @@ if __name__ == "__main__":
     # Everything printed below is collected and saved to this run's
     # reports/ folder, then echoed to the console.
     with paths.capture(path, "rag_analysis_report"):
+        # What the run actually contains, before anything is measured on it: how many
+        # samples per dataset and per variant. Every table below is a slice of this one.
+        print("=== samples in this run, by dataset x variant ===")
+        print("ids = distinct questions in the dataset; each variant column = the rows "
+              "that dataset contributed to that variant; total = its rows overall. On a "
+              "complete run the three variant columns all equal ids.")
+        print(sample_overview(d).to_string())
+
         # These are the TOTAL rows loaded (no cross-linking yet). Every id should carry
         # every variant, so a complete file has n_ids x n_variants rows; `missing` counts
         # the (id, variant) combinations absent from that full grid and should be 0.
@@ -1545,17 +1681,36 @@ if __name__ == "__main__":
         rag_health_report(d, source=path)
 
         # --- Error analyses: what went WRONG in the run, before any results are read --
-        print("\n=== generations cut off at the token cap, by dataset (rag_sc only) ===")
+        print("\n=== generations cut off at the token cap (finish_reason=length) ===")
         print(f"finish_reason covers {coverage_note(d)}; n below counts those rows only.")
-        print("Restricted to rag_sc: only its regeneration can loop, so pooling in the "
-              "single-pass no_rag/rag rows would just dilute length_rate.")
-        print("length = hit max_tokens; thinking_loop = cut off with no answer text "
-              "(runaway regen); answer_truncated = answer written but tail lost.")
-        _trunc = truncation_summary(d[d["variant"] == "rag_sc"])
+        print("All three variants: any generation can run past max_tokens, so length / "
+              "length_rate are comparable across them. length = the generation was cut "
+              "off at the cap; it splits by whether answer text survived into "
+              "answer_truncated (an answer WAS written and lost its tail) and "
+              "thinking_loop (nothing survived stripping <think>), which sum to it.")
+        print("thinking_loop is NOT comparable across variants — only the rag_sc "
+              "regeneration runs with thinking enabled, so a 0 elsewhere is structural. "
+              "It gets its own table below, rated against the rows that regenerated.")
+        _trunc = truncation_summary(d, by="variant")
         if len(_trunc):
             print(_trunc.to_string())
+            print("\n--- same, per dataset x variant (all = the three variants pooled "
+                  "per dataset) ---")
+            print(truncation_by_dataset_variant(d).to_string())
         else:
             print("no finish_reason in this file")
+
+        print("\n=== runaway thinking loops, by dataset (rag_sc regenerations only) ===")
+        print("The denominator is the rag_sc rows whose generation was actually retried: "
+              "the regen is the only pass run with thinking enabled, so it is the only "
+              "one that can burn its whole budget reasoning and emit no answer. Dividing "
+              "these loops by all rag_sc rows (let alone all rows) understates the rate "
+              "by counting rows where the failure was not even possible.")
+        print("The pipeline substitutes the canonical rejection for such a row, so it "
+              "reappears below as an `empty` abstention rather than as a failure.")
+        _loops = thinking_loop_summary(d)
+        print(_loops.to_string() if len(_loops)
+              else "no rag_sc rows regenerated in this file — no loop is possible")
 
         # Pass-through check: rag_sc rows that fired NEITHER correction ran the identical
         # pipeline to rag, so any divergence is noise (answers) or a bug (contexts). The
@@ -1766,7 +1921,12 @@ if __name__ == "__main__":
         # analysis.eval_analysis; `link_eval` / `top_n` remain here as the join helpers
         # it imports. Run `python -m analysis.eval_analysis` for that step.
 
-        print("\n=== figures ===")
+        print("\n=== headline figures ===")
+        plots.save_all({
+            "fig_abstention_by_dataset": lambda: plots.abstention_grouped_bars(d),
+        }, path)
+
+        print("\n=== exploratory figures ===")
         plots.save_all({
             "rag_confidence_by_variant": lambda ax: plots.confidence_boxplot(d, ax=ax),
             "rag_confidence_by_dataset": lambda ax: plots.confidence_by_dataset(d, ax=ax),

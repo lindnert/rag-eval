@@ -1,16 +1,39 @@
-"""Deep-dive on the EVALUATED results, and the bridge to the pipeline signals.
+"""Everything about the EVALUATED results, and the bridge to the pipeline signals.
 
-Three layers already exist and this module sits on top of the other two:
+There are two analysis entry points, and this is one of them:
 
   - ``analysis.rag_analysis``: the *raw* pipeline signals (generation confidence,
-    hybrid retrieval scores, self-correction) with no notion of quality.
-  - ``analysis.analysis``: the evaluated-results primitives (``load`` +
-    numeric coercion, ``health_report``, ``metric_summary`` / ``means_by``,
-    ``compare_variants``, reason mining, the plots).
-  - ``analysis.eval_analysis`` (this file): the cross-cutting questions that need
-    the metrics — and, for the linking parts, the pipeline signals — together.
+    hybrid retrieval scores, self-correction, how often the pipeline abstained)
+    with no notion of quality.
+  - ``analysis.eval_analysis`` (this file): everything that touches a metric or a
+    judge — loading the evaluated JSON, the summary tables, metric validation,
+    the paired variant comparisons, and the cross-cutting questions that need the
+    pipeline signals alongside the metrics.
 
-It answers four things, in the order __main__ runs them:
+The primitives in the first two sections below — ``load``, ``metric_summary`` /
+``means_by``, ``compare_variants``, ``health_report``, ``drop_eval_errors``, the
+reason mining — used to live in a third module, ``analysis.analysis``. They read
+metrics and judge prose like everything else here, so they were folded in;
+``analysis.plots`` imports them from this module now.
+
+Abstentions are split across the two modules on purpose. *Counting* them is a
+pipeline fact and lives in ``rag_analysis`` (``abstention_summary`` and friends,
+and the one shared ``_abstained`` detector this module imports). How the METRICS
+behave on them is a scoring question and lives here: ``abstention_adjusted``
+(every metric over all rows vs answered-only, so a low mean can be split into
+"bad answers" vs "often refused to answer"), ``classify_metrics``'s
+``na_rejected`` status, ``metric_agreement`` dropping abstentions from the
+faithfulness pairs, and ``extremes_profile``'s abstain rate.
+
+It answers six things, in the order __main__ runs them:
+
+  0. What is in the cohort, and what has to come out of it. ``describe_cohort``
+     before and after ``drop_eval_errors``, which excludes rows where a
+     *technical failure* — a generation crash, a RAGAS raise, a DeepEval judge
+     crash — rather than a weak answer produced the score; plus
+     ``health_report``'s blunt "is any metric empty or constant?" checks. These
+     run on the RAW frame, ahead of every exclusion: run afterwards they would be
+     reporting on data the exclusion had already removed.
 
   1. Metric-computation sanity. Every metric cell is one of: genuinely SCORED, a
      legitimate NOT-APPLICABLE (``no_rag`` has no context, so no faithfulness/
@@ -39,6 +62,14 @@ It answers four things, in the order __main__ runs them:
      its OWN ``*_reason`` prose states (an automatable internal-consistency check;
      semantic quality still needs eyeballing, for which ``analysis.reason_hits``
      samples rows).
+
+  2c. How the variants actually compare — the results-chapter spine.
+     ``compare_variants`` pairs each question's score under two variants and runs
+     a Wilcoxon signed-rank test with a rank-biserial effect size and a bootstrap
+     CI; ``means_by`` and ``abstention_adjusted`` give the flat and
+     abstention-split means; ``decile_breakdown`` names the worst-scoring tenth
+     of queries. Read AFTER 2a: a mean difference on a metric that ranks nothing
+     is not a finding.
 
   3. Worst / best queries (the cross-link, moved here from ``rag_analysis``). On
      the rag+eval join, the bottom and top 10% by EVERY headline metric, each row
@@ -74,6 +105,7 @@ paired with; see ``analysis.paths``. The figures themselves live in
 
 import math
 import re
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -155,7 +187,20 @@ NUM_SIGNALS = ["retrieval_best", "gen_logprob_stats.mean", "reretrieval_gain"]
 _NAN = float("nan")
 
 
-# --- (1) Metric-computation sanity -------------------------------------------
+# --- (0) Evaluator-failure exclusion + blunt health checks -------------------
+
+# Narrow, technical-failure patterns for DECIDING to drop a row — the evaluator
+# LLM crashed, not "the answer was weak". Deliberately much stricter than
+# FAILURE_PATTERNS (which is broad on purpose, for *eyeballing* leads): a
+# DeepEval reason that legitimately says "no relevant context" is a real low
+# score, not a failure, so it must NOT match here.
+EVAL_ERROR_PATTERNS = [
+    r"exception", r"traceback", r"failed to parse", r"parse error",
+    r"outputparser", r"json ?decode", r"could ?n[o']t parse",
+    r"rate ?limit", r"timed ?out", r"\btimeout\b", r"api error",
+    r"error (?:generating|calling|during|while)", r"\[llamacpp",
+]
+
 
 def _ragas_error_mask(df):
     c = "ragas_scores.ragas_error"
@@ -166,8 +211,8 @@ def _ragas_error_mask(df):
 
 def _deepeval_error_mask(df):
     """Rows whose DeepEval prose signals a judge *crash* (not a low score), using
-    the narrow ``analysis.EVAL_ERROR_PATTERNS`` — DeepEval has no error field."""
-    rx = re.compile("|".join(ev.EVAL_ERROR_PATTERNS), re.IGNORECASE)
+    the narrow ``EVAL_ERROR_PATTERNS`` — DeepEval has no error field."""
+    rx = re.compile("|".join(EVAL_ERROR_PATTERNS), re.IGNORECASE)
     cols = [c for c in df.columns
             if c.startswith("deepeval_scores.") and c.endswith("_reason")]
     m = pd.Series(False, index=df.index)
@@ -175,6 +220,130 @@ def _deepeval_error_mask(df):
         t = df[c].astype("string").fillna("")
         m = m | (t.str.strip().ne("") & t.str.contains(rx))
     return m
+
+
+def _generation_error_mask(df):
+    """Rows whose answer text is a generation crash rather than an answer."""
+    if "answer" not in df:
+        return pd.Series(False, index=df.index)
+    return df["answer"].fillna("").str.contains(r"\[LLAMACPP", regex=True)
+
+
+def drop_eval_errors(df, mask_metric_level=False):
+    """Exclude rows where a *technical failure* — not a low score — produced the
+    metric, and report how many and of what type were dropped.
+
+    Three failure signals, one per mask above: a generation failure (``answer``
+    contains ``[LLAMACPP ...]``, so no real answer exists and the whole row is
+    meaningless), a RAGAS failure (``ragas_error`` non-empty), or a DeepEval judge
+    crash (only visible in its reason prose).
+
+    Returns ``(clean_df, report)``. ``report`` is a dict with: ``n_before`` /
+    ``n_after`` / ``n_dropped``; ``by_type`` (rows flagged per failure signal —
+    can overlap); ``by_dataset`` and ``by_variant`` (dropped counts); and
+    ``by_dataset_variant`` (the crosstab of what was dropped).
+
+    ``mask_metric_level=False`` (default) drops the whole row on any failure — a
+    clean uniform cohort for the paired tables. It is not implemented to mask per
+    metric; the flag documents the alternative, which is to null only the failed
+    evaluator's columns and keep the other evaluator's valid scores. ``prepare``
+    below does precisely that for the RAGAS half, so __main__ runs it afterwards
+    as a defensive second pass.
+    """
+    if mask_metric_level:
+        raise NotImplementedError(
+            "metric-level masking not implemented; call with mask_metric_level=False "
+            "(whole-row drop). See docstring for the trade-off.")
+
+    gen = _generation_error_mask(df)
+    ragas = _ragas_error_mask(df)
+    deepeval = _deepeval_error_mask(df)
+
+    bad = gen | ragas | deepeval
+    dropped = df[bad]
+    report = {
+        "n_before": len(df),
+        "n_after": int((~bad).sum()),
+        "n_dropped": int(bad.sum()),
+        "by_type": pd.Series(
+            {"generation": int(gen.sum()),
+             "ragas": int(ragas.sum()),
+             "deepeval": int(deepeval.sum())}, dtype="int64"),
+        "by_dataset": (dropped["source_dataset"].value_counts()
+                       if "source_dataset" in dropped else pd.Series(dtype="int64")),
+        "by_variant": (dropped["variant"].astype("object").value_counts()
+                       if "variant" in dropped else pd.Series(dtype="int64")),
+        "by_dataset_variant": (ev.describe_cohort(dropped) if len(dropped)
+                               else pd.DataFrame()),
+    }
+    return df[~bad].copy(), report
+
+
+def health_report(df, source=None):
+    """Quick 'is something broken?' checks. Prints; ``source`` (the results
+    path/name it ran on) only adds the provenance header lines.
+
+    Surfaces the failure modes that silently poison aggregates: generation errors
+    baked into the answer text, RAGAS scorer errors, metrics that never produced
+    a value, degenerate (constant) metrics, and faithfulness scored on abstentions
+    (ill-defined — an abstention makes no claim to be faithful to a context).
+
+    Deliberately blunt, and deliberately run BEFORE ``drop_eval_errors``: the
+    per-cell version of the same question, which separates a real error from a
+    legitimate not-applicable, is ``metric_error_report`` below.
+
+    Returns the flags dict. The printed lines are saved along with the rest of the
+    run's console output by ``analysis.paths.capture``, which __main__ wraps around
+    everything — this function does not write its own file.
+    """
+    flags = {}
+    lines = []
+    emit = lines.append
+
+    emit(f"health_report: {len(df)} rows")
+    if source is not None:
+        emit(f"  source: {source}")
+        emit(f"  generated: {datetime.now().isoformat(timespec='seconds')}")
+
+    gen_err = _generation_error_mask(df)
+    flags["answer_generation_errors"] = int(gen_err.sum())
+    emit(f"  answer generation errors ([LLAMACPP ...]): {int(gen_err.sum())}")
+
+    ragas_err = _ragas_error_mask(df)
+    flags["ragas_errors"] = int(ragas_err.sum())
+    emit(f"  ragas scorer errors: {int(ragas_err.sum())}")
+
+    empty, degenerate = [], []
+    for m in ev.metric_cols(df):
+        s = pd.to_numeric(df[m], errors="coerce")
+        if s.notna().sum() == 0:
+            empty.append(m)
+        elif s.nunique(dropna=True) == 1:
+            degenerate.append((m, s.dropna().iloc[0]))
+    for m in empty:
+        emit(f"  [BROKEN] {m}: no numeric values at all")
+    for m, v in degenerate:
+        emit(f"  [DEGENERATE] {m}: constant = {v}")
+    flags["empty_metrics"] = empty
+    flags["degenerate_metrics"] = degenerate
+
+    rej = ra._abstained(df)
+    faith_cols = [c for c in ev.metric_cols(df) if "faithful" in c]
+    for c in faith_cols:
+        scored = int(pd.to_numeric(df.loc[rej, c], errors="coerce").notna().sum())
+        if scored:
+            emit(f"  [CHECK] {c} scored on {scored} abstained rows "
+                 f"(faithfulness is ill-defined on abstentions)")
+    flags["faithfulness_on_rejections"] = {
+        c: int(pd.to_numeric(df.loc[rej, c], errors="coerce").notna().sum())
+        for c in faith_cols
+    }
+
+    print("\n".join(lines))
+    return flags
+
+
+# --- (1) Metric-computation sanity -------------------------------------------
 
 
 def classify_metrics(df):
@@ -188,7 +357,7 @@ def classify_metrics(df):
     the sentinel strings, so it is robust to wording changes. This is the single
     source of truth for the error report.
     """
-    rej = ev._rejection_mask(df)
+    rej = ra._abstained(df)
     is_norag = df["variant"].astype(str).eq("no_rag")
     is_synth = (df["source_dataset"].eq("synthetic_guidelines")
                 if "source_dataset" in df else pd.Series(False, index=df.index))
@@ -379,6 +548,24 @@ def metric_distribution(df, by=None, metrics=None):
     return out.set_index(keys + ["metric"])
 
 
+def means_by(df, by="source_dataset", metrics=None):
+    """Mean of every metric grouped by a column (default ``source_dataset``).
+
+    Rows = groups, columns = metrics. Also appends an ``n`` column (rows per
+    group) so a low group mean built on a handful of queries is obvious. Pass
+    ``by="variant"`` for the per-variant table, or a list for a crosstab.
+
+    The flat companion to ``metric_distribution``: read that one first, since a
+    mean here is only interpretable for a metric that spreads.
+    """
+    metrics = metrics or score_cols(df)
+    sub = df.copy()
+    sub[metrics] = sub[metrics].apply(pd.to_numeric, errors="coerce")
+    g = sub.groupby(by, observed=True)[metrics].mean()
+    g.insert(0, "n", sub.groupby(by, observed=True).size())
+    return g
+
+
 # --- (2b) Metric validation: do comparable metrics agree? --------------------
 
 def _corr(x, y):
@@ -407,7 +594,7 @@ def metric_agreement(df, pairs=METRIC_PAIRS, by=None, tol=0.2,
 
     ``by="source_dataset"`` / ``by="variant"`` gives the per-group table.
     """
-    rej = ev._rejection_mask(df)
+    rej = ra._abstained(df)
 
     def one(sub, sub_rej, group):
         rows = []
@@ -490,6 +677,175 @@ def deepeval_reason_consistency(df, tol=0.011):
     return pd.DataFrame(rows), pd.DataFrame(mism)
 
 
+# --- (2c) Judge prose: is the reason text signalling failure? ----------------
+
+# Phrases that, when they appear in a judge's *_reason prose or in ragas_error,
+# usually mean the score is a scorer/judge failure rather than a real rating of
+# the answer. Deliberately broad; treat the output as leads to eyeball, not a
+# verdict. Word boundaries keep "error" from firing inside unrelated words.
+# The narrow counterpart used to DECIDE exclusions is EVAL_ERROR_PATTERNS.
+FAILURE_PATTERNS = [
+    r"no context", r"no relevant", r"not enough", r"insufficient",
+    r"could ?n[o']t", r"unable to", r"can ?not", r"can['’]t",
+    r"invalid json", r"failed to parse", r"parse error", r"\berror\b",
+    r"\bn/?a\b", r"not applicable", r"no answer", r"\bempty\b", r"exception",
+]
+
+
+def reason_cols(df):
+    """The judge prose worth mining: the DeepEval ``*_reason`` fields plus
+    ``ragas_scores.ragas_error``.
+
+    Deliberately excludes ``sc_metadata.*`` fields (``rejection_reason``,
+    ``finish_reason``) — those are pipeline metadata explaining the model's own
+    behaviour, not an evaluator justifying a score, so failure-phrase matching
+    there is meaningless (a rejection reason legitimately says "insufficient").
+    """
+    cols = [c for c in df.columns
+            if c.startswith("deepeval_scores.") and c.endswith("_reason")]
+    if "ragas_scores.ragas_error" in df:
+        cols.append("ragas_scores.ragas_error")
+    return cols
+
+
+def mine_reasons(df, patterns=FAILURE_PATTERNS, by=None):
+    """Count failure-phrase hits in each reason/error column.
+
+    Returns one row per reason column with ``n_nonempty`` (rows that carry any
+    prose) and ``n_hits`` / ``hit_rate`` (share of those matching a failure
+    phrase). A high hit_rate on a metric's reason column means that metric's
+    judge is failing often, so its scores are untrustworthy. Pass ``by`` (e.g.
+    ``"source_dataset"``) to get the hit_rate broken down per group instead.
+    """
+    rx = re.compile("|".join(patterns), re.IGNORECASE)
+    cols = reason_cols(df)
+
+    def _stats(sub):
+        out = {}
+        for c in cols:
+            text = sub[c].astype("string").fillna("").str.strip()
+            nonempty = text.ne("")
+            hits = nonempty & text.str.contains(rx)
+            n = int(nonempty.sum())
+            out[c] = {
+                "n_nonempty": n,
+                "n_hits": int(hits.sum()),
+                "hit_rate": round(hits.sum() / n, 3) if n else float("nan"),
+            }
+        return pd.DataFrame(out).T
+
+    if by is None:
+        return _stats(df)
+    return (df.groupby(by, observed=True)
+              .apply(lambda g: _stats(g)["hit_rate"], include_groups=False))
+
+
+def reason_hits(df, patterns=FAILURE_PATTERNS, cols=None, id_col="id"):
+    """Long table of the individual rows whose reason prose matches a failure
+    phrase — (id, variant, column, snippet) — for eyeballing what broke.
+
+    The manual-review sampler behind ``deepeval_reason_consistency``: that one
+    automates 'does the prose state the same number as the field', this one hands
+    you the prose itself, since whether a reason is a *good* justification is not
+    automatable.
+    """
+    rx = re.compile("|".join(patterns), re.IGNORECASE)
+    cols = cols or reason_cols(df)
+    keep = [c for c in (id_col, "variant", "source_dataset") if c in df]
+    records = []
+    for c in cols:
+        text = df[c].astype("string").fillna("")
+        hit = text.str.strip().ne("") & text.str.contains(rx)
+        for _, row in df.loc[hit].iterrows():
+            rec = {k: row[k] for k in keep}
+            rec["column"] = c
+            rec["snippet"] = str(row[c])[:160]
+            records.append(rec)
+    return pd.DataFrame(records)
+
+
+# --- (2d) How the variants compare -------------------------------------------
+# The paired test itself is ``analysis.analysis.compare_variants`` (shared with
+# plots.variant_effect_forest); what follows are the cuts that only belong to
+# the report.
+
+def abstention_adjusted(df, metrics=None, by=None):
+    """Every metric reported twice: over all rows vs over answered rows only.
+
+    Splits a low headline mean into its two causes — genuinely poor answers vs a
+    high abstention rate. ``mean_all`` counts abstentions (via the shared
+    ``rag_analysis._abstained`` flag) as scored; ``mean_answered`` excludes them.
+    A large positive ``delta`` (answered >> all) means the metric is mostly
+    measuring how often the system abstained, not answer quality. With ``by`` set,
+    returns the answered-only means per group.
+
+    This is the metrics-side abstention question. How OFTEN the pipeline abstained
+    is ``rag_analysis.abstention_summary``.
+    """
+    metrics = metrics or score_cols(df)
+    answered = ~ra._abstained(df)
+
+    if by is not None:
+        sub = df[answered].copy()
+        sub[metrics] = sub[metrics].apply(pd.to_numeric, errors="coerce")
+        return sub.groupby(by, observed=True)[metrics].mean()
+
+    rows = {}
+    for m in metrics:
+        s_all = pd.to_numeric(df[m], errors="coerce")
+        s_ans = pd.to_numeric(df.loc[answered, m], errors="coerce")
+        rows[m] = {
+            "n_all": int(s_all.notna().sum()),
+            "mean_all": s_all.mean(),
+            "n_answered": int(s_ans.notna().sum()),
+            "mean_answered": s_ans.mean(),
+            "delta": s_ans.mean() - s_all.mean(),
+        }
+    return pd.DataFrame(rows).T
+
+
+def decile_breakdown(df, metric, n_bins=10, id_col="id"):
+    """Split queries into ``n_bins`` equal-size bins by ``metric`` and list the
+    IDs in each — decile 1 is the worst-scoring tenth (systematic weak points).
+
+    Bins are cut on the *rank* (not the raw value) so metrics that pile up at
+    0.0 / 1.0 still divide into equal-count groups instead of collapsing on
+    duplicate quantile edges. Rows where the metric is NaN are dropped, so this
+    reflects only scored queries.
+
+    The ``ids`` cell tags each id with its ``variant`` when that column exists
+    (e.g. ``mmlu_72[rag_sc]``). This matters because the pool is *unpaired*: a
+    question scored under all three variants contributes up to three rows, so the
+    same id can appear several times in one decile — the tag says which variant
+    each is (``mmlu_72[no_rag]`` being in the worst tenth is expected; ``[rag_sc]``
+    there is the interesting failure). For the "does rag_sc lift the *same*
+    question?" story use a *paired* view instead (``compare_variants`` /
+    ``plots.slopegraph``); pass a single-variant slice here
+    (``df[df.variant=="rag_sc"]``) to read one variant's distribution cleanly, or
+    the full frame to find questions that score badly across *every* variant
+    (intrinsically hard items / bad golds).
+    """
+    s = pd.to_numeric(df[metric], errors="coerce")
+    keep = [id_col] + (["variant"] if "variant" in df and id_col != "variant" else [])
+    sub = df.loc[s.notna(), keep].copy()
+    sub["value"] = s[s.notna()].to_numpy()
+    if sub.empty:
+        return pd.DataFrame(columns=["n", "mean", "min", "max", "ids"])
+    if "variant" in sub:
+        sub["_label"] = sub[id_col].astype(str) + "[" + sub["variant"].astype(str) + "]"
+    else:
+        sub["_label"] = sub[id_col].astype(str)
+    ranks = sub["value"].rank(method="first")
+    sub["decile"] = pd.qcut(ranks, min(n_bins, len(sub)), labels=False) + 1
+    return sub.groupby("decile").agg(
+        n=("value", "size"),
+        mean=("value", "mean"),
+        min=("value", "min"),
+        max=("value", "max"),
+        ids=("_label", lambda x: list(x)),
+    )
+
+
 # --- (3) Worst / best queries on the rag+eval join ---------------------------
 
 def extremes(linked, metric, frac=0.01, signals=None):
@@ -523,7 +879,7 @@ def extremes_profile(linked, metric, frac=0.10, signals=None):
     rank = scored[metric].rank(method="first")
     scored["_grp"] = np.where(rank <= k, "worst",
                               np.where(rank > len(scored) - k, "best", "rest"))
-    scored["_abstain"] = ev._rejection_mask(scored).astype(float)
+    scored["_abstain"] = ra._abstained(scored).astype(float)
     agg = {"n": (metric, "size"), "metric_mean": (metric, "mean"),
            "abstain_rate": ("_abstain", "mean")}
     for s in signals:
@@ -533,6 +889,38 @@ def extremes_profile(linked, metric, frac=0.10, signals=None):
 
 
 # --- (4) Signal -> metric ----------------------------------------------------
+
+def logprob_correlation(df, metric="ragas_scores.ragas_answer_correctness",
+                        logprob_col="gen_logprob_stats.mean", by="variant"):
+    """Correlate generation confidence (mean token logprob) with a quality
+    metric, overall and per group.
+
+    A healthy pipeline shows a *positive* correlation: more-confident generations
+    score better. A flat or negative correlation means the logprob signal isn't
+    tracking quality — the self-correction trigger keyed on it is mis-calibrated.
+    Reports both Pearson (linear) and Spearman (monotone) on the rows where both
+    values exist. ``plots.logprob_scatter`` draws it.
+
+    This reads a metric, which is why it lives here rather than in
+    ``rag_analysis`` with the rest of the confidence tables.
+    """
+    def _corr_one(sub):
+        x = pd.to_numeric(sub[logprob_col], errors="coerce")
+        y = pd.to_numeric(sub[metric], errors="coerce")
+        m = x.notna() & y.notna()
+        n = int(m.sum())
+        return pd.Series({
+            "n": n,
+            "pearson": x[m].corr(y[m]) if n > 2 else _NAN,
+            "spearman": x[m].corr(y[m], method="spearman") if n > 2 else _NAN,
+        })
+
+    rows = {"overall": _corr_one(df)}
+    if by in df:
+        for g, sub in df.groupby(by, observed=True):
+            rows[str(g)] = _corr_one(sub)
+    return pd.DataFrame(rows).T
+
 
 def paired_delta(df, x_col, y_col, a, b):
     """Per-id paired change in ``x_col`` and ``y_col`` between variants ``a`` and
@@ -666,14 +1054,41 @@ if __name__ == "__main__":
         print(f"{eval_path}: {len(d)} rows, {d['id'].nunique()} ids, "
               f"variants={list(d['variant'].cat.categories)}")
         print(f"writing every artifact to {paths.rel(paths.run_dir(eval_path))}")
-        print("\n=== cohort (source_dataset x variant) ===")
+        print(ra._abstained(d).groupby(d["variant"], observed=True)
+              .mean().round(3).to_string())
+
+        # (0) cohort, diagnosis, exclusion ------------------------------------------
+        # Order matters: everything that DIAGNOSES the file runs on the raw frame,
+        # and only then is the frame narrowed. Run the other way round, the reports
+        # would be describing data the exclusion had already removed.
+        print("\n=== cohort before exclusion (source_dataset x variant) ===")
         print(ev.describe_cohort(d).to_string())
 
-        # (1) metric-computation sanity + prepare -----------------------------------
-        print("\n=== metric-computation sanity ===")
+        print("\n=== broken-signal checks (raw frame) ===")
+        health_report(d, source=eval_path)
+
+        print("\n=== metric-computation sanity (raw frame) ===")
         cls = classify_metrics(d)
         metric_error_report(d, cls, source=eval_path)
 
+        d, drop_report = drop_eval_errors(d)
+        print(f"\n=== dropped {drop_report['n_dropped']} evaluator-failure rows "
+              f"({drop_report['n_before']} -> {drop_report['n_after']}) ===")
+        print("by failure type (rows can overlap):")
+        print(drop_report["by_type"].to_string())
+        if drop_report["n_dropped"]:
+            print("by dataset:")
+            print(drop_report["by_dataset"].to_string())
+            print("by variant:")
+            print(drop_report["by_variant"].to_string())
+            print("\n=== cohort after exclusion (what is actually analysed) ===")
+            print(ev.describe_cohort(d).to_string())
+
+        # Defensive second pass. `drop_eval_errors` above already removes every
+        # RAGAS-errored row outright, so this normally reports 0 — it is kept so a
+        # future change to the exclusion policy (masking per evaluator instead of
+        # dropping the row, as its docstring describes) cannot silently leave
+        # RAGAS-errored cells in the aggregates.
         d, prep = prepare(d)
         if prep["n_ragas_error_rows"]:
             print(f"\nprepared for analysis: on the {prep['n_ragas_error_rows']} rows whose RAGAS "
@@ -682,8 +1097,9 @@ if __name__ == "__main__":
                   f"are kept — their DeepEval scores are independent of the RAGAS failure and "
                   f"stay in the DeepEval numbers.")
         else:
-            print("\nprepared for analysis: no row-level RAGAS scorer errors to mask "
-                  "(individual missing metric cells are still excluded per metric).")
+            print("\nprepared for analysis: no RAGAS-errored rows survived the exclusion "
+                  "above, so nothing to mask (individual missing metric cells are still "
+                  "excluded per metric).")
 
         # (2a) metric distribution / discriminativeness -----------------------------
         print("\n=== per-metric distribution (is the metric discriminative?) ===")
@@ -722,11 +1138,79 @@ if __name__ == "__main__":
             rc_mism.to_csv(paths.table(eval_path, "eval_reason_mismatches"),
                            index=False)
 
-        # Figures that need only the evaluated file. These used to sit inside the
-        # cross-link block below and were silently skipped whenever no rag file was
-        # found, although not one of them touches the joined frame.
-        print("\n=== figures (evaluated results) ===")
+        print("\n=== reason-string mining (failure-phrase hit rate per judge) ===")
+        reasons = mine_reasons(d)
+        print(reasons.to_string())
+        reasons.to_csv(paths.table(eval_path, "reason_mining"))
+
+        # (2d) how the variants compare ---------------------------------------------
+        for by in ("source_dataset", "variant"):
+            print(f"\n=== metric means by {by} ===")
+            tbl = means_by(d, by=by)
+            print(tbl.round(3).to_string())
+            tbl.to_csv(paths.table(eval_path, f"means_by_{by}"))
+
+        print("\n=== paired variant comparisons (Wilcoxon signed-rank) ===")
+        print("the results-chapter spine; only meaningful for a metric that the "
+              "distribution table above shows actually spreads.")
+        for metric in ("ragas_scores.ragas_answer_correctness",
+                       "deepeval_scores.deepeval_relevance"):
+            for a, b in (("rag", "no_rag"), ("rag_sc", "rag")):
+                cmp = ev.compare_variants(d, metric, a=a, b=b)
+                print(f"\n{metric}: {a} vs {b}")
+                print(cmp.round(3).to_string())
+                cmp.to_csv(paths.table(
+                    eval_path, f"compare_{a}_vs_{b}_{metric.split('.')[-1]}"))
+
+        print("\n=== abstention-adjusted metrics (all rows vs answered only) ===")
+        print("a large positive delta means the metric is mostly measuring how often "
+              "the system abstained, not how good its answers are.")
+        adj = abstention_adjusted(d)
+        print(adj.round(3).to_string())
+        adj.to_csv(paths.table(eval_path, "abstention_adjusted"))
+
+        print("\n=== decile drill-down (decile 1 = worst) ===")
+        for metric in ("ragas_scores.ragas_answer_correctness",
+                       "deepeval_scores.deepeval_relevance"):
+            dec = decile_breakdown(d, metric)
+            if dec.empty:
+                print(f"{metric}: no scored rows")
+                continue
+            print(f"\n{metric}:")
+            print(dec[["n", "mean", "min", "max"]].round(3).to_string())
+            print(f"  worst-decile ids: {dec.iloc[0]['ids']}")
+            dec.to_csv(paths.table(eval_path, f"deciles_{metric.split('.')[-1]}"))
+
+        print("\n=== logprob vs answer correctness (want positive) ===")
+        corr = logprob_correlation(d)
+        print(corr.round(3).to_string())
+        corr.to_csv(paths.table(eval_path, "logprob_correlation"))
+
+        # Headline figures: each one is a table above that only becomes an argument
+        # once you can see its shape.
+        print("\n=== headline figures ===")
         plots.save_all({
+            "fig_variant_effects": lambda: plots.variant_effect_forest(d),
+            "fig_metric_rails": lambda: plots.metric_rail_plot(d),
+            "fig_dataset_variant_correctness": lambda: plots.dataset_variant_heatmap(
+                d, "ragas_scores.ragas_answer_correctness"),
+            "fig_dataset_variant_relevance": lambda: plots.dataset_variant_heatmap(
+                d, "deepeval_scores.deepeval_relevance"),
+            "fig_metric_agreement": lambda: plots.metric_agreement_dots(ag),
+        }, eval_path)
+
+        # Figures that need only the evaluated file. The three eval_* ones used to
+        # sit inside the cross-link block below and were silently skipped whenever
+        # no rag file was found, although not one of them touches the joined frame.
+        print("\n=== exploratory figures (evaluated results) ===")
+        plots.save_all({
+            "boxplot_faithfulness": lambda ax: plots.metric_boxplot(
+                d, "ragas_scores.ragas_faithfulness", ax=ax),
+            "coverage": lambda ax: plots.coverage_violin(d, ax=ax),
+            "rejection": lambda ax: plots.rejection_bars(d, ax=ax),
+            "slope_relevance": lambda ax: plots.slopegraph(
+                d, "deepeval_scores.deepeval_relevance", ax=ax),
+            "logprob_vs_correctness": lambda ax: plots.logprob_scatter(d, ax=ax),
             "eval_agreement_relevancy": lambda ax: plots.ragas_vs_deepeval(
                 d, "ragas_scores.ragas_answer_relevancy",
                 "deepeval_scores.deepeval_relevance", ax=ax),
@@ -778,9 +1262,6 @@ if __name__ == "__main__":
                 # (4) signal -> metric -------------------------------------------------
                 print("\n=== is the confidence gain reflected in the metrics? "
                       "(paired per-id Δ, want positive) ===")
-                print("logprob vs correctness within each variant (want positive):")
-                print(ev.logprob_correlation(
-                    d, metric="ragas_scores.ragas_answer_correctness").round(3).to_string())
                 rows = {}
                 for a, b in (("rag", "no_rag"), ("rag_sc", "no_rag"), ("rag_sc", "rag")):
                     for metric in ("ragas_scores.ragas_answer_correctness",
