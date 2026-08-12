@@ -6,7 +6,7 @@
     df = load(latest_results(RAG_PREFIX))     # or load("results/rag_results_<ts>.json")
     logprob_summary(df)                       # confidence per variant
     retrieval_by_dataset_variant(df)          # retrieval per dataset x variant (+HyDE split)
-    plots.retrieval_stage_boxplot(df)         # rag vs rag_sc-orig vs rag_sc-final
+    plots.retrieval_stage_boxplot(df)         # the same four groups, as boxes
 
 This is the companion to ``analysis.analysis`` (which works on the *evaluated*
 results). Here we look only at signals the pipeline emits itself, before any
@@ -23,13 +23,14 @@ RAGAS/DeepEval scoring:
     the ORIGINAL retrieval (``sc_metadata.original_retrieval_scores``) and the
     FINAL one, so we can measure whether re-retrieval actually raised the scores.
   - truncation: ``finish_reason == "length"`` marks a generation cut off at
-    max_tokens, split by ``truncation_summary`` into runaway thinking loops (no
-    answer text) and genuinely truncated answers. Hitting the cap is possible in
-    EVERY variant, so that table is read over all of them; a thinking loop is not
-    (only the rag_sc regeneration runs with thinking enabled), so it gets its own
-    ``thinking_loop_summary`` over the rows that actually regenerated. Runs made
-    before finish_reason was hoisted to top level only carry it for rag_sc rows;
-    ``truncation_coverage`` reports how many rows actually have one.
+    max_tokens. That is two failures, and they get a table each because their
+    denominators differ: ``truncation_summary`` counts the rows where an answer WAS
+    written and lost its tail, over every row (any variant can do it), while
+    ``thinking_loop_summary`` counts the rows cut off with no answer text at all,
+    over the rag_sc rows that actually regenerated (only the regen runs with
+    thinking enabled, so nothing else can loop). Runs made before finish_reason was
+    hoisted to top level only carry it for rag_sc rows; ``truncation_coverage``
+    reports how many rows actually have one.
   - abstentions: ``rejected`` marks an answer the pipeline replaced with the
     canonical "the context does not cover this" rejection, ``rejection_reason``
     says why (the model abstained, vs nothing surviving a runaway regen).
@@ -118,6 +119,10 @@ from datetime import datetime
 import pandas as pd
 
 from analysis import paths
+# The retrieval-score reducers live in the shared library, not here: the evaluated
+# files carry ``retrieval_scores`` too, so a second copy of "max/mean/spread of the
+# top-k scores" is how the raw and evaluated frames start disagreeing.
+from analysis.analysis import avg_score, best_score, spread_score
 # Imported from the dependency-free source so the analysis modules don't pull in
 # torch/transformers. Holds the canonical rejection string for EVERY language,
 # which is what `_abstained` needs — the single-language REJECTION_ANSWER would
@@ -126,8 +131,6 @@ from common.constants import REJECTION_ANSWERS
 from common.results_io import RAG_PREFIX, latest_results
 
 VARIANT_ORDER = ["no_rag", "rag", "rag_sc"]
-# Retrieval "stages": plain rag, plus rag_sc before/after the HyDE re-retrieval.
-STAGE_ORDER = ["rag", "rag_sc_orig", "rag_sc_final"]
 # Confidence "stages": every variant, plus rag_sc before/after a generation retry.
 CONF_STAGE_ORDER = ["no_rag", "rag", "rag_sc_orig", "rag_sc_final"]
 # Retrieval "variants" for the per-dataset tables: the two variants that retrieve at
@@ -163,28 +166,14 @@ _LEGACY_REASON_COLS = {
 }
 
 
-def _best(scores):
-    """Top (max) retrieval score of a row, or NaN when there are none."""
-    if isinstance(scores, (list, tuple)) and len(scores):
-        return max(scores)
-    return float("nan")
-
-
-def _spread(scores):
-    """Top-k spread (max - min) of a row's retrieval scores; this is the quantity
-    the rag_sc 'spread>threshold' correction trigger keys on. NaN if <2 scores."""
-    if isinstance(scores, (list, tuple)) and len(scores) >= 2:
-        return max(scores) - min(scores)
-    return float("nan")
-
-
 def load(path):
     """Flatten raw RAG results JSON to a tidy DataFrame with convenience columns.
 
-    Adds: ordered ``variant`` categorical; ``retrieval_best`` / ``retrieval_spread``
-    (from the final ``retrieval_scores``); ``retrieval_best_orig`` /
-    ``retrieval_spread_orig`` (from ``sc_metadata.original_retrieval_scores``, i.e.
-    pre re-retrieval, meaningful only for rag_sc); numeric SC retry counts; and
+    Adds: ordered ``variant`` categorical; ``retrieval_best`` / ``retrieval_average``
+    / ``retrieval_spread`` (from the final ``retrieval_scores`` — on a rag_sc row that
+    re-retrieved, "final" means AFTER re-retrieval); the same three suffixed ``_orig``
+    (from ``sc_metadata.original_retrieval_scores``, i.e. pre re-retrieval, meaningful
+    only for rag_sc); numeric SC retry counts; and
     canonical ``finish_reason`` / ``rejection_reason`` columns (folded from the legacy
     ``sc_metadata.*`` location when reading a pre-hoist result file).
     """
@@ -194,13 +183,15 @@ def load(path):
     if "variant" in df:
         df["variant"] = pd.Categorical(df["variant"], categories=VARIANT_ORDER, ordered=True)
 
-    df["retrieval_best"] = df["retrieval_scores"].apply(_best)
-    df["retrieval_spread"] = df["retrieval_scores"].apply(_spread)
+    df["retrieval_best"] = df["retrieval_scores"].apply(best_score)
+    df["retrieval_average"] = df["retrieval_scores"].apply(avg_score)
+    df["retrieval_spread"] = df["retrieval_scores"].apply(spread_score)
 
     orig = "sc_metadata.original_retrieval_scores"
     if orig in df:
-        df["retrieval_best_orig"] = df[orig].apply(_best)
-        df["retrieval_spread_orig"] = df[orig].apply(_spread)
+        df["retrieval_best_orig"] = df[orig].apply(best_score)
+        df["retrieval_average_orig"] = df[orig].apply(avg_score)
+        df["retrieval_spread_orig"] = df[orig].apply(spread_score)
 
     # Pre-regeneration generation confidence, present only once a run actually
     # trips the generation-correction trigger (json_normalize creates the column
@@ -402,15 +393,16 @@ def _int_counts(out, cols=("n",)):
 
 
 def _with_pooled_rows(base, pooled, order=None, level="variant", label="all",
-                      int_cols=("n",)):
-    """Interleave a per-(source_dataset, group) stats table with one pooled row per
-    dataset, appended after that dataset's group rows.
+                      int_cols=("n",), outer="source_dataset"):
+    """Interleave a per-(outer, group) stats table with one pooled row per outer key,
+    appended after that key's group rows.
 
-    ``base`` is indexed by (source_dataset, group), ``pooled`` by source_dataset
-    alone. The pooled row is recomputed over rows, not averaged from the group
-    means, so uneven group sizes don't misweight it. Shared by
-    ``logprob_by_dataset_variant`` and ``retrieval_by_dataset_variant`` so both
-    tables read the same way.
+    ``base`` is indexed by (outer, group), ``pooled`` by the outer key alone. The
+    pooled row is recomputed over rows, not averaged from the group means, so uneven
+    group sizes don't misweight it. Shared by ``logprob_by_dataset_variant`` and
+    ``retrieval_by_dataset_variant`` so both tables read the same way. ``outer`` is
+    the first level's name — ``source_dataset`` for every caller but the language
+    table; a label only, the pooling does not care what the level means.
 
     ``int_cols`` are cast back to int on the way out: stacking the rows as Series
     upcasts every column to float, which turns a row COUNT into ``50.0``. Only
@@ -428,7 +420,7 @@ def _with_pooled_rows(base, pooled, order=None, level="variant", label="all",
             rows.append(pooled.loc[ds])
             idx.append((str(ds), label))
     out = pd.DataFrame(rows).reset_index(drop=True)
-    out.index = pd.MultiIndex.from_tuples(idx, names=["source_dataset", level])
+    out.index = pd.MultiIndex.from_tuples(idx, names=[outer, level])
     return _int_counts(out, int_cols)
 
 
@@ -641,24 +633,57 @@ def trigger_reasons(df, stage="retrieval"):
     return pd.Series(counts, dtype="int64").sort_values(ascending=False)
 
 
-def trigger_combinations(df, stage="retrieval"):
+def _trigger_combination_keys(df, stage):
+    """Per rag_sc row, the ``&``-joined SET of ``stage`` triggers it fired, ``none`` if
+    the correction never ran — the row-level label behind ``trigger_combinations``."""
+    sc = df[df["variant"] == "rag_sc"]
+    col = _trigger_col(stage)
+    if col not in sc:
+        return pd.Series(index=sc.index, dtype="object")
+    return sc[col].map(
+        lambda trigs: " & ".join(sorted(set(_trigger_names(trigs)))) or "none")
+
+
+def trigger_combination_order(keys):
+    """Reading order for trigger-combination buckets: ``none``, then the ones that fired
+    ONE trigger (alphabetically), then the ones that fired several.
+
+    Ordered by how much fired rather than by size, so a light -> dark ramp over it is
+    meaningful (light = nothing tripped, dark = every threshold tripped at once) and two
+    runs stay comparable bucket for bucket, which the size-sorted counts are not. The
+    tiers are read off the keys themselves, so a third threshold slots in untouched.
+    """
+    return sorted(keys,
+                  key=lambda k: (0 if k == "none" else str(k).count("&") + 1, str(k)))
+
+
+def trigger_combinations(df, stage="retrieval", by=None):
     """Per rag_sc row, which SET of ``stage``'s correction triggers fired.
 
     Complements ``trigger_reasons`` (which counts total firings per trigger name):
     here each rag_sc row is bucketed by its *combination* of triggers, so you can
     read off how many rows fired ONLY ``highest``, ONLY ``spread``, or BOTH
     (``highest & spread``) — and likewise ``mean`` / ``min`` on the generation stage.
-    Rows where no trigger fired are bucketed as ``none``.
+    Rows where no trigger fired are bucketed as ``none``. Note the denominators differ:
+    a row that trips both thresholds is ONE row here and TWO firings in
+    ``trigger_reasons``.
+
+    Without ``by``, a size-sorted count per bucket. With it, the ``sc_retry_breakdown``
+    shape — a ``by`` x bucket crosstab in ``trigger_combination_order``, closed by an
+    ``ALL`` row that pools every rag_sc row.
     """
-    sc = df[df["variant"] == "rag_sc"]
-    col = _trigger_col(stage)
-    counts = {}
-    if col in sc:
-        for trigs in sc[col]:
-            names = sorted(set(_trigger_names(trigs)))
-            key = " & ".join(names) if names else "none"
-            counts[key] = counts.get(key, 0) + 1
-    return pd.Series(counts, dtype="int64").sort_values(ascending=False)
+    keys = _trigger_combination_keys(df, stage)
+    if by is None:
+        # Stripped of the axis/series names value_counts inherits from the trigger
+        # column, so the printed table reads as the bare bucket -> count it always was.
+        return keys.value_counts().rename_axis(None).rename(None)
+    if keys.dropna().empty:
+        return pd.DataFrame(index=pd.Index([], name=by))
+    ct = pd.crosstab(df.loc[keys.index, by], keys)
+    ct = ct.reindex(columns=trigger_combination_order(ct.columns), fill_value=0)
+    ct.columns.name = f"{stage}_triggers"
+    ct.loc["ALL"] = ct.sum()
+    return ct
 
 
 def truncation_coverage(df):
@@ -688,89 +713,77 @@ def coverage_note(df):
 
 
 def truncation_summary(df, by="source_dataset", with_total=True):
-    """How often generation hit the token cap instead of stopping on its own.
+    """How often an ANSWER was cut off at the token cap and lost its tail.
 
     ``finish_reason == "length"`` means the model never emitted a stop token and was
-    cut off at max_tokens. EVERY variant can end that way — a long answer runs past
-    the cap regardless of which pipeline produced it — so this table is meant to be
-    read over all of them (``by="variant"`` or ``truncation_by_dataset_variant``), and
-    ``length`` / ``length_rate`` are comparable across variants.
+    cut off at max_tokens. Two failures hide behind that one value, and they do not
+    belong in the same table because they cannot share a denominator:
 
-    Two very different failures hide behind the one finish_reason value, split apart
-    here by whether any answer text survived:
-
-      - ``answer_truncated``: cut off but an answer WAS written — a genuine answer that
-        ran past the cap and lost its tail. This is what truncation means in the
-        ordinary sense, and the only kind a no_rag / rag row can have.
+      - ``answer_truncated`` (this table): cut off but an answer WAS written — a
+        genuine answer that ran past the cap. EVERY variant can end that way, since a
+        long answer runs past the cap regardless of which pipeline produced it, so the
+        denominator is every row of the group and ``truncation_rate`` is comparable
+        across variants (``by="variant"`` / ``truncation_by_dataset_variant``).
       - ``thinking_loop``: cut off with NO answer text (``rejection_reason == "empty"``)
         — the runaway rag_sc regen that burns its whole budget reasoning and never
-        answers. The pipeline substitutes the canonical rejection, so downstream it
-        looks like an ordinary abstention; this count is what unmasks it.
+        answers. Only the regeneration runs with thinking enabled, so most rows here
+        could not produce one even in principle; it is counted by
+        ``thinking_loop_summary`` against the rows that regenerated.
 
-    ``length == thinking_loop + answer_truncated`` by construction. The thinking_loop
-    column is kept here so that decomposition is visible, but it is NOT comparable
-    across variants: only the rag_sc regeneration runs with thinking enabled, so a 0
-    elsewhere is structural. ``thinking_loop_summary`` is the table that rates it
-    against a denominator it can actually happen in.
+    The two are disjoint and together account for every ``length`` row, so the raw
+    total lives in ``rag_health_report`` (a count, no denominator) rather than here.
 
-    ``length_rate`` is the share of the group's rows that were cut off. With
-    ``with_total`` an ``ALL`` row is appended, pooled over every row (total cut off /
-    total rows, NOT the mean of the per-group rates, which would misweight uneven
-    groups) — the same convention as ``trigger_summary``. Single-level ``by`` only,
-    since a MultiIndex has no one place to put it; ``truncation_by_dataset_variant``
-    is the two-level table.
+    With ``with_total`` an ``ALL`` row is appended, pooled over every row (total
+    truncated / total rows, NOT the mean of the per-group rates, which would misweight
+    uneven groups) — the same convention as ``trigger_summary``. Single-level ``by``
+    only, since a MultiIndex has no one place to put it;
+    ``truncation_by_dataset_variant`` is the two-level table.
 
     Coverage caveat: ``n`` counts only rows that carry a finish_reason. On a current
     run that is every row; on one made before finish_reason was hoisted to top level
     it is the rag_sc rows alone — pair this with ``truncation_coverage``.
     """
-    cols = ["n", "length", "length_rate", "thinking_loop", "answer_truncated"]
+    cols = ["n", "answer_truncated", "truncation_rate"]
     if FINISH_REASON_COL not in df:
         return pd.DataFrame(columns=cols)
     sub = df[df[FINISH_REASON_COL].notna()].copy()
     if not len(sub):
         return pd.DataFrame(columns=cols)
 
-    sub["_length"] = sub[FINISH_REASON_COL].astype(str) == "length"
+    length = sub[FINISH_REASON_COL].astype(str) == "length"
     rej = (sub[REJECTION_REASON_COL] if REJECTION_REASON_COL in sub
            else pd.Series("", index=sub.index))
-    empty = rej.astype(str) == "empty"
-    sub["_thinking_loop"] = sub["_length"] & empty
-    sub["_answer_truncated"] = sub["_length"] & ~empty
+    sub["_truncated"] = length & (rej.astype(str) != "empty")
 
     def _agg(g):
         return pd.Series({
             "n": len(g),
-            "length": int(g["_length"].sum()),
-            "length_rate": round(g["_length"].mean(), 3),
-            "thinking_loop": int(g["_thinking_loop"].sum()),
-            "answer_truncated": int(g["_answer_truncated"].sum()),
+            "answer_truncated": int(g["_truncated"].sum()),
+            "truncation_rate": round(g["_truncated"].mean(), 3),
         })
 
     out = sub.groupby(by, observed=True).apply(_agg, include_groups=False)
     if with_total and isinstance(by, str):
         out.loc["ALL"] = _agg(sub)
-    for c in ("n", "length", "thinking_loop", "answer_truncated"):
-        out[c] = out[c].astype(int)
-    return out
+    return _int_counts(out, ("n", "answer_truncated"))
 
 
 def truncation_by_dataset_variant(df, with_all=True):
-    """Token-cap truncation per (source_dataset, variant), with an ``all`` row closing
+    """Truncated answers per (source_dataset, variant), with an ``all`` row closing
     each dataset — the truncation counterpart of ``abstention_by_dataset_variant``.
 
     Same columns as ``truncation_summary``. The ``all`` row is pooled over that
     dataset's rows across all three variants rather than averaged from the per-variant
-    rates. Unlike the abstention table this one may keep no_rag: hitting the token cap
-    is something a single-pass generation can do, so its rows belong in the pooled rate
-    (its ``thinking_loop`` column is structurally 0 — see ``truncation_summary``).
+    rates. Unlike the abstention table this one keeps no_rag: writing an answer that
+    runs past the cap is something a single-pass generation can do, so its rows belong
+    in the pooled rate.
     """
-    int_cols = ["n", "length", "thinking_loop", "answer_truncated"]
     base = truncation_summary(df, by=["source_dataset", "variant"], with_total=False)
     if not with_all or not len(base):
         return base
     pooled = truncation_summary(df, by="source_dataset", with_total=False)
-    return _with_pooled_rows(base, pooled, order=VARIANT_ORDER, int_cols=int_cols)
+    return _with_pooled_rows(base, pooled, order=VARIANT_ORDER,
+                             int_cols=("n", "answer_truncated"))
 
 
 def thinking_loop_summary(df, by="source_dataset", with_total=True):
@@ -836,6 +849,7 @@ ABSTENTION_REASONS = ["model_rejected", "empty"]
 # behind the logprob one (see the caveat on ``abstention_signals``).
 ABSTENTION_SIGNAL_COLS = {
     "retrieval_best": "retrieval_best",
+    "retrieval_average": "retrieval_average",
     "retrieval_spread": "retrieval_spread",
     "gen_logprob_mean": "gen_logprob_stats.mean",
     "gen_tokens": "gen_logprob_stats.n",
@@ -933,9 +947,14 @@ def abstention_signals(df, by="variant", cols=None):
     signal per group, split into the rows that ANSWERED and the rows that ABSTAINED.
 
     Indexed by (group, ``answered`` / ``abstained``); columns are ``n`` plus the mean of
-    each of ``cols`` (default ``ABSTENTION_SIGNAL_COLS``). ``retrieval_best`` is the one
-    that validates the behaviour: an abstained cohort scoring markedly lower than the
-    answered one says abstention tracks weak retrieval, which is what it is for.
+    each of ``cols`` (default ``ABSTENTION_SIGNAL_COLS``). The two retrieval columns are
+    the ones that validate the behaviour: an abstained cohort scoring markedly lower
+    than the answered one says abstention tracks weak retrieval, which is what it is
+    for. ``retrieval_best`` asks whether the single best chunk was any good,
+    ``retrieval_average`` whether the context as a whole was — the second is the
+    stricter test, since one lucky chunk can carry a best score that the model then
+    sees surrounded by noise. For rag_sc both read the context the answer was actually
+    written from, i.e. after re-retrieval where it fired.
 
     CAVEAT — ``gen_logprob_mean`` is NOT a confidence reading on abstained rows. The
     canonical rejection is a short formulaic sentence whose tokens are trivially
@@ -1001,7 +1020,8 @@ _TRIGGER_VALUE_RE = re.compile(
 # Columns carried by the false-refusal table, in print order. ``query`` last: it is the
 # wide one, and the point of the table is to read the questions by hand.
 FALSE_REFUSAL_COLS = ["id", "source_dataset", "variant", "lang", "retrieval_best",
-                     "retrieval_spread", "gen_logprob_stats.mean", "query"]
+                      "retrieval_average", "retrieval_spread",
+                      "gen_logprob_stats.mean", "query"]
 
 
 def trigger_threshold(df, name="highest", stage="retrieval"):
@@ -1026,32 +1046,52 @@ def trigger_threshold(df, name="highest", stage="retrieval"):
     return None
 
 
-def false_refusals(df, threshold=None, variants=("rag", "rag_sc"), exclude_empty=True):
-    """The abstentions that had GOOD retrieval: rows that refused although their best
-    retrieval score cleared the self-correction threshold.
+def false_refusals(df, threshold=None, spread_threshold=None,
+                   variants=("rag", "rag_sc"), exclude_empty=True):
+    """The abstentions that had GOOD retrieval: rows that refused although NEITHER
+    retrieval trigger would have fired on their context.
 
     An abstention on a question the corpus does not cover is the pipeline working as
     designed, and those rows dominate the counts (medqa, mmlu). This is the complement
-    — the set worth reading by hand, because the pipeline's OWN threshold judged the
-    retrieved context adequate (that score is exactly the level at which no HyDE
-    re-retrieval fires) and the model refused anyway. Every row here is either a
-    retrieval hit that was topically wrong, or an over-cautious refusal.
+    — the set worth reading by hand, because the pipeline's OWN thresholds judged the
+    retrieved context adequate and the model refused anyway. Every row here is either
+    a retrieval hit that was topically wrong, or an over-cautious refusal.
 
-    ``threshold=None`` reads the run's own value via ``trigger_threshold``; pass a float
-    to override or to sweep the cut. ``exclude_empty`` drops the ``empty`` abstentions,
-    which are runaway-regen truncations rather than refusals (``truncation_summary``
-    owns those). Returns the rows sorted by ``retrieval_best`` descending — the
-    best-supported refusal, i.e. the least defensible one, first — and an empty frame
-    when no threshold can be determined.
+    Both retrieval triggers are applied, because either one firing means the pipeline
+    did NOT consider the context fine (see ``rag.utils._retrieval_correction_triggers``):
+
+      - ``retrieval_best >= threshold`` — the ``highest`` trigger did not fire;
+      - ``retrieval_spread <= spread_threshold`` — nor did ``spread``, i.e. the top-k
+        was not a strong hit padded with weak chunks. A row with no spread (a
+        single-chunk context) is kept: it cannot have tripped that trigger either.
+
+    Both default to the run's OWN values via ``trigger_threshold``; pass a float to
+    override or to sweep a cut, or ``float("inf")`` as ``spread_threshold`` to switch
+    the spread rule off. A spread threshold that cannot be read (no row fired it) is
+    likewise skipped rather than guessed. On a rag_sc row that re-retrieved, both
+    statistics describe the FINAL context, which is the one its refusal was written
+    from.
+
+    ``exclude_empty`` drops the ``empty`` abstentions, which are runaway-regen
+    truncations rather than refusals (``truncation_summary`` owns those). Returns the
+    rows sorted by ``retrieval_best`` descending — the best-supported refusal, i.e. the
+    least defensible one, first — and an empty frame when no ``threshold`` can be
+    determined.
     """
     cols = [c for c in FALSE_REFUSAL_COLS if c in df]
     if threshold is None:
         threshold = trigger_threshold(df)
+    if spread_threshold is None:
+        spread_threshold = trigger_threshold(df, name="spread")
     if threshold is None or "retrieval_best" not in df:
         return pd.DataFrame(columns=cols)
 
     sub = df[df["variant"].astype(str).isin(variants)]
     keep = _abstained(sub) & (pd.to_numeric(sub["retrieval_best"], errors="coerce") >= threshold)
+    if spread_threshold is not None and "retrieval_spread" in sub:
+        # Negated rather than `<=` so a NaN spread stays in.
+        keep = keep & ~(pd.to_numeric(sub["retrieval_spread"], errors="coerce")
+                        > spread_threshold)
     if exclude_empty and REJECTION_REASON_COL in sub:
         keep = keep & sub[REJECTION_REASON_COL].astype("string").ne("empty").fillna(True)
     return sub[keep].sort_values("retrieval_best", ascending=False)[cols]
@@ -1063,13 +1103,21 @@ def abstention_transition_rows(df, a="rag_sc", b="rag", flips_only=True):
 
     ``flip`` is ``only_<a>`` (a gave up where b answered) or ``only_<b>`` (the reverse);
     with ``flips_only=False`` the agreeing ids come too, as ``both`` / ``neither``.
-    ``hyde_delta`` is a's final minus original best retrieval score, so the obvious
-    suspicion about a ``only_rag_sc`` row — the re-retrieval swapped good context for
-    bad and the model gave up — can be checked on the row instead of assumed. NaN there
-    means a never re-retrieved that id, which rules the explanation out entirely.
+    ``hyde_delta`` is a's final minus **a's own original** best retrieval score, so the
+    obvious suspicion about a ``only_rag_sc`` row — the re-retrieval swapped good context
+    for bad and the model gave up — can be checked on the row instead of assumed. NaN
+    there means a never re-retrieved that id, which rules the explanation out entirely.
+    It sits next to the two ``retrieval_best`` columns because a's original retrieval IS
+    b's retrieval (same query, same retriever), so it also reads as the a-minus-b gap —
+    but it is computed from the recorded original, which is what makes the NaN mean
+    "never re-retrieved" rather than "the two happened to tie".
 
-    Sorted worst ``hyde_delta`` first within each flip. This is the eyeball list; the
-    counts are ``abstention_transitions``.
+    ``logprob_delta`` is the same idea for generation confidence, a minus b, and there is
+    no within-a version of it: a regenerated row overwrites its logprobs.
+
+    Columns are ordered signal by signal — both sides' retrieval, then its delta, then
+    both sides' logprob, then its delta. Sorted worst ``hyde_delta`` first within each
+    flip. This is the eyeball list; the counts are ``abstention_transitions``.
     """
     def _side(v, suffix, extra=()):
         s = df[df["variant"].astype(str) == v]
@@ -1080,13 +1128,13 @@ def abstention_transition_rows(df, a="rag_sc", b="rag", flips_only=True):
             out[f"logprob{suffix}"] = pd.to_numeric(s["gen_logprob_stats.mean"], errors="coerce")
         for c in extra:
             if c in s:
-                out[c if c in ("source_dataset", "lang", "query") else f"{c}{suffix}"] = s[c]
+                out[c if c in ("lang", "query") else f"{c}{suffix}"] = s[c]
         if {"retrieval_best", "retrieval_best_orig"} <= set(s.columns) and suffix == f"_{a}":
             out["hyde_delta"] = (pd.to_numeric(s["retrieval_best"], errors="coerce")
                                  - pd.to_numeric(s["retrieval_best_orig"], errors="coerce"))
         return out
 
-    left = _side(a, f"_{a}", extra=("source_dataset", "lang", REJECTION_REASON_COL, "query"))
+    left = _side(a, f"_{a}", extra=("lang", REJECTION_REASON_COL, "query"))
     right = _side(b, f"_{b}")
     if not len(left) or not len(right):
         return pd.DataFrame(columns=["id", "flip"])
@@ -1098,6 +1146,17 @@ def abstention_transition_rows(df, a="rag_sc", b="rag", flips_only=True):
     flip[~x & y] = f"only_{b}"
     flip[x & y] = "both"
     out.insert(1, "flip", flip)
+    # The two booleans were only ever inputs to ``flip``, which states the same thing
+    # in one readable column, so they do not survive into the result.
+    out = out.drop(columns=[f"abstained_{a}", f"abstained_{b}"])
+    if {f"logprob_{a}", f"logprob_{b}"} <= set(out.columns):
+        out["logprob_delta"] = out[f"logprob_{a}"] - out[f"logprob_{b}"]
+
+    lead = ["id", "flip", "lang",
+            f"retrieval_best_{a}", f"retrieval_best_{b}", "hyde_delta",
+            f"logprob_{a}", f"logprob_{b}", "logprob_delta"]
+    lead = [c for c in lead if c in out.columns]
+    out = out[lead + [c for c in out.columns if c not in lead]]
     if flips_only:
         out = out[out["flip"].isin([f"only_{a}", f"only_{b}"])]
     sort_cols = ["flip"] + (["hyde_delta"] if "hyde_delta" in out else [])
@@ -1246,31 +1305,15 @@ def sc_retrieval_gain(df, by=None, retried_only=True):
     return _int_counts(sc.groupby(by, observed=True).apply(_agg, include_groups=False))
 
 
-def retrieval_stage_long(df):
-    """Long-form retrieval scores tagged by stage (rag / rag_sc_orig / rag_sc_final)
-    so a single boxplot or groupby compares plain rag against rag_sc before and
-    after re-retrieval. Rows without a retrieval score are dropped."""
-    frames = []
-    rag = df[df["variant"] == "rag"]
-    frames.append(pd.DataFrame({"id": rag["id"], "source_dataset": rag["source_dataset"],
-                                "stage": "rag", "value": rag["retrieval_best"]}))
-    sc = df[df["variant"] == "rag_sc"]
-    if "retrieval_best_orig" in df:
-        frames.append(pd.DataFrame({"id": sc["id"], "source_dataset": sc["source_dataset"],
-                                    "stage": "rag_sc_orig", "value": sc["retrieval_best_orig"]}))
-    frames.append(pd.DataFrame({"id": sc["id"], "source_dataset": sc["source_dataset"],
-                                "stage": "rag_sc_final", "value": sc["retrieval_best"]}))
-    out = pd.concat(frames, ignore_index=True).dropna(subset=["value"])
-    stages = [s for s in STAGE_ORDER if s in out["stage"].unique()]
-    out["stage"] = pd.Categorical(out["stage"], categories=stages, ordered=True)
-    return out
-
-
 def confidence_stage_long(df, col="gen_logprob_stats.mean"):
     """Long-form generation confidence tagged by stage: no_rag / rag / rag_sc_final,
     plus rag_sc_orig (the pre-regeneration logprob) when a run has actually retried
-    generation. This is the confidence analogue of ``retrieval_stage_long`` and is
+    generation. This is the confidence analogue of ``retrieval_variant_long`` and is
     the thing you plot to compare 'rag_sc retry' logprobs against the initial ones.
+
+    Unlike the retrieval side, the ``_orig`` stage here is NOT a matched subset drawn
+    beside a whole-variant box: ``rag_sc_final`` is every rag_sc row and ``rag_sc_orig``
+    only the regenerated ones, so read the two against each other with that in mind.
 
     Falls back to just the three variant stages when ``gen_logprob_mean_orig`` is
     absent (no generation retry in the data yet)."""
@@ -1681,16 +1724,18 @@ if __name__ == "__main__":
         rag_health_report(d, source=path)
 
         # --- Error analyses: what went WRONG in the run, before any results are read --
-        print("\n=== generations cut off at the token cap (finish_reason=length) ===")
+        # finish_reason == "length" covers two failures with two different denominators,
+        # so they get one table each: an answer cut off at the cap is possible in every
+        # variant and is rated over all rows; a thinking loop is only possible on the
+        # rag_sc regeneration and is rated over the rows that regenerated.
+        print("\n=== answers cut off at the token cap, by variant ===")
         print(f"finish_reason covers {coverage_note(d)}; n below counts those rows only.")
-        print("All three variants: any generation can run past max_tokens, so length / "
-              "length_rate are comparable across them. length = the generation was cut "
-              "off at the cap; it splits by whether answer text survived into "
-              "answer_truncated (an answer WAS written and lost its tail) and "
-              "thinking_loop (nothing survived stripping <think>), which sum to it.")
-        print("thinking_loop is NOT comparable across variants — only the rag_sc "
-              "regeneration runs with thinking enabled, so a 0 elsewhere is structural. "
-              "It gets its own table below, rated against the rows that regenerated.")
+        print("finish_reason=length WITH answer text: the model wrote an answer that ran "
+              "past max_tokens and lost its tail. Any variant can do that, so the "
+              "denominator is every row of the group and the rates are comparable.")
+        print("The other half of finish_reason=length — cut off with NO answer text — is "
+              "the runaway thinking loop, counted separately below because only the "
+              "rag_sc regeneration can produce one.")
         _trunc = truncation_summary(d, by="variant")
         if len(_trunc):
             print(_trunc.to_string())
@@ -1771,32 +1816,52 @@ if __name__ == "__main__":
         print("\n--- same, per dataset x variant (all = rag + rag_sc pooled per dataset) ---")
         print(abstention_by_dataset_variant(_abst).to_string())
 
-        print("\n--- same, per language x variant ---")
+        print("\n--- same, per language x variant (all = rag + rag_sc pooled per language) ---")
         print("The run is multilingual (one prompt language per query), so a refusal rate "
               "that differs by language would be a retrieval-language problem, not a topic "
               "one. Check n before reading anything into it — the two subsets are far apart "
               "in size.")
-        print(abstention_summary(_abst, by=["lang", "variant"], with_total=False).to_string())
+        print(_with_pooled_rows(
+            abstention_summary(_abst, by=["lang", "variant"], with_total=False),
+            abstention_summary(_abst, by="lang", with_total=False),
+            order=VARIANT_ORDER, outer="lang",
+            int_cols=["n", "abstained"] + ABSTENTION_REASONS).to_string())
 
         print("\n--- what the pipeline's own signals looked like when it abstained ---")
-        print("retrieval_best lower on the abstained rows = abstention tracks weak "
-              "retrieval, which is what it is for. gen_logprob_mean is NOT a confidence "
-              "reading here: the canonical rejection is a short formulaic sentence, so its "
-              "tokens are trivially predictable (gen_tokens shows the length gap behind it).")
+        print("retrieval_best / retrieval_average lower on the abstained rows = abstention "
+              "tracks weak retrieval, which is what it is for; the average is the stricter "
+              "of the two, judging the whole context rather than its single best chunk "
+              "(for rag_sc, the context after re-retrieval). gen_logprob_mean is NOT a "
+              "confidence reading here: the canonical rejection is a short formulaic "
+              "sentence, so its tokens are trivially predictable (gen_tokens shows the "
+              "length gap behind it). Plotted as fig_abstention_retrieval and "
+              "fig_abstention_confidence.")
         print(abstention_signals(_abst).round(3).to_string())
 
         # The false-refusal set: the abstentions the retrieval score does NOT excuse.
         _thr = trigger_threshold(d)
+        _thr_spread = trigger_threshold(d, name="spread")
         _fr = false_refusals(d)
+        # Same cut without the spread rule, so the header can say how many rows it
+        # removed rather than leaving them silently missing.
+        _fr_best_only = false_refusals(d, spread_threshold=float("inf"))
         _n_abst = int(_abstained(_abst).sum())
         print(f"\n--- false refusals: abstained although retrieval_best >= {_thr} "
+              f"and retrieval_spread <= {_thr_spread} "
               f"({len(_fr)} of {_n_abst} abstentions) ---")
-        print(f"{_thr} is the run's OWN retrieval threshold, read back out of the recorded "
-              f"trigger strings: at or above it the pipeline judged the context good enough "
-              f"not to re-retrieve. So these rows are not 'the corpus does not cover it' — "
-              f"they are a topical retrieval miss or an over-cautious model, and they are "
-              f"the abstentions worth reading by hand. Best-supported (least defensible) "
-              f"first; `empty` rows excluded, those are truncations, not refusals.")
+        print(f"{_thr} and {_thr_spread} are the run's OWN retrieval thresholds, read back "
+              f"out of the recorded trigger strings: a context at or above the first and "
+              f"at or below the second fires NEITHER re-retrieval trigger, i.e. the "
+              f"pipeline judged it good enough. So these rows are not 'the corpus does not "
+              f"cover it' — they are a topical retrieval miss or an over-cautious model, "
+              f"and they are the abstentions worth reading by hand. Best-supported (least "
+              f"defensible) first; `empty` rows excluded, those are truncations, not "
+              f"refusals.")
+        print(f"the best-score cut alone leaves {len(_fr_best_only)} rows; "
+              f"{len(_fr_best_only) - len(_fr)} of those are excluded here because their "
+              f"spread exceeded {_thr_spread} — a strong top chunk padded with weak ones, "
+              f"which WOULD have tripped re-retrieval, so the pipeline never called that "
+              f"context adequate.")
         if len(_fr):
             _show = [c for c in _fr.columns if c != "query"]
             print(_fr[_show].round(3).to_string(index=False))
@@ -1924,6 +1989,13 @@ if __name__ == "__main__":
         print("\n=== headline figures ===")
         plots.save_all({
             "fig_abstention_by_dataset": lambda: plots.abstention_grouped_bars(d),
+            "fig_abstention_retrieval": lambda: plots.abstention_signal_boxes(d, "retrieval"),
+            "fig_abstention_confidence": lambda: plots.abstention_signal_boxes(d, "confidence"),
+            "fig_sc_retry_kinds": lambda: plots.retry_kind_bars(d),
+            "fig_sc_retrieval_triggers":
+                lambda: plots.trigger_combination_bars(d, "retrieval"),
+            "fig_sc_generation_triggers":
+                lambda: plots.trigger_combination_bars(d, "generation"),
         }, path)
 
         print("\n=== exploratory figures ===")
@@ -1932,6 +2004,7 @@ if __name__ == "__main__":
             "rag_confidence_by_dataset": lambda ax: plots.confidence_by_dataset(d, ax=ax),
             "rag_confidence_by_stage": lambda ax: plots.confidence_stage_boxplot(d, ax=ax),
             "rag_retrieval_by_stage": lambda ax: plots.retrieval_stage_boxplot(d, ax=ax),
-            "rag_retrieval_by_dataset": lambda ax: plots.retrieval_by_dataset(d, ax=ax),
             "rag_sc_reretrieval_slope": lambda ax: plots.sc_retrieval_slope(d, ax=ax),
+            "rag_sc_reretrieval_by_dataset":
+                lambda: plots.sc_retrieval_gain_by_dataset(d),
         }, path)

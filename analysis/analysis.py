@@ -18,9 +18,11 @@ There are two analysis entry points and neither is this one:
     python -m analysis.rag_analysis  RAG_FILE              # raw pipeline signals
     python -m analysis.eval_analysis EVAL_FILE RAG_FILE    # everything evaluated
 
-What lives here is only what ``analysis.eval_analysis`` and ``analysis.plots``
-BOTH build on: loading, the variant ordering, the cohort crosstab, the per-metric
-summary and the paired variant comparison. The analyses that used to sit
+What lives here is only what the other modules build on: loading, the variant
+ordering, the retrieval-score reducers (``rag_analysis.load`` calls the same three
+on the raw results — one definition of "the mean of the top-k scores", or the two
+frames start disagreeing), the cohort crosstab, the per-metric summary and the
+paired variant comparison. The analyses that used to sit
 alongside them — the ``__main__`` report, ``health_report``, ``drop_eval_errors``,
 the reason mining, ``means_by``, ``decile_breakdown``, ``abstention_adjusted``,
 ``logprob_correlation`` — moved into ``analysis.eval_analysis``, since each is a
@@ -65,12 +67,38 @@ def metric_cols(df):
     ]
 
 
+def best_score(scores):
+    """Top (max) retrieval score of a row, or NaN when there are none."""
+    if isinstance(scores, (list, tuple)) and len(scores):
+        return max(scores)
+    return float("nan")
+
+
+def avg_score(scores):
+    """Mean retrieval score over a row's top-k chunks, or NaN when there are none.
+    The whole-context view next to ``best_score``'s single-chunk one: a context can
+    lead with one strong hit and pad the rest, and only this notices."""
+    if isinstance(scores, (list, tuple)) and len(scores):
+        return sum(scores) / len(scores)
+    return float("nan")
+
+
+def spread_score(scores):
+    """Top-k spread (max - min) of a row's retrieval scores; this is the quantity
+    the rag_sc 'spread>threshold' correction trigger keys on. NaN if <2 scores."""
+    if isinstance(scores, (list, tuple)) and len(scores) >= 2:
+        return max(scores) - min(scores)
+    return float("nan")
+
+
 def load(path):
     """Flatten evaluated results JSON to a tidy DataFrame with numeric metrics.
 
     Nested dicts become dot-named columns (e.g. ``ragas_scores.ragas_faithfulness``,
     ``gen_logprob_stats.mean``). Metric columns are coerced to float so the
-    sentinel strings and nulls turn into NaN.
+    sentinel strings and nulls turn into NaN. ``retrieval_best`` /
+    ``retrieval_average`` are derived from ``retrieval_scores`` with the same
+    reducers ``rag_analysis.load`` uses, so the column means one thing on both sides.
 
     Abstentions are not flagged here — call ``rag_analysis._abstained(df)``, the
     single detector, on the frame this returns.
@@ -85,8 +113,8 @@ def load(path):
         df["variant"] = pd.Categorical(df["variant"], categories=VARIANT_ORDER,
                                        ordered=True)
     if "retrieval_scores" in df:
-        df["retrieval_best"] = df["retrieval_scores"].apply(
-            lambda s: max(s) if s else None)
+        df["retrieval_best"] = df["retrieval_scores"].apply(best_score)
+        df["retrieval_average"] = df["retrieval_scores"].apply(avg_score)
 
     return df
 

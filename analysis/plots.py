@@ -33,7 +33,7 @@ The functions are grouped by what they plot:
 Everything above that group is exploratory: quick looks for working out what
 happened in a run, not material meant to go into the thesis as-is.
 
-Data shaping stays in the modules that own it (``rag_analysis.retrieval_stage_long``
+Data shaping stays in the modules that own it (``rag_analysis.retrieval_variant_long``
 and friends); this module only draws. That is why it imports both — and why the
 three modules import IT only inside their ``__main__`` blocks, which keeps the
 import graph acyclic.
@@ -44,7 +44,7 @@ import inspect
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, to_hex, to_rgb
 from matplotlib.lines import Line2D
 
 from analysis import analysis as ev
@@ -81,6 +81,32 @@ VARIANT_COLORS = {"no_rag": CATEGORICAL[0], "rag": CATEGORICAL[1],
 SEQUENTIAL_STEPS = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5",
                     "#256abf", "#184f95", "#0d366b"]
 BLUES = LinearSegmentedColormap.from_list("thesis_blues", SEQUENTIAL_STEPS)
+
+# The ordered fills for a STACKED composition, light -> dark by "how much of the thing".
+# Its own ramp rather than steps of SEQUENTIAL_STEPS, which spans L* 89->24 and left its
+# two dark ends reading as one navy in thin segments. This spans L* ~89->15 and widens
+# the steps as it darkens (~19, ~22, ~33), since equal lightness steps are NOT equally
+# visible — the eye separates pale blues far better than dark ones.
+ORDERED_FILLS = ["#cde2fb", "#74acee", "#2461bd", "#09214a"]
+_ORDERED_RAMP = LinearSegmentedColormap.from_list("thesis_ordered", ORDERED_FILLS)
+
+
+# A light/dark PAIR of the one hue, for a figure that shows exactly two related things
+# side by side. Taken from inside the ramp rather than from its ends: the extremes exist
+# so a 2%-tall stacked segment still separates, while two free-standing bars only have to
+# be told apart — at full contrast they stop reading as two steps of one scale.
+PAIRED_STEPS = [SEQUENTIAL_STEPS[1], SEQUENTIAL_STEPS[5]]
+
+
+def _ordered_fills(n):
+    """``n`` fills spanning ``ORDERED_FILLS``' ramp, light -> dark.
+
+    Interpolated rather than picked, so a composition of five buckets is drawn on the
+    same scale as one of four; at n=4 it returns the anchors themselves.
+    """
+    if n <= 1:
+        return ORDERED_FILLS[:1]
+    return [to_hex(_ORDERED_RAMP(i / (n - 1))) for i in range(n)]
 
 # Diverging: two hues that read as opposite + a NEUTRAL midpoint. Used wherever
 # the sign is the message (an effect above/below zero, a +/- correlation). The
@@ -164,6 +190,38 @@ def apply_style():
 
 # --- shared helpers ----------------------------------------------------------
 
+# What the pooled group is called wherever a per-dataset figure also carries the whole
+# run. One spelling, because the reader meets it on four figures side by side.
+_POOLED_LABEL = "all datasets"
+
+# The reading order for datasets, fixed for EVERY figure: the three exam-style
+# benchmarks, then the two applied sets. Fixed rather than per-figure (by size, by
+# effect) so a reader who has learnt one chart's x axis has learnt them all and can
+# carry a dataset's position from one figure to the next — and so two runs stay
+# comparable column for column. Anything not listed keeps its own order at the end,
+# which is what makes a new dataset show up rather than silently vanish.
+DATASET_ORDER = ["medqa", "mmlu", "llmdrs", "ngqa", "synthetic_guidelines"]
+
+# Display names. The data keeps ``synthetic_guidelines`` — only the axis is shortened,
+# since that label is the widest on every per-dataset chart in the set.
+DATASET_LABELS = {"synthetic_guidelines": "synthetic"}
+
+
+def dataset_label(name):
+    """The name a dataset goes by on an axis (``synthetic_guidelines`` -> ``synthetic``)."""
+    return DATASET_LABELS.get(str(name), str(name))
+
+
+def dataset_order(names):
+    """``names`` in ``DATASET_ORDER``, with the pooled group first and unknown datasets
+    appended in their own order rather than dropped."""
+    names = list(dict.fromkeys(str(n) for n in names))
+    pooled = [n for n in names if n == _POOLED_LABEL]
+    known = [d for d in DATASET_ORDER if d in names]
+    return pooled + known + [n for n in names
+                             if n not in DATASET_ORDER and n != _POOLED_LABEL]
+
+
 def _boxplot(df, x, y, ax=None, order=None):
     """Seaborn boxplot with a matplotlib fallback, NaNs in ``y`` dropped first."""
     ax = ax or plt.subplots(figsize=(6, 4))[1]
@@ -178,6 +236,43 @@ def _boxplot(df, x, y, ax=None, order=None):
     return ax
 
 
+def _with_pooled_dataset(df, col="source_dataset"):
+    """``(df with every row repeated once more under the pooled label, axis order)``.
+
+    How a distribution plot gets its ``all datasets`` group. That group is the SAME rows
+    a second time, not a sixth dataset — which is why every figure drawing it puts it
+    first and behind a rule: it is the reference the datasets are read against.
+    """
+    out = pd.concat([df, df.assign(**{col: _POOLED_LABEL})], ignore_index=True)
+    out[col] = out[col].astype(str)
+    return out, dataset_order(out[col].unique())
+
+
+def _label_dataset_ticks(ax, order, axis="x"):
+    """Retick a categorical dataset axis with ``dataset_label`` names, and rule the
+    pooled group off from the datasets it pools."""
+    ticks = range(len(order))
+    labels = [dataset_label(d) for d in order]
+    if axis == "x":
+        ax.set_xticks(ticks), ax.set_xticklabels(labels), ax.set_xlabel("")
+    else:
+        ax.set_yticks(ticks), ax.set_yticklabels(labels), ax.set_ylabel("")
+    if order and order[0] == _POOLED_LABEL:
+        (ax.axvline if axis == "x" else ax.axhline)(0.5, color=AXIS, lw=0.8, zorder=1)
+
+
+def _ink_on(color, flip_below=0.32):
+    """``INK`` or ``SURFACE``, whichever a label can be read in on ``color``.
+
+    Measured from the fill's relative luminance rather than from its position in a
+    palette list, so a hand-picked colour is handled as correctly as a ramp step.
+    """
+    r, g, b = to_rgb(color)
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in (r, g, b)]
+    return SURFACE if 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2] < flip_below \
+        else INK
+
+
 # --- Pipeline signals (raw results, pre-evaluation) --------------------------
 
 def confidence_boxplot(df, by="variant", ax=None):
@@ -189,13 +284,15 @@ def confidence_boxplot(df, by="variant", ax=None):
 
 
 def confidence_by_dataset(df, ax=None):
-    """Mean-logprob distribution per dataset, split by variant."""
+    """Mean-logprob distribution per dataset, split by variant, the pooled run first."""
     ax = ax or plt.subplots(figsize=(8, 5))[1]
+    sub, order = _with_pooled_dataset(df)
     if sns is not None:
-        sns.boxplot(data=df, x="source_dataset", y="gen_logprob_stats.mean",
+        sns.boxplot(data=sub, x="source_dataset", y="gen_logprob_stats.mean", order=order,
                     hue="variant", hue_order=ra._order(df), ax=ax)
     else:
-        ax = _boxplot(df, "source_dataset", "gen_logprob_stats.mean", ax=ax)
+        ax = _boxplot(sub, "source_dataset", "gen_logprob_stats.mean", ax=ax, order=order)
+    _label_dataset_ticks(ax, order)
     ax.set_title("Generation confidence by dataset and variant")
     ax.tick_params(axis="x", rotation=30)
     return ax
@@ -212,31 +309,112 @@ def confidence_stage_boxplot(df, ax=None):
 
 
 def retrieval_stage_boxplot(df, ax=None):
-    """Best retrieval score across rag / rag_sc-orig / rag_sc-final stages."""
-    long = ra.retrieval_stage_long(df)
-    order = [s for s in ra.STAGE_ORDER if s in long["stage"].unique()]
-    ax = _boxplot(long, "stage", "value", ax=ax, order=order)
-    ax.set_title("Best retrieval score by stage (hybrid dense+BM25)")
-    return ax
+    """Best retrieval score across the four retrieval groups of
+    ``rag_analysis.retrieval_variant_long`` — the picture of the table
+    ``retrieval_by_variant`` prints, box for box.
 
-
-def retrieval_by_dataset(df, ax=None, col="retrieval_best"):
-    """Best retrieval score per dataset, split by retrieval variant: rag, the rag_sc
-    average, and the HyDE-retried rag_sc rows before/after re-retrieval — the plot of
-    ``rag_analysis.retrieval_by_dataset_variant`` (the two hyde boxes cover that
-    subset only)."""
-    ax = ax or plt.subplots(figsize=(9, 5))[1]
-    long = ra.retrieval_variant_long(df, col=col)
+    It shapes its data through that one function rather than a stage-specific twin so
+    no box can be built over a different cohort than its neighbour: ``rag`` and
+    ``rag_sc`` are whole variants over the same ids, and ``rag_sc_hyde_orig`` ->
+    ``rag_sc_hyde_final`` is a MATCHED pair over only the rows that re-retrieved. The
+    before/after gap is readable only across that pair; comparing the orig box to the
+    all-rows ``rag_sc`` box would mix a change in score with a change in who is in it.
+    """
+    long = ra.retrieval_variant_long(df)
     order = [v for v in ra.RETRIEVAL_VARIANT_ORDER if v in set(long["variant"])]
-    if sns is not None:
-        sns.boxplot(data=long, x="source_dataset", y="value",
-                    hue="variant", hue_order=order, ax=ax)
-    else:
-        ax = _boxplot(long, "source_dataset", "value", ax=ax)
-    ax.set_ylabel(col)
-    ax.set_title("Best retrieval score by dataset and variant")
-    ax.tick_params(axis="x", rotation=30)
+    ax = _boxplot(long, "variant", "value", ax=ax, order=order)
+    # n on the tick, because the whole point of the four groups is that two of them
+    # are a subset: the reader should not have to look the sizes up in the table.
+    n = long.groupby("variant", observed=True).size()
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels([f"{v}\n(n={int(n.get(v, 0))})" for v in order])
+    ax.set_xlabel("")
+    ax.set_ylabel("hybrid dense+BM25 score")
+    ax.set_title("Retrieval Scores by variant")
     return ax
+
+
+def sc_retrieval_gain_by_dataset(df):
+    """Best retrieval score before vs after the HyDE re-retrieval, per dataset — the
+    picture of ``rag_analysis.sc_retrieval_gain(df, by="source_dataset")``.
+
+    This is ``sc_retrieval_slope`` cut by dataset, and it is deliberately built on ONE
+    cohort: the rag_sc rows whose retrieval was actually re-run, measured twice. It
+    replaced a four-hue per-dataset boxplot (rag / rag_sc / rag_sc_hyde_orig /
+    rag_sc_hyde_final) in which two boxes of every group spanned all rag_sc rows and two
+    spanned only the retried subset, so neighbouring boxes differed in who was in them as
+    well as in what they scored — twenty boxes to answer one question.
+
+    Dropping the ``rag`` box costs nothing: rag_sc re-uses the first retrieval verbatim,
+    so on these ids rag's score IS the "before" end of the arrow (verified on the
+    2026-07-31 run: max |difference| = 0). The full four-way breakdown is still printed
+    as ``retrieval_by_dataset_variant``.
+
+    Rows run top to bottom in ``DATASET_ORDER`` — the same order, and the same leading
+    pooled group, as every other per-dataset figure, so a dataset keeps its position
+    across the set. The pooled row is the number ``sc_retrieval_gain(df)`` reports for
+    the whole cohort.
+    """
+    apply_style()
+    tab = ra.sc_retrieval_gain(df, by="source_dataset")
+    if not len(tab):
+        fig, ax = plt.subplots(figsize=(7, 3))
+        ax.set_title("Retrieval score before vs after HyDE re-retrieval")
+        ax.text(0.5, 0.5, "no re-retrieved rows in this file", ha="center", va="center",
+                color=INK_MUTED)
+        ax.set_axis_off()
+        return fig
+
+    rows = pd.concat([ra.sc_retrieval_gain(df).rename(index={"all": _POOLED_LABEL}),
+                      tab.loc[dataset_order(tab.index)]])
+    # Pooled row on top, then a gap and a rule, then the datasets running downwards.
+    ys = np.append([len(rows) - 0.4], np.arange(len(rows) - 1)[::-1])
+
+    fig, ax = plt.subplots(figsize=(8.2, 0.52 * len(rows) + 2.2))
+    for y, (_, r) in zip(ys, rows.iterrows()):
+        delta = r["delta"]
+        # Sign is the message, so it gets the diverging pair; a file where re-retrieval
+        # cost score must not read the same as one where it gained.
+        color = POS if delta > 0 else NEG if delta < 0 else NEUTRAL
+        ax.annotate("", xy=(r["mean_final"], y), xytext=(r["mean_orig"], y),
+                    arrowprops=dict(arrowstyle="-|>,head_width=0.2,head_length=0.45",
+                                    color=color, lw=2.2, shrinkA=4, shrinkB=0))
+        ax.plot(r["mean_orig"], y, marker="o", ms=7, mfc=SURFACE, mec=color, mew=1.6,
+                zorder=3)
+        ax.text(max(r["mean_orig"], r["mean_final"]) + 0.004, y, f"{delta:+.3f}",
+                va="center", ha="left", fontsize=9, color=INK)
+
+    # n and "how many rows moved at all" ride on the tick, because a mean shift says
+    # nothing about how widely it was shared — ngqa's small gain is a third of its rows
+    # not moving, not every row moving a little.
+    ax.set_yticks(ys)
+    ax.set_yticklabels([f"{dataset_label(name)}\n{int(r['n'])} rows · "
+                        f"{r['frac_improved']:.0%} improved" for name, r in rows.iterrows()])
+    ax.axhline((ys[0] + ys[1]) / 2, color=AXIS, lw=0.8)
+
+    ends = rows[["mean_orig", "mean_final"]].to_numpy(dtype=float)
+    lo, hi = float(np.nanmin(ends)), float(np.nanmax(ends))
+    pad = 0.12 * (hi - lo) or 0.02
+    ax.set_xlim(lo - pad, hi + 2.4 * pad)       # right margin holds the delta labels
+    ax.set_ylim(-0.6, ys[0] + 0.85)
+    ax.set_xlabel("mean best retrieval score (hybrid dense+BM25)")
+    ax.grid(axis="y", visible=False)
+    # Direct-labelled on the pooled arrow instead of a legend. Each label is anchored
+    # OUTWARD from its own end rather than centred over it, so it cannot collide with
+    # its partner however short that arrow turns out to be.
+    top = rows.iloc[0]
+    for x, text, ha in ((top["mean_orig"], "before ", "right"),
+                        (top["mean_final"], " after HyDE", "left")):
+        ax.text(x, ys[0] + 0.42, text, ha=ha, fontsize=8, color=INK_SECONDARY)
+    ax.set_title("Retrieval score before vs after HyDE re-retrieval, by dataset", pad=22)
+    fig.text(0.01, 0.015,
+             "Only the rag_sc rows whose retrieval was re-run, so both ends of an arrow "
+             "come from the same rows; the plain rag scores are identical to the 'before'\n"
+             "end on these ids. On a score-merge file the mean cannot fall — read the "
+             "'improved' share, not the direction.",
+             ha="left", fontsize=7.5, color=INK_MUTED)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    return fig
 
 
 def sc_retrieval_slope(df, ax=None):
@@ -283,14 +461,14 @@ def coverage_violin(df, ax=None):
     so read this as relative KB coverage per dataset rather than absolute similarity.
     """
     ax = ax or plt.subplots(figsize=(7, 4))[1]
-    sub = df.dropna(subset=["retrieval_best"])
+    sub, order = _with_pooled_dataset(df.dropna(subset=["retrieval_best"]))
     if sns is not None:
-        sns.violinplot(data=sub, x="source_dataset", y="retrieval_best", cut=0, ax=ax)
+        sns.violinplot(data=sub, x="source_dataset", y="retrieval_best", order=order,
+                       cut=0, ax=ax)
     else:
-        cats = list(sub["source_dataset"].unique())
-        ax.violinplot([sub.loc[sub["source_dataset"] == c, "retrieval_best"] for c in cats])
-        ax.set_xticks(range(1, len(cats) + 1))
-        ax.set_xticklabels(cats, rotation=30, ha="right")
+        ax.violinplot([sub.loc[sub["source_dataset"] == c, "retrieval_best"]
+                       for c in order], positions=range(len(order)))
+    _label_dataset_ticks(ax, order)
     ax.set_title("Best retrieval score by dataset (hybrid, KB-coverage proxy)")
     ax.tick_params(axis="x", rotation=30)
     return ax
@@ -587,6 +765,10 @@ def dataset_variant_heatmap(df, metric, ax=None):
     The row label carries the number of QUESTIONS in the dataset (unique ids, not
     rows — each question contributes one row per variant): a dataset of 85 and one
     of 450 must not read as equally strong evidence.
+
+    Rows run in ``DATASET_ORDER`` under a pooled ``all datasets`` row — the same
+    leading reference every per-dataset figure carries. That row is the mean over the
+    ROWS, not the mean of the five dataset means, so an uneven split cannot skew it.
     """
     apply_style()
     sub = df.copy()
@@ -595,6 +777,10 @@ def dataset_variant_heatmap(df, metric, ax=None):
                           values=metric, observed=True, aggfunc="mean")
     piv = piv.reindex(columns=[v for v in ev.VARIANT_ORDER if v in piv.columns])
     counts = sub.groupby("source_dataset", observed=True)["id"].nunique()
+    piv.index, counts.index = piv.index.astype(str), counts.index.astype(str)
+    piv.loc[_POOLED_LABEL] = sub.groupby("variant", observed=True)[metric].mean()
+    counts.loc[_POOLED_LABEL] = sub["id"].nunique()
+    piv = piv.loc[dataset_order(piv.index)]
 
     fig, ax = plt.subplots(figsize=(1.5 * len(piv.columns) + 4.2,
                                     0.52 * len(piv) + 2.4))
@@ -626,7 +812,12 @@ def dataset_variant_heatmap(df, metric, ax=None):
     ax.set_xticks(range(len(piv.columns)))
     ax.set_xticklabels(list(piv.columns))
     ax.set_yticks(range(len(piv.index)))
-    ax.set_yticklabels([f"{d}  (n={int(counts.get(d, 0))})" for d in piv.index])
+    ax.set_yticklabels([f"{dataset_label(d)}  (n={int(counts.get(d, 0))})"
+                        for d in piv.index])
+    if piv.index[0] == _POOLED_LABEL:
+        # Drawn INTO the surface spacer above, so the pooled row reads as the reference
+        # rather than as a sixth dataset. Thin enough to leave the gap either side.
+        ax.axhline(0.5, color=AXIS, lw=1.5)
     ax.set_title(f"{metric_label(metric)} by dataset and variant")
     cbar = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.03)
     cbar.outline.set_visible(False)
@@ -636,13 +827,20 @@ def dataset_variant_heatmap(df, metric, ax=None):
 
 
 def abstention_grouped_bars(df, variants=("rag", "rag_sc")):
-    """How often the system refuses instead of answering, per dataset.
+    """How often the system refuses instead of answering, per dataset and for the run.
 
     Abstention is a reliability behaviour, not a failure: refusing when the
     corpus does not cover a question is the intended response, and the gap
     between datasets is the finding. ``no_rag`` is excluded because it has no
     context to call insufficient and cannot abstain by construction — plotting
     its structural zero would imply a comparison that does not exist.
+
+    The pair takes ``PAIRED_STEPS`` rather than the categorical ``VARIANT_COLORS`` slots:
+    ``rag -> rag_sc`` is a progression (the same pipeline plus a correction loop), not
+    two unrelated entities, and these are the same two steps the abstention box figures
+    give ``answered``/``abstained``, so the three abstention figures read as one family.
+    Note the trade: on this figure rag is no longer orange, so it does not colour-match
+    the variant-effect plots.
 
     Every bar is direct-labelled, which is also what discharges the contrast
     relief rule the palette check flagged for slot 3.
@@ -659,13 +857,26 @@ def abstention_grouped_bars(df, variants=("rag", "rag_sc")):
     rate = tab["abstention_rate"].unstack("variant")
     rate = rate.reindex(columns=[v for v in variants if v in rate.columns])
     n = tab["n"].unstack("variant").reindex(columns=rate.columns)
+    rate.index, n.index = rate.index.astype(str), n.index.astype(str)
+
+    # The pooled group leads, as the reference the datasets are read against. It is
+    # computed over the ROWS, not averaged over the five dataset rates — the datasets
+    # differ in size by a factor of three, so the mean of the rates is not the run's
+    # rate. Being the same rows again, it sits past a gap and a rule.
+    pooled = ra.abstention_summary(sub, by="variant", with_total=False)
+    rate.loc[_POOLED_LABEL] = pooled["abstention_rate"].reindex(rate.columns)
+    n.loc[_POOLED_LABEL] = pooled["n"].reindex(rate.columns)
+    order = dataset_order(rate.index)
+    rate, n = rate.loc[order], n.loc[order]
 
     fig, ax = plt.subplots(figsize=(1.6 * len(rate) + 3.4, 4.8))
-    x = np.arange(len(rate))
+    x = np.append([0.0], np.arange(len(rate) - 1) + 1.6)
     width = 0.8 / max(len(rate.columns), 1)
+    fills = (PAIRED_STEPS if len(rate.columns) == 2
+             else _ordered_fills(len(rate.columns)))
     for k, v in enumerate(rate.columns):
         off = (k - (len(rate.columns) - 1) / 2) * width
-        color = VARIANT_COLORS.get(str(v), CATEGORICAL[k])
+        color = fills[k]
         vals = rate[v].to_numpy(dtype=float)
         ax.bar(x + off, vals, width * 0.92, label=str(v), color=color, zorder=2)
         for xi, val in zip(x + off, vals):
@@ -676,10 +887,13 @@ def abstention_grouped_bars(df, variants=("rag", "rag_sc")):
             inside = val > 0.90
             ax.text(xi, val - 0.02 if inside else val + 0.015, f"{val:.0%}",
                     ha="center", va="top" if inside else "bottom", fontsize=7.5,
-                    color=SURFACE if inside else INK_SECONDARY, zorder=3)
+                    color=_ink_on(color) if inside else INK_SECONDARY, zorder=3)
 
+    ax.axvline((x[0] + x[1]) / 2, color=AXIS, lw=0.8, zorder=1)
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{d}\n(n={int(n.loc[d].max())})" for d in rate.index])
+    ax.set_xticklabels([f"{dataset_label(d)}\n(n={int(n.loc[d].max())})"
+                        for d in rate.index])
+    ax.set_xlim(-0.7, x[-1] + 0.7)
     ax.set_ylabel("share of answers that abstained")
     ax.set_ylim(0, 1.02)
     ax.set_yticks(np.arange(0, 1.01, 0.2))
@@ -690,6 +904,268 @@ def abstention_grouped_bars(df, variants=("rag", "rag_sc")):
     ax.legend(loc="lower left", bbox_to_anchor=(0, 1.005), ncol=len(rate.columns))
     fig.tight_layout()
     return fig
+
+
+# Answered vs abstained is a split WITHIN a variant, not a new entity, so it gets a
+# light/dark pair of one hue instead of two categorical slots — which also leaves
+# "rag is orange" intact on a figure whose x axis is the variants themselves. The same
+# pair as ``abstention_grouped_bars``, from the one constant, so the three abstention
+# figures cannot drift apart.
+STATUS_COLORS = dict(zip(("answered", "abstained"), PAIRED_STEPS))
+
+# ``signal -> (column, y label, title, caption)``. One figure EACH, not two panels
+# of one: both are full-width thesis figures, and side by side they shrink past
+# readable in print. Both columns come from ``rag_analysis.ABSTENTION_SIGNAL_COLS``,
+# whose table prints the same means.
+_BOX_CAPTION = ("Boxes: median, quartiles, 5th–95th percentile; diamond = mean. "
+                "One dot per row, jittered horizontally. ")
+ABSTENTION_SIGNALS = {
+    "retrieval": (
+        "retrieval_average", "mean retrieval score of the context",
+        "Retrieval scores when the system abstained vs answered",
+        _BOX_CAPTION + "An abstained box below the answered one means refusals "
+        "concentrate where the retrieved context was weak."),
+    "confidence": (
+        "gen_logprob_stats.mean", "mean token logprob of the generation",
+        "Generation confidence when the system abstained vs answered",
+        _BOX_CAPTION + "The higher abstained boxes reflect the short formulaic "
+        "refusal string, whose tokens are trivially predictable — not model "
+        "certainty about the question."),
+}
+
+
+def abstention_signal_boxes(df, signal="retrieval", variants=("rag", "rag_sc")):
+    """Does one of the pipeline's own signals explain WHEN it refused? Per variant,
+    the rows that answered and the rows that abstained as two distributions.
+
+    The picture of ``rag_analysis.abstention_signals``, which prints the same means.
+    Distributions rather than bars, because the claim is about which rows abstain,
+    and two cohorts can differ in mean while overlapping almost completely — a gap
+    you can only be shown, not told.
+
+    ``signal`` picks one entry of ``ABSTENTION_SIGNALS``, and the two read in
+    opposite directions:
+
+      - ``retrieval``: an abstained box sitting BELOW the answered one is the
+        intended behaviour — the system refuses when the corpus does not cover the
+        question. ``retrieval_average`` (not ``retrieval_best``) is plotted because
+        it judges the whole context: one lucky chunk can lift a best score the model
+        then sees surrounded by noise. For rag_sc these are the post-re-retrieval
+        scores, i.e. the context the answer was actually written from.
+      - ``confidence``: the abstained box sits HIGHER (closer to 0), and that is NOT
+        the model being sure of itself. The canonical refusal is a short formulaic
+        sentence whose tokens are trivially predictable, so mean logprob measures
+        string predictability here, not certainty about the question. It matters
+        because the generation-correction trigger keys on exactly this number, which
+        is why an abstaining first pass almost never trips a regeneration.
+
+    ``no_rag`` is excluded by default: with no context to call insufficient it cannot
+    abstain, so it has no abstained cohort to compare against.
+    """
+    apply_style()
+    col, ylabel, title, caption = ABSTENTION_SIGNALS[signal]
+    sub = df[df["variant"].astype(str).isin(variants)].copy()
+    sub["_variant"] = sub["variant"].astype(str)
+    sub["_status"] = np.where(ra._abstained(sub), "abstained", "answered")
+    order = [v for v in variants if v in set(sub["_variant"])]
+    statuses = ["answered", "abstained"]
+
+    if not len(sub) or not order:
+        fig, ax = plt.subplots(figsize=(7, 3))
+        ax.set_title("no rag / rag_sc rows in this file")
+        return fig
+
+    fig, ax = plt.subplots(figsize=(1.9 * len(order) + 2.8, 4.9))
+    vals = (pd.to_numeric(sub[col], errors="coerce") if col in sub
+            else pd.Series(np.nan, index=sub.index))
+    for k, st in enumerate(statuses):
+        data, pos, means, tops = [], [], [], []
+        for i, v in enumerate(order):
+            s = vals[(sub["_variant"] == v) & (sub["_status"] == st)].dropna()
+            if not len(s):
+                continue
+            data.append(s.to_numpy())
+            pos.append(i + (k - 0.5) * 0.34)
+            means.append(s.mean())
+            tops.append(np.percentile(s, 95))
+        if not data:
+            continue
+        # The raw rows behind each box, jittered. Not decoration: the abstained
+        # logprob cohorts pile up so tightly at 0 that their box collapses to a
+        # line and disappears — the points are the only thing that still shows a
+        # cohort is there, and they show WHERE it piles up.
+        rng = np.random.default_rng(0)
+        for x, s in zip(pos, data):
+            ax.plot(x + rng.uniform(-0.09, 0.09, len(s)), s, ls="none", marker="o",
+                    ms=2.4, alpha=0.35, color=STATUS_COLORS[st], zorder=1)
+        bp = ax.boxplot(data, positions=pos, widths=0.28, patch_artist=True,
+                        showfliers=False, whis=(5, 95), zorder=2)
+        for box in bp["boxes"]:
+            box.set(facecolor=STATUS_COLORS[st], edgecolor=INK_SECONDARY, linewidth=0.8)
+        for part in ("whiskers", "caps"):
+            for line in bp[part]:
+                line.set(color=INK_SECONDARY, linewidth=0.8)
+        # The median rule has to stay legible on both fills, so it takes the
+        # surface colour on the dark box and ink on the light one.
+        for line in bp["medians"]:
+            line.set(color=SURFACE if st == "abstained" else INK, linewidth=1.6)
+        # The mean is what the printed table reports; marking it keeps the
+        # figure and abstention_signals readable against each other.
+        ax.plot(pos, means, ls="none", marker="D", ms=4.5, color=INK,
+                markeredgecolor=SURFACE, markeredgewidth=0.8, zorder=3)
+        # Above the upper cap rather than beside the diamond: a value printed on
+        # top of the dark fill is unreadable, and a near-degenerate box (the
+        # abstained logprobs, which pile up at 0) leaves no room inside anyway.
+        for x, m, t in zip(pos, means, tops):
+            ax.annotate(f"{m:.2f}", (x, t), xytext=(0, 8),
+                        textcoords="offset points", ha="center", fontsize=8,
+                        color=INK_SECONDARY, zorder=4)
+
+    # Headroom for those labels: offset text does not enter the autoscale.
+    lo, hi = ax.get_ylim()
+    ax.set_ylim(lo, hi + 0.10 * (hi - lo))
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels([
+        "{}\n{} answered / {} abstained".format(
+            v, int(((sub["_variant"] == v) & (sub["_status"] == "answered")).sum()),
+            int(((sub["_variant"] == v) & (sub["_status"] == "abstained")).sum()))
+        for v in order])
+    ax.set_xlim(-0.6, len(order) - 0.4)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title if col in sub else f"{col} not in this file", pad=26)
+    ax.grid(axis="x", visible=False)
+
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor=STATUS_COLORS[s],
+                             edgecolor=INK_SECONDARY, lw=0.8, label=s)
+               for s in statuses]
+    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.005), ncol=2)
+    fig.text(0.01, 0.005, caption, ha="left", fontsize=7.5, color=INK_MUTED,
+             wrap=True)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    return fig
+
+
+def _composition_bars(ct, title, caption, empty_note, colors=None, min_label_share=0.05):
+    """One 100%-stacked bar per dataset — the shared body of every composition figure
+    in this module.
+
+    ``ct`` is a ``group x bucket`` count table in the ``sc_retry_breakdown`` shape:
+    buckets already in stack order (bottom to top, "least of the thing" first) and an
+    ``ALL`` row pooling every row. Each of these started life as a single donut over the
+    whole run, and each turned out to be an average over datasets that behave nothing
+    alike — so the ring became the leading ``all datasets`` bar and the datasets got
+    their own, which is the comparison the figure is actually for.
+
+    Bars are normalised to each group's OWN rows, because the datasets differ in size by
+    a factor of three (``n`` rides on the tick) and raw counts would mostly redraw that.
+    Bucket order is the caller's, never by size: in a 100%-stacked bar only the bottom
+    and top segments share a baseline across bars and can be compared by eye, and the
+    "nothing fired" / "everything fired" buckets — the two worth comparing — land there.
+    The middle ones are read from their labels. Bars run in ``DATASET_ORDER``, the same
+    order every per-dataset figure uses.
+
+    Segments below ``min_label_share`` are left unlabelled rather than overprinted; their
+    exact counts are in the table behind the figure.
+    """
+    apply_style()
+    totals = ct.sum(axis=1) if len(ct) and len(ct.columns) else pd.Series(dtype="int64")
+    ct = ct[totals > 0] if len(totals) else ct.iloc[0:0]
+    if not len(ct):
+        fig, ax = plt.subplots(figsize=(7, 3))
+        ax.set_title(title)
+        ax.text(0.5, 0.5, empty_note, ha="center", va="center", color=INK_MUTED)
+        ax.set_axis_off()
+        return fig
+
+    buckets = list(ct.columns)
+    colors = colors or _ordered_fills(len(buckets))
+    share = ct.div(ct.sum(axis=1), axis=0)
+    order = dataset_order([i for i in share.index if i != "ALL"])
+    pooled = [i for i in share.index if i == "ALL"]
+    share, totals = share.loc[pooled + order], totals.loc[pooled + order]
+    # The pooled bar leads, as the reference the datasets are read against — but it is
+    # the same rows counted again, so a gap and a rule keep it out of their sequence.
+    xs = np.append(np.zeros(len(pooled)), np.arange(len(order)) + len(pooled) + 0.6)
+
+    fig, ax = plt.subplots(figsize=(1.35 * len(xs) + 3.0, 5.4))
+    bottom = np.zeros(len(xs))
+    for bucket, color in zip(buckets, colors):
+        vals = share[bucket].to_numpy(dtype=float)
+        ax.bar(xs, vals, 0.68, bottom=bottom, color=color, label=str(bucket), zorder=2)
+        ink = _ink_on(color)
+        for x, v, b in zip(xs, vals, bottom):
+            if v >= min_label_share:
+                ax.text(x, b + v / 2, f"{v:.0%}", ha="center", va="center", fontsize=8.5,
+                        color=ink, zorder=3)
+        bottom += vals
+
+    if len(pooled):
+        ax.axvline((xs[0] + xs[1]) / 2, color=AXIS, lw=0.8, zorder=1)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(
+        [f"{_POOLED_LABEL if i == 'ALL' else dataset_label(i)}\n(n={int(totals[i])})"
+         for i in share.index])
+    ax.set_xlim(-0.6, xs[-1] + 0.6)
+    ax.set_ylim(0, 1)
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
+    ax.set_ylabel("share of the dataset's rag_sc rows")
+    ax.grid(axis="x", visible=False)
+    ax.set_title(title, pad=26)
+    # Reversed, so the legend reads left to right in the order the stack reads top to
+    # bottom — a legend in bucket order would run against every bar in the figure.
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles[::-1], labels[::-1], loc="lower left", bbox_to_anchor=(0, 1.005),
+              ncol=len(labels))
+    fig.text(0.01, 0.012,
+             f"{caption}\nBars are each dataset's own rag_sc rows, not the run; segments "
+             f"under {min_label_share:.0%} are left unlabelled. The first bar pools the "
+             "same rows and is the run-wide composition.",
+             ha="left", fontsize=7.5, color=INK_MUTED)
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    return fig
+
+
+def retry_kind_bars(df):
+    """Which correction budgets each rag_sc row spent, per dataset —
+    ``rag_analysis.sc_retry_breakdown(df, by="source_dataset")``.
+
+    ``RETRY_KINDS`` is already ordered by how much correction the row spent, so it is
+    the stack order as it stands. The two single-trigger kinds are NOT ranked against
+    each other — they take adjacent steps of the ramp rather than implying that a
+    generation retry is "more" than a retrieval one.
+    """
+    return _composition_bars(
+        ra.sc_retry_breakdown(df, by="source_dataset").reindex(
+            columns=ra.RETRY_KINDS, fill_value=0),
+        "Which self-correction budgets each rag_sc row spent",
+        "Retrieval correction = HyDE re-retrieval; generation correction = "
+        "strict-prompt regeneration; 'none' rows ran the plain rag pipeline unchanged.",
+        "no rag_sc rows in this file")
+
+
+def trigger_combination_bars(df, stage="retrieval"):
+    """Which SET of ``stage``'s thresholds tripped, per dataset —
+    ``rag_analysis.trigger_combinations(df, stage, by="source_dataset")``.
+
+    The companion table answers "how many rows fired only ``highest``, only ``spread``,
+    or both"; the bars answer the part-to-whole question behind it, per dataset: of each
+    cohort, how much of the correction budget did each threshold claim on its own, and
+    how often did they agree.
+
+    Buckets arrive in ``trigger_combination_order`` — nothing fired, one threshold, then
+    several — so the ramp means "how much tripped" and the two ends of the stack are the
+    two things worth comparing across datasets.
+    """
+    names = {"retrieval": ("highest / spread", "score thresholds"),
+             "generation": ("mean / min", "logprob thresholds")}[stage]
+    return _composition_bars(
+        ra.trigger_combinations(df, stage=stage, by="source_dataset"),
+        f"Which {stage} thresholds tripped ({names[0]})",
+        f"Each rag_sc row counts once, in the bucket for the SET of {stage} {names[1]} "
+        f"it tripped; 'none' = the {stage} correction never fired. A row that trips both "
+        f"counts once here and twice in the per-trigger table.",
+        f"no {stage} trigger data in this file")
 
 
 def metric_agreement_dots(ag, stats=("spearman", "pearson")):
