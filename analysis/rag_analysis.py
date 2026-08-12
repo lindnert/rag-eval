@@ -1229,7 +1229,10 @@ def sc_context_displacement(df, retried_only=True, by=None):
     Run this on a file from each to quantify the change.
 
     With ``by`` (e.g. ``"source_dataset"``) returns group means of the counts plus an
-    ``ALL`` row instead of the row-level table.
+    ``ALL`` row instead of the row-level table; ``rows_all_replaced`` comes with its
+    share of the group's own rows (``rows_all_replaced_relative``), which is the only
+    one of the two comparable across groups of different size. ``mean_dropped`` and
+    that share are the figure ``plots.sc_displacement_bars``.
     """
     cols = ["id", "source_dataset", "lang", "n_orig", "n_final", "kept", "dropped",
             "drop_rate", "abstained", "query"]
@@ -1255,12 +1258,16 @@ def sc_context_displacement(df, retried_only=True, by=None):
                 .reset_index(drop=True))
 
     def _agg(g):
+        all_replaced = int((g["dropped"] == g["n_orig"]).sum()) if "n_orig" in g else 0
         return pd.Series({
             "n": len(g),
             "mean_dropped": g["dropped"].mean(),
             "mean_drop_rate": g["drop_rate"].mean(),
-            "rows_all_replaced": int((g["dropped"] == g["n_orig"]).sum())
-            if "n_orig" in g else 0,
+            "rows_all_replaced": all_replaced,
+            # Against the group's OWN n, because the datasets differ in size by a factor
+            # of three: ngqa has the most wholesale replacements of any dataset and the
+            # smallest share of them.
+            "rows_all_replaced_relative": all_replaced / len(g) if len(g) else float("nan"),
             "abstention_rate": g["abstained"].mean(),
         })
 
@@ -2007,4 +2014,6 @@ if __name__ == "__main__":
             "rag_sc_reretrieval_slope": lambda ax: plots.sc_retrieval_slope(d, ax=ax),
             "rag_sc_reretrieval_by_dataset":
                 lambda: plots.sc_retrieval_gain_by_dataset(d),
+            "rag_sc_context_displacement":
+                lambda: plots.sc_displacement_bars(d),
         }, path)

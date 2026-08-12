@@ -417,6 +417,75 @@ def sc_retrieval_gain_by_dataset(df):
     return fig
 
 
+def sc_displacement_bars(df):
+    """How much of the original context the HyDE re-retrieval pushed out, per dataset —
+    ``mean_dropped`` from ``rag_analysis.sc_context_displacement(df, by="source_dataset")``.
+
+    The companion to ``sc_retrieval_gain_by_dataset``, on the same 307-row cohort: that
+    figure shows what re-retrieval did to the SCORE (which on a score-merge file cannot
+    fall), this one shows what it did to the CHUNKS, which is the half that can go wrong.
+
+    One measure, not two: the wholesale-replacement count is the tail of this same
+    distribution and mostly re-ranks the datasets the same way, so plotting it beside the
+    mean cost a second panel to say it again. It stays in the table
+    (``rows_all_replaced`` and its share), where the two rows it actually separates —
+    medqa and mmlu, equal means, 32% vs 41% wholesale — can be read off directly.
+
+    Bars run in ``DATASET_ORDER`` behind the pooled group, as everywhere else.
+    """
+    apply_style()
+    tab = ra.sc_context_displacement(df, by="source_dataset")
+    if not len(tab):
+        fig, ax = plt.subplots(figsize=(7, 3))
+        ax.set_title("What HyDE re-retrieval displaced from the context")
+        ax.text(0.5, 0.5, "no re-retrieved rows with recorded context ids in this file",
+                ha="center", va="center", color=INK_MUTED)
+        ax.set_axis_off()
+        return fig
+
+    pooled = [i for i in tab.index if i == "ALL"]
+    order = dataset_order([i for i in tab.index if i != "ALL"])
+    tab = tab.loc[pooled + order]
+    xs = np.append(np.zeros(len(pooled)), np.arange(len(order)) + len(pooled) + 0.6)
+
+    # The ceiling: a row can only lose the chunks it retrieved. Constant (3) in every run
+    # so far, so it is drawn as the reference the bars are read against — without it
+    # "2.7 chunks dropped" is a number, with it it is 90% of the context.
+    n_orig = ra.sc_context_displacement(df)["n_orig"]
+    ceiling = float(n_orig.iloc[0]) if n_orig.nunique() == 1 else float(n_orig.max())
+
+    # Mid-ramp: a single series carries no comparison, so it does not owe a lighter
+    # partner room, and the labels ride above the bars where the fill never reaches them.
+    fig, ax = plt.subplots(figsize=(1.35 * len(xs) + 3.0, 4.8))
+    ax.bar(xs, tab["mean_dropped"].to_numpy(dtype=float), 0.68, color=SEQUENTIAL_STEPS[3],
+           zorder=2)
+    for x, v in zip(xs, tab["mean_dropped"]):
+        ax.text(x, v + 0.05, f"{v:.2f}", ha="center", va="bottom", fontsize=9, color=INK,
+                zorder=3)
+    ax.axhline(ceiling, color=AXIS, lw=1, ls=(0, (4, 3)), zorder=1)
+    ax.text(xs[-1] + 0.55, ceiling + 0.03, f"all {ceiling:.0f} — nothing of the "
+            "original context left", ha="right", va="bottom", fontsize=8, color=INK_MUTED)
+    ax.set_ylim(0, ceiling * 1.16)
+    ax.set_ylabel(f"mean number of swapped chunks")
+    ax.grid(axis="x", visible=False)
+    ax.set_xlim(-0.6, xs[-1] + 0.6)
+    if len(pooled):
+        ax.axvline((xs[0] + xs[1]) / 2, color=AXIS, lw=0.8, zorder=1)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(
+        [f"{_POOLED_LABEL if i == 'ALL' else dataset_label(i)}\n(n={int(tab.loc[i, 'n'])})"
+         for i in tab.index])
+    ax.set_title("What HyDE re-retrieval displaced from the context, by dataset", pad=12)
+    fig.text(0.01, 0.015,
+             "Only the rag_sc rows whose retrieval was re-run, counted against their own "
+             "dataset; the first bar pools the same rows. How often the drop took the WHOLE "
+             "context is in the\ncompanion table — possible under the score merge only; the "
+             "rrf merge always keeps the question's top chunk.",
+             ha="left", fontsize=7.5, color=INK_MUTED)
+    fig.tight_layout(rect=(0, 0.09, 1, 1))
+    return fig
+
+
 def sc_retrieval_slope(df, ax=None):
     """Per-id lines from original -> re-retrieved best score, for the rag_sc rows
     whose retrieval was actually re-run (shows whether HyDE re-retrieval helped)."""
