@@ -218,7 +218,7 @@ export EVAL_DEBUG_LLM="${EVAL_DEBUG_LLM:-0}"
 # time spent queueing on the llama-server slots, so the concurrency below has to
 # stay within GEN_PARALLEL or every multi-call metric times out at once.
 #   RAGAS_CONCURRENCY x RAGAS_MAX_WORKERS  <=  GEN_PARALLEL (see below)
-export RAGAS_TIMEOUT="${RAGAS_TIMEOUT:-300}"        # seconds, per metric per sample
+export RAGAS_TIMEOUT="${RAGAS_TIMEOUT:-1200}"        # seconds, per metric per sample
 export RAGAS_CONCURRENCY="${RAGAS_CONCURRENCY:-3}"  # samples evaluated in parallel
 export RAGAS_MAX_WORKERS="${RAGAS_MAX_WORKERS:-1}"  # metrics in parallel per sample
 

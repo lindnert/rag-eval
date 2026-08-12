@@ -60,7 +60,7 @@ from evaluation.eval_config_llamacpp import (
     JSON_SYSTEM_PROMPT,
 )
 
-RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "300"))
+RAGAS_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "1200"))
 
 print(f"[ragas_eval] LLAMACPP_EVAL_MODEL = {LLAMACPP_EVAL_MODEL}", flush=True)
 
