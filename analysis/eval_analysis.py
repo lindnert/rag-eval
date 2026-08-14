@@ -37,8 +37,10 @@ It answers six things, in the order __main__ runs them:
 
   1. Metric-computation sanity. Every metric cell is one of: genuinely SCORED, a
      legitimate NOT-APPLICABLE (``no_rag`` has no context, so no faithfulness/
-     context metric; an abstention is not scored for answer relevancy; the
-     ID-context metrics need reference contexts, i.e. the synthetic set only), or
+     context metric; an abstention is not scored for answer relevancy, for
+     faithfulness, or — off ``ABSTENTION_SCORED_DATASETS`` — for the two
+     reference metrics; the ID-context metrics need reference contexts, i.e.
+     the synthetic set only), or
      an actual ERROR (a RAGAS scorer raised, a DeepEval judge crashed). Reported
      per dataset x variant so the not-applicable cells are never miscounted as
      failures. ``prepare`` then nulls the RAGAS cells on RAGAS-errored rows so
@@ -143,6 +145,24 @@ CONTEXT_METRICS = {"ragas_scores.ragas_faithfulness",
 FAITHFULNESS_METRICS = {"ragas_scores.ragas_faithfulness",
                         "ragas_scores.ragas_faithfulness_with_hhem",
                         "deepeval_scores.deepeval_faithfulness"}
+# The two metrics that grade the answer against a REFERENCE answer. They are
+# dropped on abstentions too, but — unlike relevancy and faithfulness — not
+# everywhere: see ABSTENTION_SCORED_DATASETS.
+#
+# On an abstention the comparison has no answer on its side, so the scorer grades
+# a refusal against a gold answer and necessarily returns ~0. Left in, that 0 is
+# indistinguishable from a wrong answer, and the metric's mean silently becomes a
+# mixture of "how good are the answers" and "how often did it decline to give
+# one" — the second question already has its own number (the abstention rate),
+# and mixing them is what makes a cautious system look incompetent.
+REFERENCE_METRICS = {"ragas_scores.ragas_answer_accuracy",
+                     "ragas_scores.ragas_answer_correctness"}
+# The exception: datasets that exist to test whether the system declines. MedQA is
+# clinical, i.e. outside the nutrition scope the system is built for, so abstaining
+# there is the behaviour under test rather than a missing answer — the score on
+# those rows is a measurement we want, and dropping them would delete the evidence.
+# Everywhere else abstaining is a non-answer to a question that was in scope.
+ABSTENTION_SCORED_DATASETS = {"medqa"}
 # ID-context retrieval metrics additionally need a gold reference-context set,
 # which only the synthetic guideline questions carry -> everywhere else null is
 # expected, not an error.
@@ -425,19 +445,38 @@ def health_report(df, source=None):
 # --- (1) Metric-computation sanity -------------------------------------------
 
 
+def _abstention_excluded(df):
+    """Rows whose ``REFERENCE_METRICS`` cells do not count: an abstention on a
+    dataset where abstaining is NOT the behaviour under test.
+
+    The one place that rule is expressed. ``classify_metrics`` uses it to label the
+    cells ``na_rejected`` and ``prepare`` to null them, so the report's census and
+    the frame everything downstream reads can never disagree about which cells
+    those are. Without ``source_dataset`` (a frame that never carried it) it falls
+    back to every abstention, which is the conservative direction: it drops cells
+    rather than scoring ones that may not belong.
+    """
+    rej = ra._abstained(df)
+    if "source_dataset" not in df:
+        return rej
+    return rej & ~df["source_dataset"].astype(str).isin(ABSTENTION_SCORED_DATASETS)
+
+
 def classify_metrics(df):
     """Long table (id, variant, source_dataset, metric, status) tagging every
     metric cell as one of: ``scored`` / ``na_no_context`` (context metric on
     no_rag) / ``na_no_reference`` (ID-context metric off the synthetic set) /
-    ``na_rejected`` (relevancy OR faithfulness metric on an abstention — both
-    score the answer, and an abstention is not one) / ``error`` (applicable but
-    missing — a scorer raised or the value never landed).
+    ``na_rejected`` (an answer-grading metric on an abstention — relevancy and
+    faithfulness everywhere, the two reference metrics everywhere except
+    ``ABSTENTION_SCORED_DATASETS``) / ``error`` (applicable but missing — a scorer
+    raised or the value never landed).
 
     The status is derived from variant + dataset + the ``rejected`` flag, NOT from
     the sentinel strings, so it is robust to wording changes. This is the single
     source of truth for the error report.
     """
     rej = ra._abstained(df)
+    rej_ref = _abstention_excluded(df)
     is_norag = df["variant"].astype(str).eq("no_rag")
     is_synth = (df["source_dataset"].eq("synthetic_guidelines")
                 if "source_dataset" in df else pd.Series(False, index=df.index))
@@ -453,6 +492,8 @@ def classify_metrics(df):
         status = pd.Series("scored", index=df.index, dtype="object")
         if m in RELEVANCY_METRICS or m in FAITHFULNESS_METRICS:
             status = status.mask(rej, "na_rejected")
+        if m in REFERENCE_METRICS:  # same status, dataset-dependent mask
+            status = status.mask(rej_ref, "na_rejected")
         if m in CONTEXT_METRICS or m in IDCTX_METRICS:
             status = status.mask(is_norag, "na_no_context")
         if m in IDCTX_METRICS:
@@ -720,7 +761,7 @@ def metric_error_report(df, cls=None, source=None):
 
 
 def prepare(df):
-    """Return ``(clean_df, report)`` with the two cell-level exclusions applied.
+    """Return ``(clean_df, report)`` with the three cell-level exclusions applied.
 
     1. RAGAS metric cells nulled on RAGAS-errored rows, so those rows leave RAGAS
        aggregates while keeping their independent DeepEval scores. (The metric-level
@@ -733,8 +774,16 @@ def prepare(df):
        here is what makes "excluded everywhere" true rather than a claim repeated per
        call site. ``faithfulness_on_abstentions`` (run on the RAW frame, before this)
        is the diagnosis; this is the treatment.
+    3. The two ``REFERENCE_METRICS`` nulled on abstentions as well — but only off
+       ``ABSTENTION_SCORED_DATASETS`` (``_abstention_excluded``). Same reasoning as
+       (2) with one difference that matters: this exclusion is NOT uniform, so the
+       affected metrics end up with a different effective cohort per dataset. MedQA
+       keeps its abstained rows and every other dataset does not, which means an
+       accuracy/correctness mean pooled across datasets is a mean over cohorts
+       defined differently — read those two metrics per dataset, and read the
+       abstention rate alongside them.
 
-    Reports what it touched, in both cases.
+    Reports what it touched in all three cases.
     """
     clean = df.copy()
     rerr = _ragas_error_mask(clean)
@@ -748,6 +797,13 @@ def prepare(df):
         n_faith_cells = int(clean.loc[rej, faith_cols].notna().to_numpy().sum())
         clean.loc[rej, faith_cols] = np.nan
 
+    rej_ref = _abstention_excluded(clean)
+    ref_cols = sorted(c for c in REFERENCE_METRICS if c in clean)
+    n_ref_cells = 0
+    if ref_cols and rej_ref.any():
+        n_ref_cells = int(clean.loc[rej_ref, ref_cols].notna().to_numpy().sum())
+        clean.loc[rej_ref, ref_cols] = np.nan
+
     report = {
         "n_ragas_error_rows": int(rerr.sum()),
         "by_dataset_variant": (pd.crosstab(clean.loc[rerr, "source_dataset"],
@@ -756,6 +812,15 @@ def prepare(df):
         "n_abstained_rows": int(rej.sum()),
         "n_faithfulness_cells_masked": n_faith_cells,
         "faithfulness_cols_masked": faith_cols,
+        "n_reference_cells_masked": n_ref_cells,
+        "reference_cols_masked": ref_cols,
+        "n_abstained_rows_reference": int(rej_ref.sum()),
+        # The abstentions deliberately KEPT — the rows that separate this exclusion
+        # from the blanket one, and the number to quote when the two metrics'
+        # per-dataset cohorts are questioned.
+        "abstentions_kept": (pd.Series(rej & ~rej_ref).groupby(
+            clean["source_dataset"].astype(str), observed=True).sum()
+            .pipe(lambda s: s[s > 0]) if "source_dataset" in clean else pd.Series(dtype=int)),
     }
     return clean, report
 
@@ -800,19 +865,9 @@ def metric_distribution(df, by=None, metrics=None):
     metrics = metrics or score_cols(df)
     if by is None:
         return ev.metric_summary(df, metrics)
-    keys = [by] if isinstance(by, str) else list(by)
-    frames = {}
-    for g, sub in df.groupby(keys, observed=True):
-        if not len(sub):
-            continue
-        frames[g if isinstance(g, tuple) else (g,)] = ev.metric_summary(sub, metrics)
-    if not frames:
-        return pd.DataFrame()
-    out = pd.concat(frames.values(), keys=frames.keys(),
-                    names=keys + ["metric"]).reset_index()
-    for k in keys:
-        out[k] = out[k].astype(str)
-    return out.set_index(keys + ["metric"])
+    # The grouping itself is ``ev.metric_summary_by`` — the same call
+    # ``plots.metric_rail_grid`` makes, so this table and that figure cannot drift.
+    return ev.metric_summary_by(df, by, metrics)
 
 
 def means_by(df, by="source_dataset", metrics=None):
@@ -1374,6 +1429,21 @@ if __name__ == "__main__":
                   f"so from here on faithfulness is measured on answered rows only. The "
                   f"reason is in the raw-frame report above; the abstention rate itself is "
                   f"reported separately and is unaffected.")
+        if prep["n_reference_cells_masked"]:
+            kept = prep["abstentions_kept"]
+            print(f"prepared for analysis: {prep['n_reference_cells_masked']} reference-metric "
+                  f"cells on {prep['n_abstained_rows_reference']} of the "
+                  f"{prep['n_abstained_rows']} abstained rows set to NaN "
+                  f"({', '.join(c.split('.')[-1] for c in prep['reference_cols_masked'])}), "
+                  f"so these grade the answers the system did give. Grading a refusal "
+                  f"against a gold answer returns ~0, which is indistinguishable from a "
+                  f"wrong answer and would report the abstention rate as an accuracy.")
+            if len(kept):
+                print(f"  kept: "
+                      f"{', '.join(f'{k} ({int(v)} abstained rows)' for k, v in kept.items())} "
+                      f"— abstaining there is the behaviour under test, not a missing answer. "
+                      f"These two metrics therefore have a different cohort rule per dataset: "
+                      f"read them per dataset, not pooled.")
 
         # (2a) metric distribution / discriminativeness -----------------------------
         print("\n=== per-metric distribution (is the metric discriminative?) ===")
@@ -1442,6 +1512,12 @@ if __name__ == "__main__":
         print("the faithfulness rows necessarily show delta 0 and n_all == n_answered: "
               "their abstained cells were excluded upstream, so both columns are already "
               "the answered-only mean.")
+        print(f"the two reference metrics "
+              f"({', '.join(c.split('.')[-1] for c in sorted(REFERENCE_METRICS))}) are the "
+              f"same story with one exception: their abstained cells were excluded upstream "
+              f"too, EXCEPT on {'/'.join(sorted(ABSTENTION_SCORED_DATASETS))}. Whatever delta "
+              f"they still show is therefore that dataset's abstentions alone, not a "
+              f"run-wide answered-vs-all difference.")
         adj = abstention_adjusted(d)
         print(adj.round(3).to_string())
         adj.to_csv(paths.table(eval_path, "abstention_adjusted"))
@@ -1469,6 +1545,15 @@ if __name__ == "__main__":
         plots.save_all({
             "fig_variant_effects": lambda: plots.variant_effect_forest(d),
             "fig_metric_rails": lambda: plots.metric_rail_plot(d),
+            # The same figure faceted: the pooled rails say whether a metric can
+            # discriminate at all, these say where. They are the `per dataset x
+            # variant` table above, drawn from the same metric_summary_by call.
+            "fig_metric_rails_by_dataset": lambda: plots.metric_rail_grid(
+                d, "source_dataset"),
+            "fig_metric_rails_by_variant": lambda: plots.metric_rail_grid(
+                d, "variant"),
+            "fig_metric_rails_dataset_variant": lambda: plots.metric_rail_grid(
+                d, ["source_dataset", "variant"]),
             "fig_dataset_variant_correctness": lambda: plots.dataset_variant_heatmap(
                 d, "ragas_scores.ragas_answer_correctness"),
             "fig_dataset_variant_relevance": lambda: plots.dataset_variant_heatmap(

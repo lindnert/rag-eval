@@ -243,6 +243,42 @@ def metric_summary(df, metrics=None):
     return pd.DataFrame(rows).T
 
 
+def metric_summary_by(df, by, metrics=None):
+    """``metric_summary`` computed once per ``by`` group and stacked into one frame
+    indexed by the group keys plus ``metric``.
+
+    The grouped cut is the one that decides whether a metric is usable: a metric can
+    spread over NGQA and collapse to 1.0 on MMLU, and faithfulness cannot be scored
+    on ``no_rag`` at all — pooled, all of that averages into one innocuous-looking
+    row. Every group is summarised over the SAME ``metrics`` list (the caller's, or
+    ``score_cols`` of the whole frame), so a metric absent from one group still gets
+    a row there with ``n = 0`` rather than silently dropping out and leaving two
+    groups that cannot be compared row by row.
+
+    Group keys are cast to ``str``: they are labels here, and a Categorical index
+    level would carry the full category list into every downstream join and reindex.
+
+    Lives here rather than in ``eval_analysis`` because two callers need it and each
+    had started writing its own: ``eval_analysis.metric_distribution`` prints it and
+    ``plots.metric_rail_grid`` draws it, and a figure whose numbers are computed by
+    different code than the table it illustrates is a figure you cannot trust.
+    """
+    keys = [by] if isinstance(by, str) else list(by)
+    metrics = metrics or score_cols(df)
+    frames = {}
+    for g, sub in df.groupby(keys, observed=True):
+        if not len(sub):
+            continue
+        frames[g if isinstance(g, tuple) else (g,)] = metric_summary(sub, metrics)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames.values(), keys=frames.keys(),
+                    names=keys + ["metric"]).reset_index()
+    for k in keys:
+        out[k] = out[k].astype(str)
+    return out.set_index(keys + ["metric"])
+
+
 # --- Paired 'A beats B' variant comparison -----------------------------------
 
 def _bootstrap_ci(diffs, n_boot=2000, alpha=0.05, seed=0):

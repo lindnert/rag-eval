@@ -786,6 +786,38 @@ def variant_effect_forest(df, metrics=None, comparisons=None):
     return fig
 
 
+def _rail_segments(ax, y, s, height=0.62, gap=0.004):
+    """Draw one diverging 0.0 / spread / 1.0 stack per row of ``s`` at positions
+    ``y``, and return the ``(zero, mid, one)`` shares as arrays.
+
+    ``s`` is a ``metric_summary`` frame already in draw order. The composition is
+    of SCORED rows, so it always sums to 1 — except where nothing was scored at
+    all: ``frac_zero``/``frac_one`` are NaN there, and a plain ``fillna(0)`` would
+    make ``mid`` come out as 1.0 and paint an empty cell as a metric with perfect
+    spread. Rows with ``n == 0`` are therefore drawn as nothing, and the caller
+    marks them.
+
+    Shared by ``metric_rail_plot`` and ``metric_rail_grid`` so the pooled figure
+    and its per-group panels are the same geometry down to the segment gap — two
+    copies of this arithmetic is exactly how a panel stops being comparable to the
+    headline figure without anyone noticing.
+
+    ``gap`` is a true surface gap between segments rather than a drawn border, so
+    the arms stay separable when one of them is a sliver.
+    """
+    n = pd.to_numeric(s["n"], errors="coerce").fillna(0).to_numpy()
+    scored = n > 0
+    z = np.where(scored, pd.to_numeric(s["frac_zero"], errors="coerce").fillna(0), 0.0)
+    o = np.where(scored, pd.to_numeric(s["frac_one"], errors="coerce").fillna(0), 0.0)
+    mid = np.where(scored, 1.0 - z - o, 0.0)
+    ax.barh(y, mid, left=-mid / 2, height=height, color=GRID, zorder=2)
+    ax.barh(y, np.maximum(z - gap, 0), left=-mid / 2 - z, height=height,
+            color=NEG, zorder=2)
+    ax.barh(y, np.maximum(o - gap, 0), left=mid / 2 + gap, height=height,
+            color=POS, zorder=2)
+    return z, mid, o
+
+
 def metric_rail_plot(df, metrics=None, min_scored=1):
     """Which metrics actually discriminate, and which are pinned to a rail.
 
@@ -809,22 +841,12 @@ def metric_rail_plot(df, metrics=None, min_scored=1):
     apply_style()
     s = ev.metric_summary(df, metrics)
     s = s[s["n"] >= min_scored].copy()
-    s["frac_mid"] = 1.0 - s["frac_zero"].fillna(0) - s["frac_one"].fillna(0)
     # barh draws index 0 at the bottom, so reverse: first in METRIC_ORDER = top row.
     s = s.reindex(order_metrics(list(s.index))[::-1])
 
     fig, ax = plt.subplots(figsize=(9.2, 0.42 * len(s) + 2.0))
     y = np.arange(len(s))
-    gap = 0.004  # a true surface gap between segments, not a drawn border
-
-    mid = s["frac_mid"].to_numpy()
-    z = s["frac_zero"].fillna(0).to_numpy()
-    o = s["frac_one"].fillna(0).to_numpy()
-    ax.barh(y, mid, left=-mid / 2, height=0.62, color=GRID, zorder=2)
-    ax.barh(y, np.maximum(z - gap, 0), left=-mid / 2 - z, height=0.62,
-            color=NEG, zorder=2)
-    ax.barh(y, np.maximum(o - gap, 0), left=mid / 2 + gap, height=0.62,
-            color=POS, zorder=2)
+    z, mid, o = _rail_segments(ax, y, s)
 
     for yi, zi, mi, oi, n in zip(y, z, mid, o, s["n"]):
         if zi >= 0.06:
@@ -853,6 +875,131 @@ def metric_rail_plot(df, metrics=None, min_scored=1):
     ]
     ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.28), ncol=3)
     fig.tight_layout(rect=(0, 0, 0.95, 1))
+    return fig
+
+
+_GROUP_LABELS = {"source_dataset": "dataset", "variant": "variant"}
+
+
+def _group_order(values, key):
+    """Panel order for one grouping level: the chapter's dataset order, the pipeline
+    order for variants (no_rag -> rag -> rag_sc), alphabetical for anything else."""
+    vals = list(dict.fromkeys(str(v) for v in values))
+    if key == "variant":
+        known = [v for v in ev.VARIANT_ORDER if v in vals]
+        return known + [v for v in vals if v not in known]
+    if key == "source_dataset":
+        return dataset_order(vals)
+    return sorted(vals)
+
+
+def metric_rail_grid(df, by="source_dataset", metrics=None):
+    """``metric_rail_plot`` as small multiples — one panel per group, so you can see
+    WHERE a metric discriminates instead of only whether it does on average.
+
+    This is the picture of the ``per dataset x variant`` block in the report, and it
+    exists because that table is 165 rows of numbers whose message is a shape. Pass
+    ``by="source_dataset"`` or ``by="variant"`` for a single row of panels, or
+    ``by=["source_dataset", "variant"]`` for the full grid: the FIRST key varies
+    across columns and the second down rows, so the variant contrast — the one the
+    thesis argues about — is read vertically inside one dataset, against a fixed
+    metric row.
+
+    Every panel carries every metric in ``METRIC_ORDER``, present or not, and the
+    bars are the same geometry as the pooled figure (``_rail_segments``), so panels
+    are readable against each other and against the headline plot row by row. Two
+    things a single panel cannot say on its own are therefore annotated:
+
+      - the per-metric ``n`` at the right of each bar. A composition is a share of
+        SCORED rows, and "100% pinned at 1.0" off 2 rows is not the same statement as
+        the same bar off 350. In a per-group cut those n's fall by an order of
+        magnitude, which is precisely when the shares start to lie.
+      - a muted dash at the centre where a metric has no scored rows at all, so an
+        empty row reads as "not scored here" rather than "no spread". Most of those
+        are legitimate — faithfulness needs a retrieved context, the ``id_context_*``
+        metrics need a gold reference set — and the report's error table, not this
+        figure, is what separates those from real failures.
+    """
+    apply_style()
+    keys = [by] if isinstance(by, str) else list(by)
+    if len(keys) > 2:
+        raise ValueError(f"metric_rail_grid takes at most 2 grouping keys, got {keys}")
+    s = ev.metric_summary_by(df, keys, metrics)
+    if s.empty:
+        raise ValueError(f"no rows to group by {keys}")
+
+    # barh draws index 0 at the bottom, so reverse: first in METRIC_ORDER = top row.
+    mets = order_metrics(
+        list(dict.fromkeys(s.index.get_level_values("metric"))))[::-1]
+    cols = _group_order(s.index.get_level_values(keys[0]), keys[0])
+    rows = _group_order(s.index.get_level_values(keys[1]), keys[1]) if len(keys) > 1 \
+        else [None]
+    sizes = {tuple(str(v) for v in (g if isinstance(g, tuple) else (g,))): int(n)
+             for g, n in df.groupby(keys, observed=True).size().items()}
+
+    fig, axes = plt.subplots(
+        len(rows), len(cols), sharex=True, squeeze=False,
+        figsize=(2.45 * len(cols) + 2.1, 0.24 * len(mets) * len(rows) + 2.0))
+    y = np.arange(len(mets))
+
+    for ri, rv in enumerate(rows):
+        for ci, cv in enumerate(cols):
+            ax = axes[ri][ci]
+            key = (cv,) if rv is None else (cv, rv)
+            try:
+                sub = s.loc[key].reindex(mets)
+            except KeyError:  # a combination that never occurs (empty panel)
+                sub = pd.DataFrame(float("nan"), index=mets, columns=s.columns)
+            _rail_segments(ax, y, sub, height=0.58)
+
+            n = pd.to_numeric(sub["n"], errors="coerce").fillna(0).to_numpy()
+            for yi, ni in zip(y, n):
+                if ni > 0:
+                    ax.annotate(f"{int(ni)}", (1.0, yi),
+                                xycoords=("axes fraction", "data"), xytext=(4, 0),
+                                textcoords="offset points", va="center", ha="left",
+                                fontsize=6.5, color=INK_MUTED, annotation_clip=False)
+                else:
+                    ax.plot([0], [yi], marker="_", ms=6, color=AXIS, zorder=2)
+
+            ax.set_xlim(-1.05, 1.05)
+            ax.set_ylim(-0.6, len(mets) - 0.4)
+            ax.set_yticks(y)
+            ax.set_yticklabels([metric_label(m) for m in mets] if ci == 0 else [])
+            ax.tick_params(axis="y", length=0)
+            ax.grid(axis="y", visible=False)
+            ax.set_xticks([-1, 0, 1])
+            ax.set_xticklabels(["100%", "0", "100%"])
+            if ri == 0:
+                ax.set_title(cv, fontsize=10)
+            if ci == 0 and rv is not None:
+                ax.set_ylabel(rv, fontsize=10, color=INK_SECONDARY, labelpad=8)
+            # Rows in the group, so a per-metric n above can be read as coverage.
+            ax.text(1.0, 1.0, f"{sizes.get(key, 0)} rows", transform=ax.transAxes,
+                    ha="right", va="bottom", fontsize=6.5, color=INK_MUTED)
+
+    handles = [
+        Line2D([], [], color=NEG, lw=7, label="scored exactly 0.0"),
+        Line2D([], [], color=GRID, lw=7, label="strictly between (the usable signal)"),
+        Line2D([], [], color=POS, lw=7, label="scored exactly 1.0"),
+        Line2D([], [], color=AXIS, lw=0, marker="_", ms=8, label="not scored in this group"),
+    ]
+    # Title, caption and legend are placed in INCHES converted to figure fractions,
+    # not in fractions directly: this figure is 4.6in tall grouped one way and 10in
+    # tall grouped another, and a fixed 0.085 bottom margin that clears the legend on
+    # the tall one lands the legend on top of the caption on the short one.
+    h = fig.get_size_inches()[1]
+    fig.legend(handles=handles, loc="lower center", ncol=4,
+               bbox_to_anchor=(0.5, 0.10 / h))
+    cut = " x ".join(_GROUP_LABELS.get(k, k) for k in keys)
+    fig.suptitle(f"Do the metrics discriminate, per {cut}?  "
+                 f"Mass on the 0/1 rails vs. spread between",
+                 x=0.008, y=1 - 0.22 / h, ha="left", va="top", fontsize=12)
+    fig.text(0.5, 0.45 / h,
+             "share of scored rows  ←  pinned at 0.0    ·    spread    ·    "
+             "pinned at 1.0  →   (grey number = scored rows for that metric)",
+             ha="center", fontsize=8.5, color=INK_SECONDARY)
+    fig.tight_layout(rect=(0, 0.78 / h, 0.995, 1 - 0.45 / h), w_pad=2.2, h_pad=1.6)
     return fig
 
 
