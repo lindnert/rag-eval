@@ -117,12 +117,17 @@ POS = "#2a78d6"
 NEG = "#e34948"
 NEUTRAL = INK_MUTED
 
-# Metric names that do not survive the generic prettifier.
+# Metric names that do not survive the generic prettifier. ``deepeval_relevance`` is
+# here because the column name is the odd one out, not the metric: it is DeepEval's
+# answer-relevancy scorer, the counterpart to ``ragas_answer_relevancy``, and calling
+# it "relevance" in a figure that also carries a CONTEXTUAL relevance metric invites
+# exactly the confusion the pairing is meant to resolve.
 _LABEL_OVERRIDES = {
-    "ragas_faithfulness_with_hhem": "RAGAS faithfulness HHEM",
-    "ragas_id_context_ap": "RAGAS context AP",
-    "ragas_id_context_precision": "RAGAS context precision",
-    "ragas_id_context_recall": "RAGAS context recall",
+    "ragas_faithfulness_with_hhem": "RAGAS Faithfulness HHEM",
+    "ragas_id_context_ap": "RAGAS Context AP",
+    "ragas_id_context_precision": "RAGAS Context Precision",
+    "ragas_id_context_recall": "RAGAS Context Recall",
+    "deepeval_relevance": "DeepEval Answer Relevancy",
 }
 
 # Every metric in the order the results chapter reads them, grouped by what they
@@ -169,18 +174,30 @@ DEFAULT_COMPARISONS = [("rag", "no_rag"), ("rag_sc", "rag")]
 
 
 def metric_label(col):
-    """``ragas_scores.ragas_answer_correctness`` -> ``RAGAS answer correctness``.
+    """``ragas_scores.ragas_answer_correctness`` -> ``RAGAS Answer Correctness``.
 
     Raw column names are fine in a console table and wrong on a thesis axis, so
     every figure below labels through this.
+
+    Title case, word by word rather than ``str.title()``, because the parts that are
+    already capitalised are the ones ``str.title()`` destroys: the scorer names are
+    brandmarks (RAGAS, DeepEval) and HHEM is an acronym, and "Ragas Faithfulness
+    Hhem" is not a name anyone would recognise.
     """
     name = str(col).split(".")[-1]
     if name in _LABEL_OVERRIDES:
         return _LABEL_OVERRIDES[name]
     for prefix, tag in (("ragas_", "RAGAS "), ("deepeval_", "DeepEval ")):
         if name.startswith(prefix):
-            return tag + name[len(prefix):].replace("_", " ")
-    return name.replace("_", " ")
+            return tag + _titlecase(name[len(prefix):])
+    return _titlecase(name)
+
+
+def _titlecase(name):
+    """``answer_correctness`` -> ``Answer Correctness``, leaving words that are
+    already all-caps alone."""
+    return " ".join(w if w.isupper() else w.capitalize()
+                    for w in str(name).replace("_", " ").split())
 
 
 def apply_style():
@@ -1114,7 +1131,8 @@ def _group_order(values, key):
     return sorted(vals)
 
 
-def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None):
+def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None,
+                     fontscale=1.3):
     """``metric_rail_plot`` as small multiples — one panel per group, so you can see
     WHERE a metric discriminates instead of only whether it does on average.
 
@@ -1140,6 +1158,16 @@ def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None)
         are legitimate — faithfulness needs a retrieved context, the ``id_context_*``
         metrics need a gold reference set — and the report's error table, not this
         figure, is what separates those from real failures.
+
+    ``fontscale`` is the readability lever, and it moves type size rather than canvas
+    size on purpose. At the full grid this is 165 bars, and whoever reads it reads it
+    at some fixed width — a thesis page, a screen — so growing the canvas there makes
+    the type SMALLER relative to everything else, which is the opposite of the fix.
+    This grows the type, and with it only the geometry type actually occupies: the
+    metric-name column on the left, and the row pitch once the labels would otherwise
+    touch. The bars keep their width, so the canvas grows far less than the type does
+    and the ratio that decides legibility improves. Raise it further if the grid
+    still reads small.
     """
     apply_style()
     keys = [by] if isinstance(by, str) else list(by)
@@ -1158,9 +1186,17 @@ def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None)
     sizes = {tuple(str(v) for v in (g if isinstance(g, tuple) else (g,))): int(n)
              for g, n in df.groupby(keys, observed=True).size().items()}
 
+    # Every size on this figure derives from ``fontscale`` so the proportions hold
+    # at any setting: the four type sizes directly, and the two lengths that have to
+    # follow type — the left label column, and the row pitch, which only starts
+    # growing once a line of type no longer fits in the 0.24in default.
+    fs = float(fontscale)
+    pt_tick, pt_n, pt_head, pt_foot = 8.5 * fs, 7.8 * fs, 10.0 * fs, 8.5 * fs
+    row_h = max(0.255, 0.0175 * pt_tick)
     fig, axes = plt.subplots(
         len(rows), len(cols), sharex=True, squeeze=False,
-        figsize=(2.45 * len(cols) + 2.1, 0.24 * len(mets) * len(rows) + 2.0))
+        figsize=(2.30 * len(cols) + 2.1 * fs,
+                 row_h * len(mets) * len(rows) + 1.20 + 0.55 * fs))
     y = np.arange(len(mets))
 
     for ri, rv in enumerate(rows):
@@ -1171,34 +1207,50 @@ def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None)
                 sub = s.loc[key].reindex(mets)
             except KeyError:  # a combination that never occurs (empty panel)
                 sub = pd.DataFrame(float("nan"), index=mets, columns=s.columns)
-            _rail_segments(ax, y, sub, height=0.58)
+            _rail_segments(ax, y, sub, height=0.70)
 
             n = pd.to_numeric(sub["n"], errors="coerce").fillna(0).to_numpy()
             for yi, ni in zip(y, n):
                 if ni > 0:
+                    # INK_SECONDARY, not INK_MUTED: this n is what stops a bar being
+                    # read as a share when it is a share of three rows, so it has to
+                    # survive being glanced past — it is data, not furniture.
                     ax.annotate(f"{int(ni)}", (1.0, yi),
                                 xycoords=("axes fraction", "data"), xytext=(4, 0),
                                 textcoords="offset points", va="center", ha="left",
-                                fontsize=6.5, color=INK_MUTED, annotation_clip=False)
+                                fontsize=pt_n, color=INK_SECONDARY,
+                                annotation_clip=False)
                 else:
                     ax.plot([0], [yi], marker="_", ms=6, color=AXIS, zorder=2)
 
             ax.set_xlim(-1.05, 1.05)
             ax.set_ylim(-0.6, len(mets) - 0.4)
             ax.set_yticks(y)
-            ax.set_yticklabels([metric_label(m) for m in mets] if ci == 0 else [])
+            ax.set_yticklabels([metric_label(m) for m in mets] if ci == 0 else [],
+                               fontsize=pt_tick)
             ax.tick_params(axis="y", length=0)
+            ax.tick_params(axis="x", labelsize=pt_tick)
             ax.grid(axis="y", visible=False)
             ax.set_xticks([-1, 0, 1])
             ax.set_xticklabels(["100%", "0", "100%"])
             if ri == 0:
-                ax.set_title(_group_label(cv, keys[0]), fontsize=10)
+                ax.set_title(_group_label(cv, keys[0]), fontsize=pt_head)
             if ci == 0 and rv is not None:
-                ax.set_ylabel(_group_label(rv, keys[1]), fontsize=10,
-                              color=INK_SECONDARY, labelpad=8)
-            # Rows in the group, so a per-metric n above can be read as coverage.
-            ax.text(1.0, 1.0, f"{sizes.get(key, 0)} rows", transform=ax.transAxes,
-                    ha="right", va="bottom", fontsize=6.5, color=INK_MUTED)
+                # INK, overriding axes.labelcolor: this is not an axis label, it is the
+                # row header, and it names a group exactly as the column titles above
+                # do. The two carry the same weight in the grid, so they take the same
+                # ink — matplotlib only calls it a ylabel because that is where it sits.
+                ax.set_ylabel(_group_label(rv, keys[1]), fontsize=pt_head,
+                              color=INK, labelpad=8)
+            # Rows in the group, so a per-metric n beside each bar can be read as
+            # coverage. Drawn on the top band only, where it reads as part of the
+            # column header. Every variant sees the same question set, so down a
+            # column this number is the same three times over and repeating it costs
+            # three lines of vertical room to say one thing. If a grouping is ever
+            # added where the column total does vary by row, this needs revisiting.
+            if ri == 0:
+                ax.text(1.0, 1.0, f"n={sizes.get(key, 0)}", transform=ax.transAxes,
+                        ha="right", va="bottom", fontsize=pt_n, color=INK_MUTED)
 
     handles = [
         Line2D([], [], color=NEG, lw=7, label="scored exactly 0.0"),
@@ -1206,20 +1258,23 @@ def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None)
         Line2D([], [], color=POS, lw=7, label="scored exactly 1.0"),
         Line2D([], [], color=AXIS, lw=0, marker="_", ms=8, label="not scored in this group"),
     ]
-    # The axis caption and the legend are placed in INCHES converted to figure
-    # fractions, not in fractions directly: this figure is 4.6in tall grouped one way
-    # and 10in tall grouped another, and a fixed 0.085 bottom margin that clears the
-    # legend on the tall one lands the legend on top of the caption on the short one.
-    # The top of the rect is 1.0 — the band that used to hold the suptitle is not
-    # reserved now that the figure does not draw one.
+    # The legend is placed in INCHES converted to figure fractions, not in fractions
+    # directly: this figure is 4.6in tall grouped one way and 10in tall grouped
+    # another, and a fixed bottom margin that clears the legend on the tall one eats
+    # a panel row on the short one. The top of the rect is 1.0 — the band that used
+    # to hold the suptitle is not reserved now that the figure does not draw one, and
+    # neither is the band that used to hold the axis caption ("share of scored rows
+    # ← pinned at 0.0 · spread · pinned at 1.0 →, grey number = scored rows for that
+    # metric"), which is captioned in the thesis text instead.
     h = fig.get_size_inches()[1]
     fig.legend(handles=handles, loc="lower center", ncol=4,
-               bbox_to_anchor=(0.5, 0.10 / h))
-    fig.text(0.5, 0.45 / h,
-             "share of scored rows  ←  pinned at 0.0    ·    spread    ·    "
-             "pinned at 1.0  →   (grey number = scored rows for that metric)",
-             ha="center", fontsize=8.5, color=INK_SECONDARY)
-    fig.tight_layout(rect=(0, 0.78 / h, 0.995, 1.0), w_pad=2.2, h_pad=1.6)
+               bbox_to_anchor=(0.5, 0.10 / h), fontsize=pt_foot)
+    # ``w_pad`` has to clear the per-metric n's, which hang off the right edge of each
+    # panel as unclipped annotations tight_layout does not measure — but only just.
+    # Every point of gap beyond that is width spent on nothing, and on a figure read
+    # at a fixed page width, width spent on nothing is what makes the type look small.
+    fig.tight_layout(rect=(0, (0.30 + 0.09 * fs) / h, 0.995, 1.0),
+                     w_pad=1.2, h_pad=0.5)
     return fig
 
 
