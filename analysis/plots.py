@@ -118,14 +118,22 @@ NEUTRAL = INK_MUTED
 
 # Metric names that do not survive the generic prettifier.
 _LABEL_OVERRIDES = {
-    "ragas_faithfulness_with_hhem": "RAGAS faithfulness (HHEM)",
-    "ragas_id_context_ap": "RAGAS id-context AP",
-    "ragas_id_context_precision": "RAGAS id-context precision",
-    "ragas_id_context_recall": "RAGAS id-context recall",
+    "ragas_faithfulness_with_hhem": "RAGAS faithfulness HHEM",
+    "ragas_id_context_ap": "RAGAS context AP",
+    "ragas_id_context_precision": "RAGAS context precision",
+    "ragas_id_context_recall": "RAGAS context recall",
 }
 
-# The answer-quality metrics the results chapter leads with, in reading order.
-HEADLINE_METRICS = [
+# Every metric in the order the results chapter reads them, grouped by what they
+# measure: answer quality, relevancy, faithfulness, then retrieval quality — and
+# within each group the RAGAS scorers before their DeepEval counterpart. The
+# retrieval group leads with deepeval_contextual_relevance because it is the one
+# retrieval metric scored on all 735 rag/rag_sc rows; the three ragas_id_context_*
+# below it need a gold reference-context set and exist for the 68 synthetic
+# questions only. Figures that list metrics use this rather than sorting by value,
+# so a metric sits in the same place in every figure and the reader can compare
+# two of them side by side without re-reading the axis.
+METRIC_ORDER = [
     "ragas_scores.ragas_answer_correctness",
     "ragas_scores.ragas_answer_accuracy",
     "ragas_scores.ragas_answer_relevancy",
@@ -133,7 +141,26 @@ HEADLINE_METRICS = [
     "ragas_scores.ragas_faithfulness",
     "ragas_scores.ragas_faithfulness_with_hhem",
     "deepeval_scores.deepeval_faithfulness",
+    "deepeval_scores.deepeval_contextual_relevance",
+    "ragas_scores.ragas_id_context_precision",
+    "ragas_scores.ragas_id_context_recall",
+    "ragas_scores.ragas_id_context_ap",
 ]
+
+# The answer-quality metrics the results chapter leads with — the leading prefix of
+# METRIC_ORDER, up to and including the faithfulness family. The retrieval-quality
+# metrics are excluded on purpose: they exist for the 68 synthetic questions only,
+# so they cannot appear next to metrics with n ~ 1000 without implying they carry
+# the same weight.
+HEADLINE_METRICS = METRIC_ORDER[:7]
+
+
+def order_metrics(metrics):
+    """``metrics`` sorted into ``METRIC_ORDER``, with anything unlisted appended in
+    its original order — a new metric shows up at the bottom rather than vanishing.
+    """
+    rank = {m: i for i, m in enumerate(METRIC_ORDER)}
+    return sorted(metrics, key=lambda m: (rank.get(m, len(rank)), list(metrics).index(m)))
 
 # The two comparisons the thesis argument rests on: does retrieval help, and does
 # self-correction add anything on top of it?
@@ -765,8 +792,14 @@ def metric_rail_plot(df, metrics=None, min_scored=1):
     Each metric is one diverging stacked bar centred on its SPREAD: the gray
     middle is the share of scored rows strictly between 0 and 1 — the part of the
     metric that can rank anything — and the two arms are the mass welded to the
-    rails, 0.0 to the left, 1.0 to the right. Sorted by spread, so the metrics
-    that separate queries rise to the top and the degenerate ones sink.
+    rails, 0.0 to the left, 1.0 to the right.
+
+    Rows run in ``METRIC_ORDER``, not sorted by spread. Sorting would put the
+    sharpest metric on top and read as a ranking, which is the wrong claim for a
+    validation figure: the point is not which metric wins but whether each one can
+    separate anything at all, and that is legible from the bar itself. A fixed
+    order also means this figure and every other metric list in the chapter can be
+    read against each other row by row.
 
     This is the figure behind the metric-validation argument. A metric that is
     90% one colour is not measuring your system, and its mean elsewhere in the
@@ -777,7 +810,8 @@ def metric_rail_plot(df, metrics=None, min_scored=1):
     s = ev.metric_summary(df, metrics)
     s = s[s["n"] >= min_scored].copy()
     s["frac_mid"] = 1.0 - s["frac_zero"].fillna(0) - s["frac_one"].fillna(0)
-    s = s.sort_values("frac_mid", ascending=True)  # bottom-up = worst first
+    # barh draws index 0 at the bottom, so reverse: first in METRIC_ORDER = top row.
+    s = s.reindex(order_metrics(list(s.index))[::-1])
 
     fig, ax = plt.subplots(figsize=(9.2, 0.42 * len(s) + 2.0))
     y = np.arange(len(s))

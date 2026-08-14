@@ -134,6 +134,15 @@ CONTEXT_METRICS = {"ragas_scores.ragas_faithfulness",
                    "ragas_scores.ragas_faithfulness_with_hhem",
                    "deepeval_scores.deepeval_faithfulness",
                    "deepeval_scores.deepeval_contextual_relevance"}
+# The faithfulness subset, which is ALSO dropped on abstentions, for the same
+# reason as relevancy: these score the ANSWER's claims against the context, and an
+# abstention makes no claims, so what the scorer returns is its convention for the
+# empty case rather than a measurement — see ``faithfulness_on_abstentions``.
+# ``deepeval_contextual_relevance`` is deliberately not here: it scores the
+# retrieved context against the QUESTION, which an abstention does not touch.
+FAITHFULNESS_METRICS = {"ragas_scores.ragas_faithfulness",
+                        "ragas_scores.ragas_faithfulness_with_hhem",
+                        "deepeval_scores.deepeval_faithfulness"}
 # ID-context retrieval metrics additionally need a gold reference-context set,
 # which only the synthetic guideline questions carry -> everywhere else null is
 # expected, not an error.
@@ -194,10 +203,17 @@ _NAN = float("nan")
 # FAILURE_PATTERNS (which is broad on purpose, for *eyeballing* leads): a
 # DeepEval reason that legitimately says "no relevant context" is a real low
 # score, not a failure, so it must NOT match here.
+#
+# Word boundaries are not decoration here. Unanchored, ``exception`` matches
+# "the retrieval context is EXCEPTIONally helpful" — a judge praising the context
+# — and that one substring was enough to discard two perfectly good rows
+# (llmdrs_45/rag_sc, mmlu_37/rag_sc) from the 2026-08-12 run. ``rate ?limit`` has
+# the same hazard inside "accuRATE LIMITs". Anchor anything that is also an
+# English word fragment; ``outputparser`` still catches OutputParserException.
 EVAL_ERROR_PATTERNS = [
-    r"exception", r"traceback", r"failed to parse", r"parse error",
+    r"\bexception\b", r"\btraceback\b", r"failed to parse", r"parse error",
     r"outputparser", r"json ?decode", r"could ?n[o']t parse",
-    r"rate ?limit", r"timed ?out", r"\btimeout\b", r"api error",
+    r"\brate ?limit", r"timed ?out", r"\btimeout\b", r"api error",
     r"error (?:generating|calling|during|while)", r"\[llamacpp",
 ]
 
@@ -209,9 +225,60 @@ def _ragas_error_mask(df):
     return pd.Series(False, index=df.index)
 
 
+def _nonempty(s):
+    """Mask of cells holding actual text — not NaN, not blank."""
+    t = s.astype("string")
+    return t.notna() & t.str.strip().ne("")
+
+
+def _deepeval_error_cells(df):
+    """``{metric_col: mask}`` — rows where DeepEval recorded a crash for that
+    metric, read from its ``deepeval_<metric>_error`` field.
+
+    Cell-level on purpose. A crashed metric is one missing value, exactly like
+    RAGAS's per-metric failures in ``ragas_metric_errors``; the row's other
+    DeepEval metrics are independent of it and stay.
+    """
+    out = {}
+    for c in df.columns:
+        if not (c.startswith("deepeval_scores.") and c.endswith("_error")):
+            continue
+        metric = c[: -len("_error")]
+        if metric in df:
+            out[metric] = _nonempty(df[c])
+    return out
+
+
 def _deepeval_error_mask(df):
-    """Rows whose DeepEval prose signals a judge *crash* (not a low score), using
-    the narrow ``EVAL_ERROR_PATTERNS`` — DeepEval has no error field."""
+    """Rows to DROP for a DeepEval failure: the judge crashed and left the row with
+    no usable DeepEval score at all.
+
+    One crashed metric out of three is NOT a reason to drop the row — that is a
+    cell failure (``_deepeval_error_cells``), handled the way every RAGAS
+    per-metric failure is: the value is NaN, ``classify_metrics`` calls it
+    ``error``, the row's other metrics survive. Dropping a whole row over one
+    crashed cell would be a policy this module applies to no other evaluator.
+
+    ``deepeval_*_error`` has not always existed. On a frame without those columns
+    the original heuristic still applies: scan the judge's ``*_reason`` prose for
+    ``EVAL_ERROR_PATTERNS``. It is a fallback, not a second opinion — where the
+    fields DO exist the scrape was strictly worse than reading them (on the
+    2026-08-12 run it found 0 of the 1 real crash and invented 2 that were only
+    the word "exceptionally"), so it gets no vote once the evaluator states the
+    answer itself.
+    """
+    cells = _deepeval_error_cells(df)
+    if any(c.startswith("deepeval_scores.") and c.endswith("_error")
+           for c in df.columns):
+        if not cells:
+            return pd.Series(False, index=df.index)
+        crashed = pd.DataFrame(cells).any(axis=1)
+        metrics = [c for c in score_cols(df) if c.startswith("deepeval_scores.")]
+        usable = (pd.DataFrame({m: pd.to_numeric(df[m], errors="coerce").notna()
+                                for m in metrics}).any(axis=1)
+                  if metrics else pd.Series(False, index=df.index))
+        return crashed & ~usable
+
     rx = re.compile("|".join(EVAL_ERROR_PATTERNS), re.IGNORECASE)
     cols = [c for c in df.columns
             if c.startswith("deepeval_scores.") and c.endswith("_reason")]
@@ -235,8 +302,16 @@ def drop_eval_errors(df, mask_metric_level=False):
 
     Three failure signals, one per mask above: a generation failure (``answer``
     contains ``[LLAMACPP ...]``, so no real answer exists and the whole row is
-    meaningless), a RAGAS failure (``ragas_error`` non-empty), or a DeepEval judge
-    crash (only visible in its reason prose).
+    meaningless), a RAGAS failure (the row-level ``ragas_error``, which nulls the
+    whole RAGAS block), or a DeepEval crash that left the row without a single
+    usable score.
+
+    All three are deliberately ROW-level catastrophes. Per-metric crashes —
+    ``ragas_metric_errors.<metric>``, ``deepeval_<metric>_error`` — are not here
+    and must not be: they cost one cell, the rest of the row is sound, and
+    ``classify_metrics`` already reports them as ``error`` while the NaN keeps them
+    out of that one metric's aggregates. Expect this to drop far fewer rows than
+    ``metric_error_report`` shows error cells; the two count different things.
 
     Returns ``(clean_df, report)``. ``report`` is a dict with: ``n_before`` /
     ``n_after`` / ``n_dropped``; ``by_type`` (rows flagged per failure signal —
@@ -328,12 +403,16 @@ def health_report(df, source=None):
     flags["degenerate_metrics"] = degenerate
 
     rej = ra._abstained(df)
-    faith_cols = [c for c in ev.metric_cols(df) if "faithful" in c]
+    # score_cols, not metric_cols: the latter still carries the *_verdicts.* tallies,
+    # and "n_verdicts scored on 199 abstained rows" is a check on a claim count, not
+    # on a faithfulness score.
+    faith_cols = [c for c in score_cols(df) if "faithful" in c]
     for c in faith_cols:
         scored = int(pd.to_numeric(df.loc[rej, c], errors="coerce").notna().sum())
         if scored:
-            emit(f"  [CHECK] {c} scored on {scored} abstained rows "
-                 f"(faithfulness is ill-defined on abstentions)")
+            emit(f"  [CHECK] {c} scored on {scored} abstained rows in the raw file "
+                 f"(faithfulness is ill-defined on abstentions; those cells are "
+                 f"excluded downstream — see the na_rejected column below)")
     flags["faithfulness_on_rejections"] = {
         c: int(pd.to_numeric(df.loc[rej, c], errors="coerce").notna().sum())
         for c in faith_cols
@@ -350,8 +429,9 @@ def classify_metrics(df):
     """Long table (id, variant, source_dataset, metric, status) tagging every
     metric cell as one of: ``scored`` / ``na_no_context`` (context metric on
     no_rag) / ``na_no_reference`` (ID-context metric off the synthetic set) /
-    ``na_rejected`` (relevancy metric on an abstention) / ``error`` (applicable
-    but missing — a scorer raised or the value never landed).
+    ``na_rejected`` (relevancy OR faithfulness metric on an abstention — both
+    score the answer, and an abstention is not one) / ``error`` (applicable but
+    missing — a scorer raised or the value never landed).
 
     The status is derived from variant + dataset + the ``rejected`` flag, NOT from
     the sentinel strings, so it is robust to wording changes. This is the single
@@ -367,13 +447,16 @@ def classify_metrics(df):
         if m not in df:
             continue
         val = pd.to_numeric(df[m], errors="coerce")
+        # Narrowest reason first, broadest last, because each mask overwrites the
+        # one before: a faithfulness cell on a no_rag row reads na_no_context (no
+        # context existed at all), not na_rejected, even if that row also abstained.
         status = pd.Series("scored", index=df.index, dtype="object")
+        if m in RELEVANCY_METRICS or m in FAITHFULNESS_METRICS:
+            status = status.mask(rej, "na_rejected")
         if m in CONTEXT_METRICS or m in IDCTX_METRICS:
             status = status.mask(is_norag, "na_no_context")
         if m in IDCTX_METRICS:
             status = status.mask(~is_synth, "na_no_reference")
-        if m in RELEVANCY_METRICS:
-            status = status.mask(rej, "na_rejected")
         # Cells still marked "scored" are the ones a value is EXPECTED for:
         # present => scored, absent => error (a RAGAS raise, if any, is the why).
         expected = status.eq("scored")
@@ -385,6 +468,110 @@ def classify_metrics(df):
     if not frames:  # no metric columns at all (e.g. a raw rag file passed by mistake)
         return pd.DataFrame(columns=["id", "variant", "source_dataset", "metric", "status"])
     return pd.concat(frames, ignore_index=True)
+
+
+def metric_error_reasons(df):
+    """Long table ``(id, variant, source_dataset, metric, error, error_type)`` of
+    every crash the evaluators recorded per metric cell.
+
+    Both evaluators write the exception next to the metric it killed — RAGAS in
+    ``ragas_scores.ragas_metric_errors.<metric>``, DeepEval in
+    ``deepeval_scores.<metric>_error`` — so an ``error`` cell in
+    ``classify_metrics`` almost always has a stated cause. ``error_type`` is the
+    exception class (the text before the first colon), which is what separates a
+    fixable config problem from model behaviour: ``AssertionError: LLM is not set``
+    means the metric was never wired up, ``LengthFinishReasonError`` means the
+    judge ran out of output budget.
+
+    Empty when the file predates the error fields, or when ``analysis.load`` has
+    coerced them away — which it did until ``error_cols`` was carved out of
+    ``metric_cols``.
+    """
+    keys = [c for c in ("id", "variant", "source_dataset") if c in df]
+    frames = []
+    for c in ev.error_cols(df):
+        # Skip the two fields that are not per-metric: the ``ragas_metric_errors``
+        # container itself, and the row-level ``ragas_error`` (whose failure kills
+        # the whole RAGAS block and is reported on its own, above).
+        if c.endswith("ragas_metric_errors") or c == "ragas_scores.ragas_error":
+            continue
+        if ".ragas_metric_errors." in c:
+            metric = "ragas_scores." + c.split(".ragas_metric_errors.")[1]
+        elif c.endswith("_error"):
+            metric = c[: -len("_error")]
+        else:
+            continue
+        hit = _nonempty(df[c])
+        if not hit.any():
+            continue
+        sub = df.loc[hit, keys].copy()
+        if "variant" in sub:  # str, matching classify_metrics, so the two tables join
+            sub["variant"] = sub["variant"].astype(str)
+        sub["metric"] = metric
+        sub["error"] = df.loc[hit, c].astype(str)
+        frames.append(sub)
+    if not frames:
+        return pd.DataFrame(columns=keys + ["metric", "error", "error_type"])
+    out = pd.concat(frames, ignore_index=True)
+    out["error_type"] = out["error"].str.split(":").str[0].str.strip()
+    return out
+
+
+def faithfulness_on_abstentions(df):
+    """``(table, info)``: what each faithfulness scorer put on the abstained rows.
+
+    The evidence behind the ``na_rejected`` cells the status table shows for the
+    faithfulness metrics, so the exclusion is argued in the report rather than
+    asserted. Faithfulness asks whether the ANSWER's claims are entailed by the
+    context; an abstention makes no claims, so "all zero claims are entailed" is
+    vacuously true and each scorer is free to invent its own convention for the
+    empty case. They do, and they disagree almost maximally — on the 2026-07-29 run
+    RAGAS scores 98.5% of abstentions 0.0 (a refusal counted as a hallucination,
+    wrong even on RAGAS's own definition) while HHEM and DeepEval score 83-95% of
+    the SAME rows 1.0. Since the refusal text is identical across those rows, none
+    of that spread can be a property of the run.
+
+    One row per faithfulness metric: how many abstained cells carried a value,
+    their mean, the share on each rail, and the answered-row mean for contrast.
+    ``info["n_texts"]`` counts the distinct abstention answer strings — a handful
+    means the rows really are canonical refusals; many would mean ``_abstained``
+    is catching partial answers, which DO carry claims and must not be discarded
+    wholesale, and the exclusion would have to be reconsidered.
+
+    Run this on the RAW frame: ``prepare`` nulls exactly these cells, so afterwards
+    there is nothing left to describe.
+    """
+    rej = ra._abstained(df)
+    cols = sorted(c for c in FAITHFULNESS_METRICS if c in df)
+    rows = {}
+    for m in cols:
+        v = pd.to_numeric(df[m], errors="coerce")
+        a, b = v[rej].dropna(), v[~rej].dropna()
+        rows[m.split(".")[-1]] = {
+            "n_abstained": len(a),
+            "mean_abstained": a.mean() if len(a) else _NAN,
+            "frac_0": float((a == 0).mean()) if len(a) else _NAN,
+            "frac_1": float((a == 1).mean()) if len(a) else _NAN,
+            "n_answered": len(b),
+            "mean_answered": b.mean() if len(b) else _NAN,
+        }
+    tab = pd.DataFrame(rows).T
+    if len(tab):
+        tab["n_abstained"] = tab["n_abstained"].astype(int)
+        tab["n_answered"] = tab["n_answered"].astype(int)
+        tab.index.name = "metric"
+
+    texts = None
+    if "answer" in df:
+        texts = df.loc[rej, "answer"].fillna("").str.strip()
+    info = {
+        "n_abstained_rows": int(rej.sum()),
+        "n_texts": int(texts.nunique()) if texts is not None else None,
+        # The gap between the most and least generous convention, on identical text.
+        "spread": (float(tab["mean_abstained"].max() - tab["mean_abstained"].min())
+                   if len(tab) and tab["mean_abstained"].notna().any() else _NAN),
+    }
+    return tab, info
 
 
 def metric_error_report(df, cls=None, source=None):
@@ -423,10 +610,11 @@ def metric_error_report(df, cls=None, source=None):
         emit(_indent(pd.crosstab(df.loc[rerr, "source_dataset"],
                                  df.loc[rerr, "variant"].astype(str)).to_string()))
 
-    # DeepEval judge crashes (only visible in the reason prose).
+    # DeepEval crashes severe enough to cost the whole row (a crash that killed only
+    # one metric is a cell, and shows up in the error table at the end instead).
     derr = _deepeval_error_mask(df)
     flags["deepeval_error_rows"] = int(derr.sum())
-    emit(f"\n  DeepEval judge crashes (reason prose matches an error pattern): "
+    emit(f"\n  DeepEval judge crashes leaving the row with no usable score: "
          f"{int(derr.sum())} rows")
     if derr.any():
         emit(_indent(pd.crosstab(df.loc[derr, "source_dataset"],
@@ -436,23 +624,68 @@ def metric_error_report(df, cls=None, source=None):
     # broadest applicable one, since the masks overwrite in order (an ID-context cell
     # on a non-synthetic no_rag row reads na_no_reference, not na_no_context). That
     # split makes the individual columns hard to read against an expected count, so
-    # na_total sums them: scored + na_total + error == rows, per metric.
+    # na_total sums them: error + na_total + scored == total, per metric.
+    present = set(cls["metric"])
     piv = (cls.pivot_table(index="metric", columns="status", values="id",
                            aggfunc="count", fill_value=0)
-           .reindex(CLASSIFIED_METRICS))
-    na_cols = [c for c in piv.columns if str(c).startswith("na_")]
-    if na_cols:
-        piv.insert(len(piv.columns), "na_total", piv[na_cols].sum(axis=1))
+           .reindex([m for m in CLASSIFIED_METRICS if m in present]))
+    # Left to right in the order the table is read: the one column worth acting on
+    # (error) first, then WHY the rest were legitimately not scored, how many that is,
+    # then what was scored and the row count it all has to add up to. The na_* reasons
+    # run in mask-application order, so the broadest comes first; a reason added later
+    # and not listed here still prints, after the known ones.
+    na_order = ["na_no_context", "na_no_reference", "na_rejected"]
+    na_cols = ([c for c in na_order if c in piv.columns]
+               + sorted(c for c in piv.columns
+                        if str(c).startswith("na_") and c not in na_order))
+    piv = piv.reindex(columns=["error"] + na_cols + ["scored"], fill_value=0)
+    piv.insert(1 + len(na_cols), "na_total",
+               piv[na_cols].sum(axis=1).astype(int) if na_cols else 0)
+    piv["total"] = piv["error"] + piv["na_total"] + piv["scored"]
     piv.index = [m.split(".")[-1] for m in piv.index]
+    # The corner label is the pivot's ``columns.name`` ("status"), which sits directly
+    # above a column of metric names and reads as if it labelled them. Name it for what
+    # is under it.
+    piv.columns.name = "metric"
     flags["status_by_metric"] = piv
-    emit("\n  per-metric cell status (scored | na_* reasons | na_total | error); "
-         "each cell gets ONE na reason, the broadest one that applies:")
+    emit("\n  per-metric cell status — the actionable column first, then why a cell was "
+         "NOT scored and the totals (error | na_* reasons | na_total | scored | total); "
+         "each cell gets ONE na reason, the broadest one that applies, and "
+         "error + na_total + scored == total:")
     emit(_indent(piv.to_string()))
 
-    # The actionable bit: which cells are true errors.
+    # Immediately after the table because it is the evidence for one column of it:
+    # why the faithfulness metrics carry na_rejected rather than a score.
+    fa, fa_info = faithfulness_on_abstentions(df)
+    flags["faithfulness_on_abstentions"] = fa
+    flags["abstention_texts"] = fa_info["n_texts"]
+    if len(fa) and fa_info["n_abstained_rows"]:
+        emit(f"\n  why faithfulness is na_rejected: what the scorers had put on the "
+             f"{fa_info['n_abstained_rows']} abstained rows")
+        if fa_info["n_texts"] is not None:
+            emit(f"    those rows use {fa_info['n_texts']} distinct answer string(s), i.e. "
+                 f"they are textually near-identical, so any spread below is the scorer's "
+                 f"convention for an answer with no claims — not a property of this run:")
+        emit(_indent(fa.round(3).to_string(), 4))
+        if fa_info["spread"] == fa_info["spread"]:  # not NaN
+            emit(f"    the conventions disagree by {fa_info['spread']:.3f} on that identical "
+                 f"text (a refusal is zero claims: RAGAS reads that as 0 = hallucinated, "
+                 f"HHEM/DeepEval as 1 = nothing false asserted). Keeping the cells would "
+                 f"report the choice of scorer as faithfulness, and would let a system raise "
+                 f"its score by abstaining more; they are excluded from every mean, "
+                 f"correlation, paired test and figure below. The abstention RATE is reported "
+                 f"separately, at the top of this report.")
+
+    # The actionable bit: which cells are true errors, and — since both evaluators
+    # record the exception next to the metric it killed — WHY. Note this counts
+    # CELLS, not rows: a cell error costs one metric on one row, which is why 75 of
+    # them can coexist with 2 dropped rows. The two sets need not overlap at all.
     err = cls[cls["status"] == "error"]
     flags["error_cells"] = int(len(err))
-    emit(f"\n  error cells (applicable but missing): {len(err)}")
+    emit(f"\n  error cells (applicable but missing): {len(err)} "
+         f"— cells, not rows; each costs ONE metric on one row and is excluded from "
+         f"that metric only, so every metric has its own effective n (the 'scored' "
+         f"column above)")
     if len(err):
         emit("    by dataset x variant:")
         emit(_indent(pd.crosstab(err["source_dataset"], err["variant"]).to_string()))
@@ -460,26 +693,69 @@ def metric_error_report(df, cls=None, source=None):
         emit(_indent(err["metric"].map(lambda m: m.split(".")[-1])
                      .value_counts().to_string()))
 
+        # The recorded cause, joined back onto the error cells. An error type that
+        # is a config fault (AssertionError: LLM is not set) is fixable by rerunning
+        # the evaluation; one that is model behaviour (LengthFinishReasonError) is
+        # not, and has to be reported as a coverage limit instead.
+        reasons = metric_error_reasons(df)
+        flags["error_reasons"] = reasons
+        if len(reasons):
+            keys = [c for c in ("id", "variant", "metric") if c in err]
+            known = err.merge(reasons, on=keys, how="left", suffixes=("", "_r"))
+            explained = known["error_type"].notna()
+            emit(f"    recorded cause ({int(explained.sum())} of {len(err)} explained "
+                 f"by the evaluator's own error field):")
+            emit(_indent(pd.crosstab(
+                known.loc[explained, "metric"].map(lambda m: m.split(".")[-1]),
+                known.loc[explained, "error_type"]).to_string(), 6))
+            if (~explained).any():
+                emit(f"      {int((~explained).sum())} error cell(s) with no recorded "
+                     f"cause — the value simply never landed")
+        else:
+            emit("    no recorded cause available: this file predates the per-metric "
+                 "error fields (ragas_metric_errors / deepeval_*_error)")
+
     print("\n".join(lines))
     return flags
 
 
 def prepare(df):
-    """Return ``(clean_df, report)`` with RAGAS metric cells nulled on RAGAS-errored
-    rows, so those rows leave RAGAS aggregates while keeping their independent
-    DeepEval scores. (The metric-level masking ``analysis.drop_eval_errors``
-    deliberately punts on.) They are already NaN after ``analysis.load``; this makes
-    the exclusion explicit and defensive, and reports what it touched.
+    """Return ``(clean_df, report)`` with the two cell-level exclusions applied.
+
+    1. RAGAS metric cells nulled on RAGAS-errored rows, so those rows leave RAGAS
+       aggregates while keeping their independent DeepEval scores. (The metric-level
+       masking ``analysis.drop_eval_errors`` deliberately punts on.) They are already
+       NaN after ``analysis.load``; this makes the exclusion explicit and defensive.
+    2. Faithfulness cells nulled on abstentions, matching the ``na_rejected`` status
+       ``classify_metrics`` gives the same cells. This is the one place the exclusion
+       has to happen: everything downstream — distributions, means by variant, paired
+       comparisons, agreement, deciles, every figure — reads this frame, so nulling
+       here is what makes "excluded everywhere" true rather than a claim repeated per
+       call site. ``faithfulness_on_abstentions`` (run on the RAW frame, before this)
+       is the diagnosis; this is the treatment.
+
+    Reports what it touched, in both cases.
     """
     clean = df.copy()
     rerr = _ragas_error_mask(clean)
     ragas_cols = [c for c in ev.metric_cols(clean) if c.startswith("ragas_scores.")]
     clean.loc[rerr, ragas_cols] = np.nan
+
+    rej = ra._abstained(clean)
+    faith_cols = sorted(c for c in FAITHFULNESS_METRICS if c in clean)
+    n_faith_cells = 0
+    if faith_cols and rej.any():
+        n_faith_cells = int(clean.loc[rej, faith_cols].notna().to_numpy().sum())
+        clean.loc[rej, faith_cols] = np.nan
+
     report = {
         "n_ragas_error_rows": int(rerr.sum()),
         "by_dataset_variant": (pd.crosstab(clean.loc[rerr, "source_dataset"],
                                            clean.loc[rerr, "variant"].astype(str))
                                if rerr.any() else pd.DataFrame()),
+        "n_abstained_rows": int(rej.sum()),
+        "n_faithfulness_cells_masked": n_faith_cells,
+        "faithfulness_cols_masked": faith_cols,
     }
     return clean, report
 
@@ -487,24 +763,15 @@ def prepare(df):
 # --- (2a) Metric validation: is each metric discriminative on its own? -------
 
 def score_cols(df):
-    """``ev.metric_cols`` minus the bookkeeping fields that are not scores.
+    """The real 0-1 score columns — see ``analysis.score_cols``, which is now the
+    single definition.
 
-    ``metric_cols`` keeps everything under ``ragas_scores.`` / ``deepeval_scores.``
-    that is not prose, which sweeps in three things that are not metrics:
-    ``ragas_metric_errors[.<metric>]``, the ``deepeval_*_error`` flags, and the
-    ``deepeval_*_verdicts.{n_verdicts,yes,no,idk}`` tallies. In a distribution
-    table the first two would only add all-NaN rows — and truncating
-    ``ragas_metric_errors.ragas_answer_correctness`` to its last segment collides
-    with the real metric of that name — while the verdict counts are integer
-    tallies on a different scale entirely, whose min/max/median next to a 0-1
-    score would be nonsense. Whether a metric errored is
-    ``metric_error_report``'s question; what the verdicts were is an input to the
-    score, not a score.
+    Kept as a name here because this module and ``plots`` both need the answer and
+    kept diverging when each filtered ``metric_cols`` for itself: the error fields
+    were dropped here but not in the rail plot, which drew twelve verdict tallies
+    as if they were metrics.
     """
-    return [c for c in ev.metric_cols(df)
-            if "metric_errors" not in c
-            and "_verdicts." not in c
-            and not c.endswith(("_error", "_verdicts"))]
+    return ev.score_cols(df)
 
 
 def metric_distribution(df, by=None, metrics=None):
@@ -1100,6 +1367,13 @@ if __name__ == "__main__":
             print("\nprepared for analysis: no RAGAS-errored rows survived the exclusion "
                   "above, so nothing to mask (individual missing metric cells are still "
                   "excluded per metric).")
+        if prep["n_faithfulness_cells_masked"]:
+            print(f"prepared for analysis: {prep['n_faithfulness_cells_masked']} faithfulness "
+                  f"cells on the {prep['n_abstained_rows']} abstained rows set to NaN "
+                  f"({', '.join(c.split('.')[-1] for c in prep['faithfulness_cols_masked'])}), "
+                  f"so from here on faithfulness is measured on answered rows only. The "
+                  f"reason is in the raw-frame report above; the abstention rate itself is "
+                  f"reported separately and is unaffected.")
 
         # (2a) metric distribution / discriminativeness -----------------------------
         print("\n=== per-metric distribution (is the metric discriminative?) ===")
@@ -1165,6 +1439,9 @@ if __name__ == "__main__":
         print("\n=== abstention-adjusted metrics (all rows vs answered only) ===")
         print("a large positive delta means the metric is mostly measuring how often "
               "the system abstained, not how good its answers are.")
+        print("the faithfulness rows necessarily show delta 0 and n_all == n_answered: "
+              "their abstained cells were excluded upstream, so both columns are already "
+              "the answered-only mean.")
         adj = abstention_adjusted(d)
         print(adj.round(3).to_string())
         adj.to_csv(paths.table(eval_path, "abstention_adjusted"))

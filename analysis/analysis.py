@@ -56,15 +56,59 @@ VARIANT_ORDER = ["no_rag", "rag", "rag_sc"]
 
 # --- Loading -----------------------------------------------------------------
 
+def error_cols(df):
+    """Names of the evaluator's error fields: RAGAS's row-level ``ragas_error``,
+    its per-metric ``ragas_metric_errors[.<metric>]``, and DeepEval's per-metric
+    ``deepeval_<metric>_error``.
+
+    They sit under the same ``*_scores.`` prefixes as the metrics but hold exception
+    TEXT, so they must stay out of ``load``'s numeric coercion. They did not: every
+    message was silently coerced to NaN, which is how a file that records exactly
+    *why* a metric cell is missing produced a report that could only say *that* it
+    was missing. ``eval_analysis.metric_error_reasons`` reads them.
+    """
+    return [
+        c for c in df.columns
+        if c.startswith(("ragas_scores.", "deepeval_scores."))
+        and ("metric_errors" in c or c.endswith("_error"))
+    ]
+
+
 def metric_cols(df):
-    """Names of the numeric score columns (RAGAS + DeepEval), excluding prose
-    ``*_reason`` fields and the ``ragas_error`` string."""
+    """Every numeric column the evaluators wrote (RAGAS + DeepEval), excluding
+    prose ``*_reason`` fields and the string-valued ``error_cols``.
+
+    Numeric is not the same as *a score*: this still includes DeepEval's
+    ``*_verdicts.{n_verdicts,yes,no,idk}`` claim tallies. Use ``score_cols`` for
+    anything that summarises, ranks or plots metrics on a 0-1 scale.
+    """
+    err = set(error_cols(df))
     return [
         c for c in df.columns
         if c.startswith(("ragas_scores.", "deepeval_scores."))
         and not c.endswith("_reason")
-        and c != "ragas_scores.ragas_error"
+        and c not in err
     ]
+
+
+def score_cols(df):
+    """``metric_cols`` minus the bookkeeping columns that are not scores: the
+    ``deepeval_*_verdicts.{n_verdicts,yes,no,idk}`` tallies.
+
+    The verdict counts are unbounded integers on their own scale — how many claims
+    the judge extracted and how it voted on them — so they are an INPUT to a score,
+    not a score. Mixed into a 0-1 summary they are nonsense in a specific way that
+    looks plausible: a "median" of 3 claims sits in a column of 0-1 medians, and a
+    row with one verdict reads as 100% "pinned at the 1.0 rail" in
+    ``plots.metric_rail_plot``, which is where twelve of these first showed up
+    masquerading as degenerate metrics.
+
+    This is the default for ``metric_summary`` and every caller that asks the
+    question "how does this metric behave"; ``metric_cols`` remains for callers
+    that genuinely mean every numeric evaluator column.
+    """
+    return [c for c in metric_cols(df)
+            if "_verdicts." not in c and not c.endswith("_verdicts")]
 
 
 def best_score(scores):
@@ -102,6 +146,11 @@ def load(path):
 
     Abstentions are not flagged here — call ``rag_analysis._abstained(df)``, the
     single detector, on the frame this returns.
+
+    The evaluator's error fields (``error_cols``) are deliberately NOT coerced:
+    they carry the exception text that explains every missing metric cell, and
+    ``to_numeric`` would turn each message into the same NaN as a cell that simply
+    was not applicable.
     """
     with open(path, "r", encoding="utf-8") as f:
         df = pd.json_normalize(json.load(f))
@@ -166,10 +215,12 @@ def metric_summary(df, metrics=None):
         1.0 rails. A metric that is ~all-0 or ~all-1 (std ~ 0) is degenerate —
         often a scorer default firing on every row rather than a real signal.
 
-    ``eval_analysis.metric_distribution`` wraps this to add the per-group cut and
-    to narrow ``metrics`` to the real scores; ``plots.metric_rail_plot`` draws it.
+    ``eval_analysis.metric_distribution`` wraps this to add the per-group cut;
+    ``plots.metric_rail_plot`` draws it. Both leave ``metrics`` unset most of the
+    time, so the default has to be ``score_cols``, not ``metric_cols`` — the
+    verdict tallies are not on a 0-1 scale and every column here assumes they are.
     """
-    metrics = metrics or metric_cols(df)
+    metrics = metrics or score_cols(df)
     n_total = len(df)
     rows = {}
     for m in metrics:
