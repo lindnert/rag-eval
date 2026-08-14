@@ -893,7 +893,7 @@ def _group_order(values, key):
     return sorted(vals)
 
 
-def metric_rail_grid(df, by="source_dataset", metrics=None):
+def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None):
     """``metric_rail_plot`` as small multiples — one panel per group, so you can see
     WHERE a metric discriminates instead of only whether it does on average.
 

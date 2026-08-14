@@ -691,8 +691,13 @@ def metric_error_report(df, cls=None, source=None):
     flags["status_by_metric"] = piv
     emit("\n  per-metric cell status — the actionable column first, then why a cell was "
          "NOT scored and the totals (error | na_* reasons | na_total | scored | total); "
-         "each cell gets ONE na reason, the broadest one that applies, and "
+         "each cell gets ONE status, so the columns partition the row count: "
          "error + na_total + scored == total:")
+    emit("    'error' means APPLICABLE but missing. Applicability is decided first, so a "
+         "cell that was never expected to carry a value keeps its na_* reason even if the "
+         "evaluator also recorded an exception on it — that exception is not a failure of "
+         "this run and is counted separately, under 'exceptions on cells that were not "
+         "applicable' below.")
     emit(_indent(piv.to_string()))
 
     # Immediately after the table because it is the evidence for one column of it:
@@ -723,6 +728,16 @@ def metric_error_report(df, cls=None, source=None):
     # them can coexist with 2 dropped rows. The two sets need not overlap at all.
     err = cls[cls["status"] == "error"]
     flags["error_cells"] = int(len(err))
+    # Every exception either evaluator recorded, tagged with the status the cell
+    # ended up with. The join is what separates the two populations below: an
+    # exception on an ``error`` cell cost a value the analysis wanted, one on an
+    # ``na_*`` cell killed a value nothing would have used.
+    reasons = metric_error_reasons(df)
+    flags["error_reasons"] = reasons
+    join_keys = [c for c in ("id", "variant", "metric") if c in cls and c in reasons]
+    tagged = (reasons.merge(cls[join_keys + ["status"]], on=join_keys, how="left")
+              if len(reasons) and join_keys else reasons.assign(status=None))
+
     emit(f"\n  error cells (applicable but missing): {len(err)} "
          f"— cells, not rows; each costs ONE metric on one row and is excluded from "
          f"that metric only, so every metric has its own effective n (the 'scored' "
@@ -738,23 +753,41 @@ def metric_error_report(df, cls=None, source=None):
         # is a config fault (AssertionError: LLM is not set) is fixable by rerunning
         # the evaluation; one that is model behaviour (LengthFinishReasonError) is
         # not, and has to be reported as a coverage limit instead.
-        reasons = metric_error_reasons(df)
-        flags["error_reasons"] = reasons
         if len(reasons):
-            keys = [c for c in ("id", "variant", "metric") if c in err]
-            known = err.merge(reasons, on=keys, how="left", suffixes=("", "_r"))
-            explained = known["error_type"].notna()
+            explained = tagged["status"].eq("error")
             emit(f"    recorded cause ({int(explained.sum())} of {len(err)} explained "
                  f"by the evaluator's own error field):")
             emit(_indent(pd.crosstab(
-                known.loc[explained, "metric"].map(lambda m: m.split(".")[-1]),
-                known.loc[explained, "error_type"]).to_string(), 6))
-            if (~explained).any():
-                emit(f"      {int((~explained).sum())} error cell(s) with no recorded "
-                     f"cause — the value simply never landed")
+                tagged.loc[explained, "metric"].map(lambda m: m.split(".")[-1]),
+                tagged.loc[explained, "error_type"]).to_string(), 6))
+            missing = len(err) - int(explained.sum())
+            if missing > 0:
+                emit(f"      {missing} error cell(s) with no recorded cause — the value "
+                     f"simply never landed")
         else:
             emit("    no recorded cause available: this file predates the per-metric "
                  "error fields (ragas_metric_errors / deepeval_*_error)")
+
+    # The other half of the exception census, and the reason the 'error' column above
+    # is smaller than the number of exceptions in the file. Reported as its own block
+    # rather than as a column in the status table on purpose: it is a SUBSET of cells
+    # already counted under na_*, so putting it in that table would break the one
+    # property that makes the table checkable (its columns partition the row count),
+    # and a reader would have to be told which columns may be added and which may not.
+    shadowed = tagged[tagged["status"].astype("string").str.startswith("na_").fillna(False)] \
+        if len(tagged) else tagged
+    flags["shadowed_error_cells"] = int(len(shadowed))
+    if len(shadowed):
+        emit(f"\n  exceptions on cells that were not applicable: {len(shadowed)} "
+             f"— recorded by the evaluator, NOT counted as errors above, and not part of "
+             f"any total (these cells are already counted under their na_* reason). The "
+             f"metric was never going to be used on those rows, so the crash costs "
+             f"nothing; it is listed because it is evidence about the scorer's config, "
+             f"and because {len(err)} + {len(shadowed)} is the number of exceptions in "
+             f"the file:")
+        emit(_indent(pd.crosstab(
+            shadowed["metric"].map(lambda m: m.split(".")[-1]),
+            [shadowed["status"], shadowed["error_type"]]).to_string(), 4))
 
     print("\n".join(lines))
     return flags
