@@ -1382,7 +1382,7 @@ def sc_generation_gain(df, by=None, retried_only=True):
 
 # The four ways a rag_sc row can come out of the self-correction, by which of the
 # two budgets it spent. "none" is the pass-through cohort compared against rag below.
-RETRY_KINDS = ["none", "retrieval_only", "generation_only", "both"]
+RETRY_KINDS = ["none", "retrieval only", "generation only", "both"]
 
 _RETRY_COLS = (RETRIEVAL_RETRY_COL, GENERATION_RETRY_COL)
 
@@ -1406,8 +1406,8 @@ def _retry_kind(df):
     gen = (pd.to_numeric(df[_RETRY_COLS[1]], errors="coerce").fillna(0)
            if _RETRY_COLS[1] in df else zero) > 0
     kind = pd.Series("none", index=idx, dtype="object")
-    kind[ret & ~gen] = "retrieval_only"
-    kind[~ret & gen] = "generation_only"
+    kind[ret & ~gen] = "retrieval only"
+    kind[~ret & gen] = "generation only"
     kind[ret & gen] = "both"
     return kind
 
@@ -2011,7 +2011,10 @@ if __name__ == "__main__":
             "rag_confidence_by_dataset": lambda ax: plots.confidence_by_dataset(d, ax=ax),
             "rag_confidence_by_stage": lambda ax: plots.confidence_stage_boxplot(d, ax=ax),
             "rag_retrieval_by_stage": lambda ax: plots.retrieval_stage_boxplot(d, ax=ax),
-            "rag_sc_reretrieval_slope": lambda ax: plots.sc_retrieval_slope(d, ax=ax),
+            # Zero-arg: it sizes its own (tall) figure rather than taking save_all's ax.
+            "rag_sc_reretrieval_slope": lambda: plots.sc_retrieval_slope(d),
+            # The same rows as the slopegraph, read as a difference and unbinned.
+            "rag_sc_reretrieval_gain": lambda: plots.sc_retrieval_gain_scatter(d),
             "rag_sc_reretrieval_by_dataset":
                 lambda: plots.sc_retrieval_gain_by_dataset(d),
             "rag_sc_context_displacement":

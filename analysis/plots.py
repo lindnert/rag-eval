@@ -41,6 +41,7 @@ import graph acyclic.
 
 import inspect
 
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -203,8 +204,13 @@ def apply_style():
         "grid.color": GRID,
         "grid.linewidth": 0.6,
         "grid.linestyle": "-",          # solid hairline — never dashed
+        # The tick MARKS stay muted — they are scale furniture. The tick LABELS carry
+        # the category names on most figures here (variants, datasets, metrics), so
+        # they take the same ink as an axis label and stay readable at print size.
         "xtick.color": INK_MUTED,
         "ytick.color": INK_MUTED,
+        "xtick.labelcolor": INK_SECONDARY,
+        "ytick.labelcolor": INK_SECONDARY,
         "xtick.labelsize": 8.5,
         "ytick.labelsize": 8.5,
         "text.color": INK,
@@ -229,14 +235,28 @@ _POOLED_LABEL = "all datasets"
 # which is what makes a new dataset show up rather than silently vanish.
 DATASET_ORDER = ["medqa", "mmlu", "llmdrs", "ngqa", "synthetic_guidelines"]
 
-# Display names. The data keeps ``synthetic_guidelines`` — only the axis is shortened,
-# since that label is the widest on every per-dataset chart in the set.
-DATASET_LABELS = {"synthetic_guidelines": "synthetic"}
+# Display names: the data keeps the pipeline's own identifiers, the figure prints how
+# the thesis writes them. The four benchmarks get their published capitalisation;
+# ``synthetic_guidelines`` is only shortened, since that label is the widest on every
+# per-dataset chart in the set and the questions are ours, not a named benchmark.
+DATASET_LABELS = {"medqa": "MedQA", "mmlu": "MMLU", "llmdrs": "LLMDRS",
+                  "ngqa": "NGQA", "synthetic_guidelines": "synthetic"}
 
 
 def dataset_label(name):
     """The name a dataset goes by on an axis (``synthetic_guidelines`` -> ``synthetic``)."""
     return DATASET_LABELS.get(str(name), str(name))
+
+
+# Display names for the variants: the data keeps the pipeline's own identifiers, the
+# figure prints how the thesis writes them. Callers opt in through ``variant_label``,
+# so a figure whose axis is meant to show the literal column value still can.
+VARIANT_LABELS = {"no_rag": "Baseline", "rag": "RAG", "rag_sc": "RAG-SC"}
+
+
+def variant_label(name):
+    """The name a variant goes by in prose (``rag_sc`` -> ``RAG-SC``)."""
+    return VARIANT_LABELS.get(str(name), str(name))
 
 
 def dataset_order(names):
@@ -381,6 +401,15 @@ def sc_retrieval_gain_by_dataset(df):
     pooled group, as every other per-dataset figure, so a dataset keeps its position
     across the set. The pooled row is the number ``sc_retrieval_gain(df)`` reports for
     the whole cohort.
+
+    Title and footnote are not drawn — they belong in the document's own caption, and
+    this is what they said: retrieval score before vs after HyDE re-retrieval, by
+    dataset. Only the rag_sc rows whose retrieval was re-run, so both ends of an arrow
+    come from the same rows; the plain rag scores are identical to the 'before' end on
+    these ids. On a score-merge file the mean cannot fall — read the 'improved' share on
+    the tick, not the direction. The x-axis label, the before/after end labels and the
+    per-row deltas stay ON the figure: they say what the arrows are, not what to make
+    of them.
     """
     apply_style()
     tab = ra.sc_retrieval_gain(df, by="source_dataset")
@@ -433,14 +462,7 @@ def sc_retrieval_gain_by_dataset(df):
     for x, text, ha in ((top["mean_orig"], "before ", "right"),
                         (top["mean_final"], " after HyDE", "left")):
         ax.text(x, ys[0] + 0.42, text, ha=ha, fontsize=8, color=INK_SECONDARY)
-    ax.set_title("Retrieval score before vs after HyDE re-retrieval, by dataset", pad=22)
-    fig.text(0.01, 0.015,
-             "Only the rag_sc rows whose retrieval was re-run, so both ends of an arrow "
-             "come from the same rows; the plain rag scores are identical to the 'before'\n"
-             "end on these ids. On a score-merge file the mean cannot fall — read the "
-             "'improved' share, not the direction.",
-             ha="left", fontsize=7.5, color=INK_MUTED)
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.tight_layout()
     return fig
 
 
@@ -459,6 +481,15 @@ def sc_displacement_bars(df):
     medqa and mmlu, equal means, 32% vs 41% wholesale — can be read off directly.
 
     Bars run in ``DATASET_ORDER`` behind the pooled group, as everywhere else.
+
+    Title and footnote are not drawn — they belong in the document's own caption, and
+    this is what they said: what HyDE re-retrieval displaced from the context, by
+    dataset. Only the rag_sc rows whose retrieval was re-run, counted against their own
+    dataset (n on the tick); the first bar pools the same rows. How often the drop took
+    the WHOLE context is in the companion table — possible under the score merge only,
+    since the rrf merge always keeps the question's top chunk. The dashed line and its
+    label stay ON the figure: they are the ceiling the bars are read against, and
+    without them "2.7 chunks dropped" is a number rather than 90% of the context.
     """
     apply_style()
     tab = ra.sc_context_displacement(df, by="source_dataset")
@@ -493,7 +524,7 @@ def sc_displacement_bars(df):
     ax.text(xs[-1] + 0.55, ceiling + 0.03, f"all {ceiling:.0f} — nothing of the "
             "original context left", ha="right", va="bottom", fontsize=8, color=INK_MUTED)
     ax.set_ylim(0, ceiling * 1.16)
-    ax.set_ylabel(f"mean number of swapped chunks")
+    ax.set_ylabel("mean number of swapped chunks")
     ax.grid(axis="x", visible=False)
     ax.set_xlim(-0.6, xs[-1] + 0.6)
     if len(pooled):
@@ -502,35 +533,218 @@ def sc_displacement_bars(df):
     ax.set_xticklabels(
         [f"{_POOLED_LABEL if i == 'ALL' else dataset_label(i)}\n(n={int(tab.loc[i, 'n'])})"
          for i in tab.index])
-    ax.set_title("What HyDE re-retrieval displaced from the context, by dataset", pad=12)
-    fig.text(0.01, 0.015,
-             "Only the rag_sc rows whose retrieval was re-run, counted against their own "
-             "dataset; the first bar pools the same rows. How often the drop took the WHOLE "
-             "context is in the\ncompanion table — possible under the score merge only; the "
-             "rrf merge always keeps the question's top chunk.",
-             ha="left", fontsize=7.5, color=INK_MUTED)
-    fig.tight_layout(rect=(0, 0.09, 1, 1))
+    fig.tight_layout()
     return fig
 
 
-def sc_retrieval_slope(df, ax=None):
-    """Per-id lines from original -> re-retrieved best score, for the rag_sc rows
-    whose retrieval was actually re-run (shows whether HyDE re-retrieval helped)."""
-    ax = ax or plt.subplots(figsize=(6, 5))[1]
+def _spread(values, gap, lo=None, hi=None):
+    """``values`` nudged apart until consecutive ones are at least ``gap`` apart,
+    each staying as close to where it started as that allows.
+
+    The label-collision pass for a figure that direct-labels many close-together
+    points. Two sweeps: up from the bottom, then down from the top, which is what
+    keeps the result inside ``[lo, hi]`` — the upward sweep alone pushes the whole
+    stack past the ceiling as soon as the points need more room than the axis has.
+    ``values`` must already be sorted; that is the caller's ordering, not something
+    to impose here, because the labels have to keep their pairing with the data.
+    """
+    out = np.asarray(values, dtype=float).copy()
+    if gap <= 0 or len(out) < 2:
+        return out
+    for i in range(1, len(out)):
+        out[i] = max(out[i], out[i - 1] + gap)
+    if hi is not None and out[-1] > hi:
+        out[-1] = hi
+    for i in range(len(out) - 2, -1, -1):
+        out[i] = min(out[i], out[i + 1] - gap)
+    if lo is not None and out[0] < lo:
+        # More labels than the axis can hold at this gap: pack from the floor up and
+        # let them touch, rather than silently drawing some outside the frame.
+        out = lo + np.arange(len(out)) * gap
+    return out
+
+
+def sc_retrieval_slope(df, ax=None, bands=10, show_rows=False):
+    """Original -> re-retrieved best score for the rag_sc rows whose retrieval was
+    actually re-run, as one slope per band of ``bands`` equal-sized groups of the
+    STARTING score (does HyDE re-retrieval help, and where).
+
+    The claim is not "re-retrieval helps on average" — one number says that — but
+    that it helps MOST where the first retrieval was weakest. So the figure is a
+    binned one, not a per-row one:
+
+      - The 307 individual rows are NOT drawn (``show_rows`` brings them back as
+        hairlines). At this density no line can be followed across the gap, and the
+        bundle hides the low-start rows it exists to show. Each band's mean slope is
+        drawn instead — ~20 rows per line at the default, enough that a line is not
+        one lucky query and fine enough that the fan has shape.
+      - Every band is drawn in ONE colour. Colour has nothing left to say here: the
+        bands are already ordered by where they start, so a ramp over the starting
+        score only restates the y position, and spending the channel on it left the
+        pooled mean with no ink of its own to be drawn in. Sign is not encoded
+        either — the old rule painted a falling line red, and in this run nothing
+        falls at all (re-retrieval keeps the better context by construction), so
+        that channel was reserved for a category that cannot occur.
+      - Each band carries its own mean gain, printed at its left end where the bands
+        are still separated. They converge on the right — that convergence IS the
+        result, and it is also why nothing can be labelled there.
+
+    Tall and narrow on purpose. The slope of a line is read as an angle, and the
+    angle is set by the aspect the data is drawn at: the same +0.09 that is a shrug
+    on a wide axis is unmistakable on a narrow one.
+    """
+    apply_style()
     sc = ra._hyde_rows(df).dropna(subset=["retrieval_best", "retrieval_best_orig"]).copy()
-    for _, row in sc.iterrows():
-        improved = row["retrieval_best"] >= row["retrieval_best_orig"]
-        ax.plot([0, 1], [row["retrieval_best_orig"], row["retrieval_best"]],
-                color="seagreen" if improved else "crimson", alpha=0.4, marker="o")
-    if len(sc):
-        ax.plot([0, 1], [sc["retrieval_best_orig"].mean(), sc["retrieval_best"].mean()],
-                color="black", marker="o", lw=2.5, label="mean")
-        ax.legend()
+    if ax is None:
+        _, ax = plt.subplots(figsize=(4.6, 9.4))
+    fig = ax.figure
+    if not len(sc):
+        ax.text(0.5, 0.5, "no re-retrieved rag_sc rows in this file",
+                ha="center", va="center", color=INK_MUTED)
+        return fig
+
+    orig = pd.to_numeric(sc["retrieval_best_orig"], errors="coerce")
+    new = pd.to_numeric(sc["retrieval_best"], errors="coerce")
+    gain = new - orig
+
+    # Quantiles of the starting score, not fixed cuts: the band edges are a property
+    # of this run's retrieval, and hard-coded ones would silently stop splitting the
+    # data on a run whose scores sit elsewhere. ``duplicates`` guards a degenerate
+    # column (every row the same score) rather than raising mid-figure.
+    k = int(min(bands, orig.nunique()))
+    if k >= 2:
+        band = pd.qcut(orig, k, labels=False, duplicates="drop").astype(int)
+        k = int(band.max()) + 1
+    else:
+        band, k = pd.Series(0, index=orig.index), 1
+    # One hue for every band, from the middle of the ramp: dark enough to hold a 2.2pt
+    # line on the page, light enough that the pooled mean reads as darker than all of
+    # them wherever it crosses one.
+    band_color = SEQUENTIAL_STEPS[3]
+
+    # A halo in the page colour, so a slope stays one continuous line where it crosses
+    # its neighbours instead of dissolving into them.
+    halo = [pe.Stroke(linewidth=4.6, foreground=SURFACE), pe.Normal()]
+
+    if show_rows:
+        for i in orig.index:
+            ax.plot([0, 1], [orig[i], new[i]], color=band_color, alpha=0.25, lw=0.8,
+                    solid_capstyle="round", zorder=2)
+
+    starts = []
+    for b in range(k):
+        m = band == b
+        y0, y1 = orig[m].mean(), new[m].mean()
+        ax.plot([0, 1], [y0, y1], color=band_color, lw=2.2, marker="o", ms=4.4,
+                markeredgecolor=SURFACE, markeredgewidth=0.9, path_effects=halo,
+                zorder=4)
+        starts.append((y0, f"{gain[m].mean():+.3f}"))
+
+    # The pooled mean is now the only thing colour has to distinguish, so it gets the
+    # page's darkest ink and the top of the stack: black against blue separates in
+    # print, in greyscale and for every kind of colour vision, which no second blue
+    # would. Squared caps and a wider halo so it stays a single unbroken bar across
+    # the ten lines it cuts through.
+    ax.plot([0, 1], [orig.mean(), new.mean()], color=INK, lw=3.6, marker="o", ms=7.0,
+            markeredgecolor=SURFACE, markeredgewidth=1.4, solid_capstyle="butt",
+            path_effects=[pe.Stroke(linewidth=7.4, foreground=SURFACE), pe.Normal()],
+            zorder=6)
+    ax.annotate(f"all rows  {gain.mean():+.3f}", (1, new.mean()), xytext=(11, 0),
+                textcoords="offset points", ha="left", va="center", fontsize=8.5,
+                fontweight="semibold", color=INK, zorder=8)
+
     ax.set_xticks([0, 1])
     ax.set_xticklabels(["original", "re-retrieved"])
+    # Room for the labels at both ends, and — since the data still spans x 0..1 —
+    # every inch of margin also steepens the slopes.
+    ax.set_xlim(-0.30, 1.34)
     ax.set_ylabel("best retrieval score")
-    ax.set_title("rag_sc HyDE re-retrieval: score before vs after")
-    return ax
+    ax.grid(axis="x", visible=False)
+    fig.tight_layout()
+
+    # The per-band labels go on LAST, and only once the axes has its final size: at 30
+    # bands the starting scores in the middle sit closer together than a line of type
+    # is tall, so where a label has to be pushed off its band a leader line says which
+    # band it belongs to. Done in data coordinates, hence the draw() first.
+    fig.canvas.draw()
+    lo, hi = ax.get_ylim()
+    ax_pt = ax.get_window_extent().height * 72.0 / fig.dpi
+    gap = (hi - lo) * 9.0 / ax_pt if ax_pt else 0.0
+    placed = _spread([y for y, _ in starts], gap, lo, hi)
+    for (y_band, text), y_text in zip(starts, placed):
+        ax.annotate(text, (0, y_band), xytext=(-0.085, y_text), textcoords="data",
+                    ha="right", va="center", fontsize=7.5, color=INK_SECONDARY,
+                    zorder=8, annotation_clip=False,
+                    arrowprops=dict(arrowstyle="-", color=AXIS, lw=0.6, shrinkA=2,
+                                    shrinkB=3))
+    return fig
+
+
+def sc_retrieval_gain_scatter(df):
+    """The re-retrieval gain against the score it started from — one dot per row, no
+    bins. The same rows as ``sc_retrieval_slope``, read as a difference.
+
+    This is the figure that carries "the weakest retrievals gained the most" with
+    nothing in between the reader and the rows: x is where the row started, y is what
+    re-retrieval added, and the claim is the downward tilt. The slopegraph and any
+    banded version of this both have to choose cut points, and a reader is entitled
+    to wonder whether the staircase survives a different choice — here there is
+    nothing to choose.
+
+    Two things worth reading off it besides the trend:
+
+      - Nothing is below zero. Re-retrieval never returned a worse best chunk in this
+        run, so the horizontal rule is a floor, not a midline.
+      - The rows sitting exactly ON that floor gained nothing at all — HyDE came back
+        with the same top chunk. They are a fifth of the set, and they are NOT spread
+        evenly: 5% of the lowest-starting quartile against 38% of the highest. So the
+        flat right-hand end of the trend is not "small gains everywhere", it is
+        "often no gain at all", and no banded version of this figure can say that —
+        a band mean of +0.02 reads the same either way.
+
+    Read with one caveat: part of any such gradient is mechanical. The score is
+    bounded, so a row starting at 0.78 has less headroom than one starting at 0.55,
+    and re-measuring the same context with noise would produce a weak version of this
+    tilt on its own. The effect here is far larger than that accounts for, but the
+    figure cannot separate the two by itself.
+    """
+    apply_style()
+    sc = ra._hyde_rows(df).dropna(subset=["retrieval_best", "retrieval_best_orig"]).copy()
+    fig, ax = plt.subplots(figsize=(7.4, 5.4))
+    if not len(sc):
+        ax.text(0.5, 0.5, "no re-retrieved rag_sc rows in this file",
+                ha="center", va="center", color=INK_MUTED)
+        return fig
+
+    x = pd.to_numeric(sc["retrieval_best_orig"], errors="coerce").to_numpy(dtype=float)
+    y = (pd.to_numeric(sc["retrieval_best"], errors="coerce").to_numpy(dtype=float) - x)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y = x[ok], y[ok]
+
+    ax.axhline(0, color=AXIS, lw=1, zorder=1)
+    ax.plot(x, y, ls="none", marker="o", ms=4.6, alpha=0.42, color=SEQUENTIAL_STEPS[3],
+            markeredgecolor="none", zorder=3)
+
+    handles = [Line2D([], [], ls="none", marker="o", ms=5.5, alpha=0.6,
+                      color=SEQUENTIAL_STEPS[3],
+                      label=f"one re-retrieved chunk set (n={len(x)})")]
+    if len(x) > 2 and np.ptp(x) > 0:
+        slope, intercept = np.polyfit(x, y, 1)
+        xs = np.array([x.min(), x.max()])
+        ax.plot(xs, intercept + slope * xs, color=INK, lw=2.2, zorder=4,
+                path_effects=[pe.Stroke(linewidth=4.6, foreground=SURFACE), pe.Normal()])
+        r = float(np.corrcoef(x, y)[0, 1])
+        handles.append(Line2D([], [], color=INK, lw=2.2,
+                              label=f"least-squares fit  ·  slope {slope:+.2f}  ·  "
+                                    f"r = {r:+.2f}"))
+    # The count of rows sitting exactly on the floor is NOT printed here — it is
+    # thesis-caption material, and the docstring above carries the number.
+    ax.set_xlabel("best retrieval score before re-retrieval")
+    ax.set_ylabel("gain in best retrieval score")
+    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.005), ncol=1,
+              fontsize=8.5, handlelength=2.0)
+    fig.tight_layout()
+    return fig
 
 
 # --- Evaluated metrics -------------------------------------------------------
@@ -780,9 +994,9 @@ def variant_effect_forest(df, metrics=None, comparisons=None):
     ]
     fig.legend(handles=handles, loc="lower center", ncol=3,
                bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle("Effect of retrieval and of self-correction, per metric",
-                 x=0.008, ha="left", fontsize=12)
-    fig.tight_layout(rect=(0, 0.05, 0.96, 0.96), w_pad=3.5)
+    # Top of the rect is 1.0: the reserve above it was for the suptitle this figure no
+    # longer draws, and left in it is just a band of blank paper in the PDF.
+    fig.tight_layout(rect=(0, 0.05, 0.96, 1.0), w_pad=3.5)
     return fig
 
 
@@ -870,7 +1084,7 @@ def metric_rail_plot(df, metrics=None, min_scored=1):
     ax.set_title("Do the metrics discriminate? Mass on the 0/1 rails vs. spread between")
     handles = [
         Line2D([], [], color=NEG, lw=7, label="scored exactly 0.0"),
-        Line2D([], [], color=GRID, lw=7, label="strictly between (the usable signal)"),
+        Line2D([], [], color=GRID, lw=7, label="between 0.0 and 1.0 (exclusive)"),
         Line2D([], [], color=POS, lw=7, label="scored exactly 1.0"),
     ]
     ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.28), ncol=3)
@@ -878,7 +1092,14 @@ def metric_rail_plot(df, metrics=None, min_scored=1):
     return fig
 
 
-_GROUP_LABELS = {"source_dataset": "dataset", "variant": "variant"}
+def _group_label(value, key):
+    """The name a grouping value goes by on a panel — display names for the two keys
+    that have them, the raw value for anything else."""
+    if key == "variant":
+        return variant_label(value)
+    if key == "source_dataset":
+        return dataset_label(value)
+    return str(value)
 
 
 def _group_order(values, key):
@@ -971,9 +1192,10 @@ def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None)
             ax.set_xticks([-1, 0, 1])
             ax.set_xticklabels(["100%", "0", "100%"])
             if ri == 0:
-                ax.set_title(cv, fontsize=10)
+                ax.set_title(_group_label(cv, keys[0]), fontsize=10)
             if ci == 0 and rv is not None:
-                ax.set_ylabel(rv, fontsize=10, color=INK_SECONDARY, labelpad=8)
+                ax.set_ylabel(_group_label(rv, keys[1]), fontsize=10,
+                              color=INK_SECONDARY, labelpad=8)
             # Rows in the group, so a per-metric n above can be read as coverage.
             ax.text(1.0, 1.0, f"{sizes.get(key, 0)} rows", transform=ax.transAxes,
                     ha="right", va="bottom", fontsize=6.5, color=INK_MUTED)
@@ -984,22 +1206,20 @@ def metric_rail_grid(df, by: "str | list[str]" = "source_dataset", metrics=None)
         Line2D([], [], color=POS, lw=7, label="scored exactly 1.0"),
         Line2D([], [], color=AXIS, lw=0, marker="_", ms=8, label="not scored in this group"),
     ]
-    # Title, caption and legend are placed in INCHES converted to figure fractions,
-    # not in fractions directly: this figure is 4.6in tall grouped one way and 10in
-    # tall grouped another, and a fixed 0.085 bottom margin that clears the legend on
-    # the tall one lands the legend on top of the caption on the short one.
+    # The axis caption and the legend are placed in INCHES converted to figure
+    # fractions, not in fractions directly: this figure is 4.6in tall grouped one way
+    # and 10in tall grouped another, and a fixed 0.085 bottom margin that clears the
+    # legend on the tall one lands the legend on top of the caption on the short one.
+    # The top of the rect is 1.0 — the band that used to hold the suptitle is not
+    # reserved now that the figure does not draw one.
     h = fig.get_size_inches()[1]
     fig.legend(handles=handles, loc="lower center", ncol=4,
                bbox_to_anchor=(0.5, 0.10 / h))
-    cut = " x ".join(_GROUP_LABELS.get(k, k) for k in keys)
-    fig.suptitle(f"Do the metrics discriminate, per {cut}?  "
-                 f"Mass on the 0/1 rails vs. spread between",
-                 x=0.008, y=1 - 0.22 / h, ha="left", va="top", fontsize=12)
     fig.text(0.5, 0.45 / h,
              "share of scored rows  ←  pinned at 0.0    ·    spread    ·    "
              "pinned at 1.0  →   (grey number = scored rows for that metric)",
              ha="center", fontsize=8.5, color=INK_SECONDARY)
-    fig.tight_layout(rect=(0, 0.78 / h, 0.995, 1 - 0.45 / h), w_pad=2.2, h_pad=1.6)
+    fig.tight_layout(rect=(0, 0.78 / h, 0.995, 1.0), w_pad=2.2, h_pad=1.6)
     return fig
 
 
@@ -1071,7 +1291,8 @@ def dataset_variant_heatmap(df, metric, ax=None):
     ax.set_title(f"{metric_label(metric)} by dataset and variant")
     cbar = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.03)
     cbar.outline.set_visible(False)
-    cbar.ax.tick_params(colors=INK_MUTED, labelsize=8)
+    # Same split as the axis ticks: muted marks, readable labels.
+    cbar.ax.tick_params(color=INK_MUTED, labelcolor=INK_SECONDARY, labelsize=8)
     fig.tight_layout()
     return fig
 
@@ -1094,6 +1315,11 @@ def abstention_grouped_bars(df, variants=("rag", "rag_sc")):
 
     Every bar is direct-labelled, which is also what discharges the contrast
     relief rule the palette check flagged for slot 3.
+
+    No title — it belongs in the document's own caption, and it said: abstention rate by
+    dataset and variant. The legend, the ``share of abstained answers`` axis, the ``n=``
+    ticks and the per-bar percentages stay, since those are what the bars are rather
+    than what to make of them.
     """
     apply_style()
     sub = df[df["variant"].astype(str).isin(variants)]
@@ -1128,7 +1354,7 @@ def abstention_grouped_bars(df, variants=("rag", "rag_sc")):
         off = (k - (len(rate.columns) - 1) / 2) * width
         color = fills[k]
         vals = rate[v].to_numpy(dtype=float)
-        ax.bar(x + off, vals, width * 0.92, label=str(v), color=color, zorder=2)
+        ax.bar(x + off, vals, width * 0.92, label=variant_label(v), color=color, zorder=2)
         for xi, val in zip(x + off, vals):
             if not np.isfinite(val):
                 continue
@@ -1144,13 +1370,13 @@ def abstention_grouped_bars(df, variants=("rag", "rag_sc")):
     ax.set_xticklabels([f"{dataset_label(d)}\n(n={int(n.loc[d].max())})"
                         for d in rate.index])
     ax.set_xlim(-0.7, x[-1] + 0.7)
-    ax.set_ylabel("share of answers that abstained")
+    ax.set_ylabel("share of abstained answers")
     ax.set_ylim(0, 1.02)
     ax.set_yticks(np.arange(0, 1.01, 0.2))
     ax.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
     ax.grid(axis="x", visible=False)
-    ax.set_title("Abstention rate by dataset and variant", pad=26)
-    # Between title and plot, so it can never sit on top of a bar.
+    # Above the plot, so it can never sit on top of a bar — it kept the title company
+    # there and stays put now that the title is gone.
     ax.legend(loc="lower left", bbox_to_anchor=(0, 1.005), ncol=len(rate.columns))
     fig.tight_layout()
     return fig
@@ -1170,17 +1396,18 @@ STATUS_COLORS = dict(zip(("answered", "abstained"), PAIRED_STEPS))
 _BOX_CAPTION = ("Boxes: median, quartiles, 5th–95th percentile; diamond = mean. "
                 "One dot per row, jittered horizontally. ")
 ABSTENTION_SIGNALS = {
+    # Title and caption are empty on purpose: this figure is captioned in the thesis
+    # text instead. What used to be printed here was "Retrieval scores when the system
+    # abstained vs answered" plus _BOX_CAPTION and "An abstained box below the answered
+    # one means refusals concentrate where the retrieved context was weak."
     "retrieval": (
-        "retrieval_average", "mean retrieval score of the context",
-        "Retrieval scores when the system abstained vs answered",
-        _BOX_CAPTION + "An abstained box below the answered one means refusals "
-        "concentrate where the retrieved context was weak."),
+        "retrieval_average", "mean retrieval score of all three chunks per instance", "", ""),
+    # Blank for the same reason. What used to be printed here was "Generation
+    # confidence when the system abstained vs answered" plus _BOX_CAPTION and "The
+    # higher abstained boxes reflect the short formulaic refusal string, whose tokens
+    # are trivially predictable — not model certainty about the question."
     "confidence": (
-        "gen_logprob_stats.mean", "mean token logprob of the generation",
-        "Generation confidence when the system abstained vs answered",
-        _BOX_CAPTION + "The higher abstained boxes reflect the short formulaic "
-        "refusal string, whose tokens are trivially predictable — not model "
-        "certainty about the question."),
+        "gen_logprob_stats.mean", "mean generation token logprob", "", ""),
 }
 
 
@@ -1277,21 +1504,28 @@ def abstention_signal_boxes(df, signal="retrieval", variants=("rag", "rag_sc")):
     ax.set_xticks(range(len(order)))
     ax.set_xticklabels([
         "{}\n{} answered / {} abstained".format(
-            v, int(((sub["_variant"] == v) & (sub["_status"] == "answered")).sum()),
+            variant_label(v),
+            int(((sub["_variant"] == v) & (sub["_status"] == "answered")).sum()),
             int(((sub["_variant"] == v) & (sub["_status"] == "abstained")).sum()))
         for v in order])
     ax.set_xlim(-0.6, len(order) - 0.4)
     ax.set_ylabel(ylabel)
-    ax.set_title(title if col in sub else f"{col} not in this file", pad=26)
+    # An empty ``title`` means the caller captions this one in prose; the missing-column
+    # note is a diagnostic, not decoration, so it is drawn either way.
+    if col not in sub:
+        ax.set_title(f"{col} not in this file", pad=26)
+    elif title:
+        ax.set_title(title, pad=26)
     ax.grid(axis="x", visible=False)
 
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=STATUS_COLORS[s],
                              edgecolor=INK_SECONDARY, lw=0.8, label=s)
                for s in statuses]
     ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.005), ncol=2)
-    fig.text(0.01, 0.005, caption, ha="left", fontsize=7.5, color=INK_MUTED,
-             wrap=True)
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    if caption:
+        fig.text(0.01, 0.005, caption, ha="left", fontsize=7.5, color=INK_MUTED,
+                 wrap=True)
+    fig.tight_layout(rect=(0, 0.06 if caption else 0, 1, 1))
     return fig
 
 
@@ -1316,13 +1550,23 @@ def _composition_bars(ct, title, caption, empty_note, colors=None, min_label_sha
 
     Segments below ``min_label_share`` are left unlabelled rather than overprinted; their
     exact counts are in the table behind the figure.
+
+    ``title`` and ``caption`` may be empty (or ``None``) to draw neither, for a figure
+    whose explanation belongs in the document's own ``\\caption`` instead of burnt into
+    the PNG. That covers those two texts and nothing else: the legend, the y-axis label,
+    the ``n=`` tick labels and the in-bar percentages are what makes the bars readable at
+    all and are always drawn. Nothing is reserved for what is not drawn — a dropped
+    caption gives its strip back to the bars rather than leaving a blank band at the foot
+    of the figure. ``empty_note`` is unaffected: it is what the figure says when there is
+    no data, and is the whole content in that case.
     """
     apply_style()
     totals = ct.sum(axis=1) if len(ct) and len(ct.columns) else pd.Series(dtype="int64")
     ct = ct[totals > 0] if len(totals) else ct.iloc[0:0]
     if not len(ct):
         fig, ax = plt.subplots(figsize=(7, 3))
-        ax.set_title(title)
+        if title:
+            ax.set_title(title)
         ax.text(0.5, 0.5, empty_note, ha="center", va="center", color=INK_MUTED)
         ax.set_axis_off()
         return fig
@@ -1359,20 +1603,25 @@ def _composition_bars(ct, title, caption, empty_note, colors=None, min_label_sha
     ax.set_ylim(0, 1)
     ax.set_yticks(np.arange(0, 1.01, 0.2))
     ax.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
-    ax.set_ylabel("share of the dataset's rag_sc rows")
+    # "share of n", not "share of the dataset's rag_sc rows": n is on every tick right
+    # below the bar it belongs to, so the axis can point at it instead of restating it.
+    ax.set_ylabel("share of n")
     ax.grid(axis="x", visible=False)
-    ax.set_title(title, pad=26)
+    if title:
+        # The pad clears the legend, which sits just above the axes.
+        ax.set_title(title, pad=26)
     # Reversed, so the legend reads left to right in the order the stack reads top to
     # bottom — a legend in bucket order would run against every bar in the figure.
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles[::-1], labels[::-1], loc="lower left", bbox_to_anchor=(0, 1.005),
               ncol=len(labels))
-    fig.text(0.01, 0.012,
-             f"{caption}\nBars are each dataset's own rag_sc rows, not the run; segments "
-             f"under {min_label_share:.0%} are left unlabelled. The first bar pools the "
-             "same rows and is the run-wide composition.",
-             ha="left", fontsize=7.5, color=INK_MUTED)
-    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    if caption:
+        fig.text(0.01, 0.012,
+                 f"{caption}\nBars are each dataset's own rag_sc rows, not the run; "
+                 f"segments under {min_label_share:.0%} are left unlabelled. The first "
+                 "bar pools the same rows and is the run-wide composition.",
+                 ha="left", fontsize=7.5, color=INK_MUTED)
+    fig.tight_layout(rect=(0, 0.07 if caption else 0, 1, 1))
     return fig
 
 
@@ -1384,14 +1633,19 @@ def retry_kind_bars(df):
     the stack order as it stands. The two single-trigger kinds are NOT ranked against
     each other — they take adjacent steps of the ramp rather than implying that a
     generation retry is "more" than a retrieval one.
+
+    Title and caption are empty, as in ``trigger_combination_bars``: the figure carries
+    only what is read off it and the words belong in the document's own caption. What
+    that caption has to say: retrieval correction = HyDE re-retrieval, generation
+    correction = strict-prompt regeneration, ``both`` = a row that spent each once, and
+    ``none`` = a row that ran the plain rag pipeline unchanged. Bars are each dataset's
+    own rag_sc rows (n on the tick), the first bar pools them all, and segments under 5%
+    are left unlabelled.
     """
     return _composition_bars(
         ra.sc_retry_breakdown(df, by="source_dataset").reindex(
             columns=ra.RETRY_KINDS, fill_value=0),
-        "Which self-correction budgets each rag_sc row spent",
-        "Retrieval correction = HyDE re-retrieval; generation correction = "
-        "strict-prompt regeneration; 'none' rows ran the plain rag pipeline unchanged.",
-        "no rag_sc rows in this file")
+        "", "", "no rag_sc rows in this file")
 
 
 def trigger_combination_bars(df, stage="retrieval"):
@@ -1406,16 +1660,19 @@ def trigger_combination_bars(df, stage="retrieval"):
     Buckets arrive in ``trigger_combination_order`` — nothing fired, one threshold, then
     several — so the ramp means "how much tripped" and the two ends of the stack are the
     two things worth comparing across datasets.
+
+    Title and caption are deliberately empty, so the figure carries only what has to be
+    read off it (legend, axis, ``n=`` per bar, segment shares) and the words go in the
+    document's own caption. What that caption has to say, since it is no longer on the
+    figure: each rag_sc row counts ONCE, in the bucket for the SET of thresholds it
+    tripped, so the segments partition the cohort — ``none`` means the correction never
+    fired, and a row tripping both thresholds is one row in ``highest & spread`` here but
+    two firings in the per-trigger table. Bars are each dataset's own rag_sc rows (n on
+    the tick), the first bar pools them all, and segments under 5% are left unlabelled.
     """
-    names = {"retrieval": ("highest / spread", "score thresholds"),
-             "generation": ("mean / min", "logprob thresholds")}[stage]
     return _composition_bars(
         ra.trigger_combinations(df, stage=stage, by="source_dataset"),
-        f"Which {stage} thresholds tripped ({names[0]})",
-        f"Each rag_sc row counts once, in the bucket for the SET of {stage} {names[1]} "
-        f"it tripped; 'none' = the {stage} correction never fired. A row that trips both "
-        f"counts once here and twice in the per-trigger table.",
-        f"no {stage} trigger data in this file")
+        "", "", f"no {stage} trigger data in this file")
 
 
 def metric_agreement_dots(ag, stats=("spearman", "pearson")):
