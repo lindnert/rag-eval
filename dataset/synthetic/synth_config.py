@@ -6,19 +6,25 @@ changes, mirroring evaluation/eval_config_llamacpp.py.
 
 Design decisions (full rationale in dataset/synthetic/README.md):
 
-- Contexts are mixed-language groups (1 German DGE chunk + its bge-m3 nearest
-  English chunks) built from richtlinien/all_chunks.json — the exact corpus
-  the retriever serves — NOT via deepeval's generate_goldens_from_docs, which
-  would re-chunk the raw documents and decouple goldens from the RAG corpus.
-- Questions are generated in both languages over the SAME contexts (paired
-  design): condition = <question_lang>Q_mixedC, tracked per golden.
-- Styling is persona-conditioned: lay passes template an NHANES-derived NGQA
-  user profile into the scenario; one Synthesizer pass per (persona, lang).
+- Two context families are built from richtlinien/all_chunks.json — the exact
+  corpus the retriever serves — via deepeval's generate_goldens_from_contexts
+  (NOT generate_goldens_from_docs, which would re-chunk the raw documents and
+  decouple goldens from the RAG corpus). Each context holds RAG_K chunks:
+    * reference (contexts_reference.json): cross-lingual DGE<->IOM reference
+      tables aligned on the SAME life-stage, personalized by age/sex; questions
+      generated in BOTH en and de (condition = <question_lang>Q_refC).
+    * condition (contexts_condition.json): English guideline chunks spanning a
+      curated persona's clinical conditions, personalized by condition;
+      questions in en (condition = enQ_condC).
+- Styling is persona-conditioned: lay / reference_lay passes template a persona
+  (NGQA-derived or curated) into the scenario; the technical profile runs
+  without one. One Synthesizer pass per (context, styling, language), since
+  StylingConfig is static per instance.
 - FiltrationConfig's threshold only triggers rewrite-retries in deepeval
-  3.9.4; low scorers are KEPT after max_quality_retries. Hard filtering
-  happens in validate_synthetic.py using
-  golden.additional_metadata["synthetic_input_quality"] plus a faithfulness
-  check of expected_output against its own context.
+  3.9.4; low scorers are KEPT after max_quality_retries. Hard filtering happens
+  in validate_synthetic.py: dedupe -> input-quality cutoff (>= SYNTH_HARD_CUTOFF)
+  -> completeness -> answerability -> faithfulness of expected_output against
+  its own context (>= SYNTH_FAITHFULNESS_CUTOFF).
 """
 
 import os
