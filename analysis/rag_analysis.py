@@ -152,6 +152,15 @@ TRIGGER_COLS = {
     "generation": "sc_metadata.generation_correction_triggers",
 }
 
+# A LOGICAL severity order over the trigger names — not alphabetical and not by threshold
+# value. A lower rank is the milder trigger, the one that tends to fire in the relatively
+# better cases; the higher rank is the more serious signal. Per stage the two are:
+# retrieval ``spread`` (mild) -> ``highest`` (serious); generation ``min`` (mild) ->
+# ``mean`` (serious). ``trigger_combination_order`` reads this so the buckets ramp from
+# milder to more serious; a new threshold slots in by giving it a rank here. Names absent
+# from the map sort last (rank inf), so an unlisted trigger never silently jumps the ramp.
+TRIGGER_RANK = {"spread": 0, "highest": 1, "min": 0, "mean": 1}
+
 # How the final generation stopped, and why an answer collapsed onto the canonical
 # rejection. The pipeline now writes both at TOP LEVEL for every variant; older result
 # files only have them under sc_metadata, i.e. for rag_sc rows alone. ``load`` folds
@@ -646,15 +655,27 @@ def _trigger_combination_keys(df, stage):
 
 def trigger_combination_order(keys):
     """Reading order for trigger-combination buckets: ``none``, then the ones that fired
-    ONE trigger (alphabetically), then the ones that fired several.
+    ONE trigger (mild before serious), then the ones that fired several.
 
     Ordered by how much fired rather than by size, so a light -> dark ramp over it is
     meaningful (light = nothing tripped, dark = every threshold tripped at once) and two
     runs stay comparable bucket for bucket, which the size-sorted counts are not. The
     tiers are read off the keys themselves, so a third threshold slots in untouched.
+
+    Within a tier the sort is by ``TRIGGER_RANK`` — a LOGICAL severity order, not
+    alphabetical or by threshold value — so ``spread`` leads ``highest`` and ``min``
+    leads ``mean``: the milder trigger, the one that fires in the relatively better
+    cases, comes first. A combination sorts by its milder member first. Because the fill
+    colour tracks a bucket's POSITION in this order (the ramp), not its name, this also
+    fixes which mid-tone each single-trigger bucket gets.
     """
-    return sorted(keys,
-                  key=lambda k: (0 if k == "none" else str(k).count("&") + 1, str(k)))
+    def key(k):
+        if k == "none":
+            return (0,)
+        parts = [p.strip() for p in str(k).split("&")]
+        ranks = tuple(sorted(TRIGGER_RANK.get(p, float("inf")) for p in parts))
+        return (len(parts),) + ranks
+    return sorted(keys, key=key)
 
 
 def trigger_combinations(df, stage="retrieval", by=None):

@@ -139,7 +139,7 @@ CONTEXT_METRICS = {"ragas_scores.ragas_faithfulness",
 # The faithfulness subset, which is ALSO dropped on abstentions, for the same
 # reason as relevancy: these score the ANSWER's claims against the context, and an
 # abstention makes no claims, so what the scorer returns is its convention for the
-# empty case rather than a measurement — see ``faithfulness_on_abstentions``.
+# empty case rather than a measurement — see ``metrics_on_abstentions``.
 # ``deepeval_contextual_relevance`` is deliberately not here: it scores the
 # retrieved context against the QUESTION, which an abstention does not touch.
 FAITHFULNESS_METRICS = {"ragas_scores.ragas_faithfulness",
@@ -177,6 +177,26 @@ CLASSIFIED_METRICS = sorted(ANSWER_METRICS | CONTEXT_METRICS | IDCTX_METRICS)
 METRIC_PAIRS = [
     ("relevancy: ragas vs deepeval", "ragas_scores.ragas_answer_relevancy",
      "deepeval_scores.deepeval_relevance", "relevancy"),
+    # The one pair whose two members come from the same library. Both grade the
+    # answer against the same reference answer and differ only in how: correctness
+    # decomposes into claims and scores an F1 over them, accuracy asks a judge for
+    # a single 0/2/4 verdict rescaled to [0,1]. So this pair is not "do two
+    # libraries agree" but "does the decomposition buy anything the verdict does
+    # not" — and both numbers are load-bearing in the results chapter, which is
+    # reason enough to know whether they are one metric or two.
+    #
+    # Abstentions are NOT dropped here. They are already gone from every dataset
+    # but ABSTENTION_SCORED_DATASETS (nulled upstream in ``prepare``), and on that
+    # dataset the score on a refusal is the measurement under test, not noise.
+    # Beware the rail effect that leaves: both scorers reward the same refusals,
+    # so on medqa they can agree strongly while sharing no signal about answers.
+    # Named without the family prefix the other pairs carry: those prefixes exist to
+    # say WHICH construct two differently-named scorers are being compared on, and
+    # here both members already name it. "Reference: RAGAS Correctness vs Accuracy"
+    # also invites reading "Accuracy" as some other library's.
+    ("ragas correctness vs ragas accuracy",
+     "ragas_scores.ragas_answer_correctness",
+     "ragas_scores.ragas_answer_accuracy", "reference"),
     ("faithfulness: ragas vs hhem", "ragas_scores.ragas_faithfulness",
      "ragas_scores.ragas_faithfulness_with_hhem", "faithfulness"),
     ("faithfulness: ragas vs deepeval", "ragas_scores.ragas_faithfulness",
@@ -558,59 +578,154 @@ def metric_error_reasons(df):
     return out
 
 
-def faithfulness_on_abstentions(df):
-    """``(table, info)``: what each faithfulness scorer put on the abstained rows.
+# The three metric families ``classify_metrics`` marks ``na_rejected``, in the order
+# the report argues them. Grouped rather than merged because the three exclusions
+# rest on DIFFERENT evidence, and one table showing all three side by side is what
+# makes that visible: relevancy was never scored at all (the evaluators skip it on a
+# rejected row, so the exclusion is bookkeeping for a decision already taken
+# upstream); faithfulness WAS scored and the scorers disagree with each other about
+# what a refusal means; the reference metrics were scored, agree, and are excluded
+# anyway — because what they agree on is that a refusal is a wrong answer, which is
+# true and is the abstention rate rather than an answer-quality measurement.
+ABSTENTION_EXCLUDED_FAMILIES = (
+    ("relevancy", RELEVANCY_METRICS),
+    ("faithfulness", FAITHFULNESS_METRICS),
+    ("reference", REFERENCE_METRICS),
+)
 
-    The evidence behind the ``na_rejected`` cells the status table shows for the
-    faithfulness metrics, so the exclusion is argued in the report rather than
-    asserted. Faithfulness asks whether the ANSWER's claims are entailed by the
-    context; an abstention makes no claims, so "all zero claims are entailed" is
-    vacuously true and each scorer is free to invent its own convention for the
-    empty case. They do, and they disagree almost maximally — on the 2026-07-29 run
-    RAGAS scores 98.5% of abstentions 0.0 (a refusal counted as a hallucination,
-    wrong even on RAGAS's own definition) while HHEM and DeepEval score 83-95% of
-    the SAME rows 1.0. Since the refusal text is identical across those rows, none
-    of that spread can be a property of the run.
 
-    One row per faithfulness metric: how many abstained cells carried a value,
-    their mean, the share on each rail, and the answered-row mean for contrast.
+def _verdict_stats(df, metric, mask):
+    """``(n_idk, frac_idk)`` over ``mask`` from the DeepEval verdict counts a metric
+    persists, or ``(NaN, NaN)`` for metrics that keep none.
+
+    DeepEval records ``{n_verdicts, yes, no, idk}`` per cell (see the 2026-08-10
+    change in ``evaluation/deepeval_eval.py``), and ``idk`` is the load-bearing one:
+    its verdict prompt reserves "no" for a DIRECT contradiction, so an unsupported
+    claim comes back "idk", and whether that counts as faithful is the whole
+    difference between the score before and after ``penalize_ambiguous_claims``. On
+    an abstention it is also the mechanism — a refusal yields one claim, which is
+    unverifiable, so the metric's value there is really a count of shrugs.
+    """
+    n_col, idk_col = f"{metric}_verdicts.n_verdicts", f"{metric}_verdicts.idk"
+    if n_col not in df or idk_col not in df:
+        return _NAN, _NAN
+    total = pd.to_numeric(df.loc[mask, n_col], errors="coerce").sum()
+    idk = pd.to_numeric(df.loc[mask, idk_col], errors="coerce").sum()
+    # No verdicts at all is "the metric never ran here", not "it ran and shrugged
+    # zero times" — a metric skipped on abstentions would otherwise print n_idk = 0
+    # and read as evidence of something.
+    if not total:
+        return _NAN, _NAN
+    return float(idk), float(idk / total)
+
+
+def metrics_on_abstentions(df, families=ABSTENTION_EXCLUDED_FAMILIES):
+    """``(table, info)``: what each scorer put on the abstained rows, per family.
+
+    The evidence behind every ``na_rejected`` cell the status table shows, so each
+    exclusion is argued in the report rather than asserted. The three families are
+    excluded for three different reasons and the table is meant to be read family by
+    family — see ``ABSTENTION_EXCLUDED_FAMILIES``.
+
+    Faithfulness is the one where the exclusion is forced. It asks whether the
+    ANSWER's claims are entailed by the context; an abstention makes no claims, so
+    "all zero claims are entailed" is vacuously true and each scorer invents its own
+    convention for the empty case. They do, and they disagree almost maximally: some
+    score a refusal 0.0 (counting it as a hallucination, wrong even on their own
+    definition) and some score it 1.0. Since the refusal text is identical across
+    those rows, none of that spread can be a property of the run.
+
+    Which scorer takes which side is NOT stable, so read it off the table rather than
+    remembering it. On the 2026-07-29 run RAGAS scored 98.5% of abstentions 0.0 while
+    HHEM and DeepEval scored 83-95% of the same rows 1.0; on 2026-08-12, with
+    ``penalize_ambiguous_claims`` enabled (2026-08-10), DeepEval extracts a single
+    claim from a refusal, returns "idk" on it 89% of the time and now scores 95% of
+    those rows 0.0 — the RAGAS side. Only HHEM is still on 1.0. The exclusion this
+    table justifies is unaffected either way: that is the point of excluding rather
+    than picking a convention.
+
+    Columns, per metric: ``n_abstained`` (abstained cells that carried a value — 0
+    means the evaluator never scored them, which is itself the justification);
+    ``n_excluded`` (cells the rule actually nulls, smaller than ``n_abstained``
+    exactly where ``ABSTENTION_SCORED_DATASETS`` applies); ``mean_excluded`` and the
+    two rail shares, over those nulled cells and not over every abstained one — the
+    difference matters only for the reference family, where the two cohorts sit at
+    opposite rails and their pooled mean describes neither; ``mean_kept``, the same
+    metric on the abstained cells that survive (NaN wherever the exclusion is
+    run-wide); ``n_idk`` / ``frac_idk`` from the DeepEval verdict counts, NaN for
+    metrics that keep none; and the answered-row mean for contrast.
+
     ``info["n_texts"]`` counts the distinct abstention answer strings — a handful
-    means the rows really are canonical refusals; many would mean ``_abstained``
-    is catching partial answers, which DO carry claims and must not be discarded
-    wholesale, and the exclusion would have to be reconsidered.
+    means the rows really are canonical refusals; many would mean ``_abstained`` is
+    catching partial answers, which DO carry claims and must not be discarded
+    wholesale, and the exclusion would have to be reconsidered. ``info["spread"]``,
+    ``reads_zero`` and ``reads_one`` describe the faithfulness family only, since
+    they are about the disagreement that family alone exhibits.
 
     Run this on the RAW frame: ``prepare`` nulls exactly these cells, so afterwards
     there is nothing left to describe.
     """
     rej = ra._abstained(df)
-    cols = sorted(c for c in FAITHFULNESS_METRICS if c in df)
+    rej_ref = _abstention_excluded(df)
     rows = {}
-    for m in cols:
-        v = pd.to_numeric(df[m], errors="coerce")
-        a, b = v[rej].dropna(), v[~rej].dropna()
-        rows[m.split(".")[-1]] = {
-            "n_abstained": len(a),
-            "mean_abstained": a.mean() if len(a) else _NAN,
-            "frac_0": float((a == 0).mean()) if len(a) else _NAN,
-            "frac_1": float((a == 1).mean()) if len(a) else _NAN,
-            "n_answered": len(b),
-            "mean_answered": b.mean() if len(b) else _NAN,
-        }
+    for family, metrics in families:
+        # The reference family is the one whose exclusion is dataset-dependent, so
+        # it is the one whose n_excluded differs from n_abstained.
+        excl = rej_ref if family == "reference" else rej
+        for m in sorted(c for c in metrics if c in df):
+            v = pd.to_numeric(df[m], errors="coerce")
+            # The mean and the rails describe the cells the rule NULLS, not every
+            # abstained cell. They are the same set for two of the three families;
+            # for ``reference`` they are not, and pooling the kept ones in produced a
+            # mean of 0.489 on a metric whose exclusion rests on it being ~0 — an
+            # average over a cohort that is ~0 on four datasets and ~1 on the fifth,
+            # describing neither.
+            a = v[excl].dropna()
+            kept = v[rej & ~excl].dropna()
+            b = v[~rej].dropna()
+            n_idk, frac_idk = _verdict_stats(df, m, rej)
+            rows[m.split(".")[-1]] = {
+                "family": family,
+                "n_abstained": int((rej & v.notna()).sum()),
+                "n_excluded": len(a),
+                "mean_excluded": a.mean() if len(a) else _NAN,
+                "frac_0": float((a == 0).mean()) if len(a) else _NAN,
+                "frac_1": float((a == 1).mean()) if len(a) else _NAN,
+                "mean_kept": kept.mean() if len(kept) else _NAN,
+                "n_idk": n_idk,
+                "frac_idk": frac_idk,
+                "n_answered": len(b),
+                "mean_answered": b.mean() if len(b) else _NAN,
+            }
     tab = pd.DataFrame(rows).T
     if len(tab):
-        tab["n_abstained"] = tab["n_abstained"].astype(int)
-        tab["n_answered"] = tab["n_answered"].astype(int)
+        for c in ("n_abstained", "n_excluded", "n_answered"):
+            tab[c] = tab[c].astype(int)
         tab.index.name = "metric"
 
     texts = None
     if "answer" in df:
         texts = df.loc[rej, "answer"].fillna("").str.strip()
+    # WHICH scorer takes which convention is read off the table, never assumed. It is
+    # not a stable property of the libraries: DeepEval scored these rows 1.0 until
+    # ``penalize_ambiguous_claims`` was turned on (2026-08-10), after which its lone
+    # extracted claim comes back "idk" on a refusal and it scores 0.0 — the same side
+    # as RAGAS. A sentence naming the groups in prose was correct when written and
+    # wrong two weeks later, which is why this is computed.
+    # Faithfulness only: the disagreement these three keys describe is that family's,
+    # and pooling the other two in would compare scorers that were never asked the
+    # same question about the row.
+    faith = (tab[tab["family"] == "faithfulness"] if len(tab)
+             else pd.DataFrame(columns=["mean_excluded"]))
+    mid = faith["mean_excluded"] if len(faith) else pd.Series(dtype=float)
     info = {
         "n_abstained_rows": int(rej.sum()),
         "n_texts": int(texts.nunique()) if texts is not None else None,
         # The gap between the most and least generous convention, on identical text.
-        "spread": (float(tab["mean_abstained"].max() - tab["mean_abstained"].min())
-                   if len(tab) and tab["mean_abstained"].notna().any() else _NAN),
+        "spread": (float(mid.max() - mid.min()) if len(faith) and mid.notna().any()
+                   else _NAN),
+        "reads_zero": sorted(mid.index[mid < 0.5]),
+        "reads_one": sorted(mid.index[mid > 0.5]),
     }
     return tab, info
 
@@ -701,26 +816,84 @@ def metric_error_report(df, cls=None, source=None):
     emit(_indent(piv.to_string()))
 
     # Immediately after the table because it is the evidence for one column of it:
-    # why the faithfulness metrics carry na_rejected rather than a score.
-    fa, fa_info = faithfulness_on_abstentions(df)
-    flags["faithfulness_on_abstentions"] = fa
+    # why the answer-grading metrics carry na_rejected rather than a score.
+    fa, fa_info = metrics_on_abstentions(df)
+    flags["metrics_on_abstentions"] = fa
     flags["abstention_texts"] = fa_info["n_texts"]
     if len(fa) and fa_info["n_abstained_rows"]:
-        emit(f"\n  why faithfulness is na_rejected: what the scorers had put on the "
-             f"{fa_info['n_abstained_rows']} abstained rows")
+        emit(f"\n  why the answer-grading metrics are na_rejected: what the scorers had "
+             f"put on the {fa_info['n_abstained_rows']} abstained rows")
         if fa_info["n_texts"] is not None:
             emit(f"    those rows use {fa_info['n_texts']} distinct answer string(s), i.e. "
                  f"they are textually near-identical, so any spread below is the scorer's "
                  f"convention for an answer with no claims — not a property of this run:")
         emit(_indent(fa.round(3).to_string(), 4))
+        emit(f"    n_abstained = abstained cells that carried a value; n_excluded = cells "
+             f"the exclusion actually nulls (smaller only where "
+             f"{'/'.join(sorted(ABSTENTION_SCORED_DATASETS))} keeps them); mean_excluded / "
+             f"frac_0 / frac_1 describe the NULLED cells and mean_kept the surviving ones, "
+             f"which is not the same average wherever those two differ; n_idk / frac_idk = "
+             f"DeepEval verdicts on those rows that were neither supported nor "
+             f"contradicted (the 'idk' rail its score now penalises).")
+
+        # One paragraph per family, because the three exclusions rest on different
+        # evidence and a single sentence covering all three would be true of none.
+        rel = fa[fa["family"] == "relevancy"]
+        if len(rel):
+            scored = int(rel["n_abstained"].sum())
+            if scored == 0:
+                emit(f"    RELEVANCY ({', '.join(rel.index)}): n_abstained is 0 — these "
+                     f"were never scored on an abstention in the first place. Both "
+                     f"evaluators skip them on a rejected row, so na_rejected here records "
+                     f"a decision already taken at scoring time rather than one taken by "
+                     f"this analysis; there is no value to argue about. The reason it was "
+                     f"taken upstream: relevancy asks whether the answer addresses the "
+                     f"question, and a refusal declines to address it, which is a different "
+                     f"thing from addressing it badly.")
+            else:
+                emit(f"    RELEVANCY ({', '.join(rel.index)}): {scored} abstained cells "
+                     f"carried a value despite the evaluators' skip — unexpected, since "
+                     f"they should be unscored on a rejected row. Worth checking the "
+                     f"is_rejected gate in the evaluator before trusting these.")
+
         if fa_info["spread"] == fa_info["spread"]:  # not NaN
-            emit(f"    the conventions disagree by {fa_info['spread']:.3f} on that identical "
-                 f"text (a refusal is zero claims: RAGAS reads that as 0 = hallucinated, "
-                 f"HHEM/DeepEval as 1 = nothing false asserted). Keeping the cells would "
-                 f"report the choice of scorer as faithfulness, and would let a system raise "
-                 f"its score by abstaining more; they are excluded from every mean, "
-                 f"correlation, paired test and figure below. The abstention RATE is reported "
-                 f"separately, at the top of this report.")
+            # Which scorer sits on which rail comes from the table, not from prose:
+            # the groupings change with scorer config (see metrics_on_abstentions).
+            split = " / ".join(
+                part for part in (
+                    (f"{', '.join(fa_info['reads_zero'])} read it as 0 = hallucinated"
+                     if fa_info["reads_zero"] else ""),
+                    (f"{', '.join(fa_info['reads_one'])} as 1 = nothing false asserted"
+                     if fa_info["reads_one"] else ""))
+                if part)
+            emit(f"    FAITHFULNESS: the conventions disagree by {fa_info['spread']:.3f} on "
+                 f"that identical text (a refusal is zero claims: {split}). Keeping the "
+                 f"cells would report the choice of scorer as faithfulness, and would let a "
+                 f"system raise its score by abstaining more; they are excluded from every "
+                 f"mean, correlation, paired test and figure below. The abstention RATE is "
+                 f"reported separately, at the top of this report.")
+
+        ref = fa[fa["family"] == "reference"]
+        if len(ref) and ref["n_abstained"].sum():
+            kept_n = int((ref["n_abstained"] - ref["n_excluded"]).max())
+            fmt = lambda s: ", ".join(f"{v:.3f}" for v in s)  # noqa: E731
+            emit(f"    REFERENCE ({', '.join(ref.index)}): the opposite case — these WERE "
+                 f"scored on abstentions, and what they scored is the argument for dropping "
+                 f"them. On the nulled cells they average {fmt(ref['mean_excluded'])}, "
+                 f"against {fmt(ref['mean_answered'])} on answered rows: grading a refusal "
+                 f"against a gold answer returns ~0 by construction, and that 0 is "
+                 f"indistinguishable from a wrong answer. Left in, the metric's mean "
+                 f"silently becomes a mixture of answer quality and abstention rate — the "
+                 f"second of which already has its own number, and a system could raise the "
+                 f"metric by answering less. This is the one exclusion that is not run-wide: "
+                 f"{kept_n} cells are KEPT on "
+                 f"{'/'.join(sorted(ABSTENTION_SCORED_DATASETS))} (mean_kept "
+                 f"{fmt(ref['mean_kept'])}), where declining is the behaviour under test and "
+                 f"the score on a refusal is the measurement wanted. Note how far mean_kept "
+                 f"sits from mean_excluded: the same metric on the same kind of text, "
+                 f"scored against a gold answer that says to refuse instead of one that "
+                 f"does not. That gap is why these two metrics have a different cohort rule "
+                 f"per dataset and must be read per dataset, never pooled.")
 
     # The actionable bit: which cells are true errors, and — since both evaluators
     # record the exception next to the metric it killed — WHY. Note this counts
@@ -805,7 +978,7 @@ def prepare(df):
        has to happen: everything downstream — distributions, means by variant, paired
        comparisons, agreement, deciles, every figure — reads this frame, so nulling
        here is what makes "excluded everywhere" true rather than a claim repeated per
-       call site. ``faithfulness_on_abstentions`` (run on the RAW frame, before this)
+       call site. ``metrics_on_abstentions`` (run on the RAW frame, before this)
        is the diagnosis; this is the treatment.
     3. The two ``REFERENCE_METRICS`` nulled on abstentions as well — but only off
        ``ABSTENTION_SCORED_DATASETS`` (``_abstention_excluded``). Same reasoning as
@@ -947,7 +1120,15 @@ def metric_agreement(df, pairs=METRIC_PAIRS, by=None, tol=0.2,
     both hug the same rail (agree by default, not by signal). Faithfulness pairs
     drop abstentions by default (faithfulness is ill-defined on a non-answer).
 
-    ``by="source_dataset"`` / ``by="variant"`` gives the per-group table.
+    ``by="source_dataset"`` / ``by="variant"`` gives the per-group table. ``by`` may
+    also be a LIST of columns for the crossed table (``["source_dataset",
+    "variant"]``), in which case each key additionally gets its own column beside
+    the joined ``group`` label — a figure faceting on both needs them separately,
+    and re-splitting a joined string is how a dataset called "a / b" would break it.
+
+    Beware what the crossed table costs: every split divides the same paired rows,
+    and a correlation over a handful of them is noise with a decimal point. The
+    ``n`` column is not decoration here.
     """
     rej = ra._abstained(df)
 
@@ -977,10 +1158,19 @@ def metric_agreement(df, pairs=METRIC_PAIRS, by=None, tol=0.2,
 
     if by is None:
         return one(df, rej, "overall")
-    frames = [one(sub, rej.loc[sub.index], str(g))
-              for g, sub in df.groupby(by, observed=True)]
+    keys = [by] if isinstance(by, str) else list(by)
+    frames = []
+    for g, sub in df.groupby(keys[0] if len(keys) == 1 else keys, observed=True):
+        vals = g if isinstance(g, tuple) else (g,)
+        frame = one(sub, rej.loc[sub.index], " / ".join(str(v) for v in vals))
+        # Only when crossed: on a single key ``group`` already IS that key's value,
+        # and a duplicate column would change every existing table and CSV.
+        if len(keys) > 1:
+            for k, v in zip(keys, vals):
+                frame[k] = str(v)
+        frames.append(frame)
     cols = ["pair", "group", "family", "n", "pearson", "spearman",
-            "mean_diff", "frac_within"]
+            "mean_diff", "frac_within"] + (keys if len(keys) > 1 else [])
     return pd.concat(frames, ignore_index=True)[cols]
 
 
@@ -1498,12 +1688,22 @@ if __name__ == "__main__":
         ag = metric_agreement(d)
         print(ag.round(3).to_string(index=False))
         ag.to_csv(paths.table(eval_path, "eval_metric_agreement"), index=False)
+        ag_by = {}
         for by in ("source_dataset", "variant"):
             print(f"\n--- agreement by {by} ---")
-            tab = metric_agreement(d, by=by)
+            ag_by[by] = tab = metric_agreement(d, by=by)
             print(tab.round(3).to_string(index=False))
             tab.to_csv(paths.table(eval_path, f"eval_metric_agreement_by_{by}"),
                        index=False)
+        print("\n--- agreement by source_dataset x variant ---")
+        print("read the n column first: this splits the paired rows fifteen ways, and "
+              "the cells where it lands in single digits carry a correlation that is "
+              "noise with a decimal point.")
+        ag_by["dataset_variant"] = tab = metric_agreement(
+            d, by=["source_dataset", "variant"])
+        print(tab.round(3).to_string(index=False))
+        tab.to_csv(paths.table(eval_path, "eval_metric_agreement_by_dataset_variant"),
+                   index=False)
 
         print("\n=== DeepEval reason vs recorded score (internal consistency) ===")
         rc, rc_mism = deepeval_reason_consistency(d)
@@ -1592,6 +1792,19 @@ if __name__ == "__main__":
             "fig_dataset_variant_relevance": lambda: plots.dataset_variant_heatmap(
                 d, "deepeval_scores.deepeval_relevance"),
             "fig_metric_agreement": lambda: plots.metric_agreement_dots(ag),
+            # The same pairs faceted: the pooled dots say whether two comparable
+            # metrics agree, these say where — a pair that holds on one dataset and
+            # collapses on another is one construct with a domain, not two broken
+            # judges, and only the facets separate those readings.
+            "fig_metric_agreement_by_dataset": lambda: plots.metric_agreement_grid(
+                ag_by["source_dataset"], "source_dataset"),
+            # Crossed, like the rail grid: whether a pair's agreement is a property of
+            # the questions or of the pipeline that answered them is only visible when
+            # both are on the figure at once. Read against the n's — fifteen cells over
+            # the same paired rows is thin in places, deliberately shown rather than
+            # smoothed away.
+            "fig_metric_agreement_dataset_variant": lambda: plots.metric_agreement_grid(
+                ag_by["dataset_variant"], ["source_dataset", "variant"]),
         }, eval_path)
 
         # Figures that need only the evaluated file. The three eval_* ones used to

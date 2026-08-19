@@ -1730,6 +1730,187 @@ def trigger_combination_bars(df, stage="retrieval"):
         "", "", f"no {stage} trigger data in this file")
 
 
+# Words in a ``METRIC_PAIRS`` name that are not ordinary words: two brandmarks, an
+# acronym, and the join, which stays lowercase because "RAGAS Vs DeepEval" reads as
+# a typo. Everything else title-cases, same rule as ``metric_label``.
+_PAIR_WORDS = {"ragas": "RAGAS", "deepeval": "DeepEval", "hhem": "HHEM", "vs": "vs"}
+
+
+def _pair_label(name):
+    """``faithfulness: ragas vs hhem`` -> ``Faithfulness: RAGAS vs HHEM``.
+
+    The pair names are written once in ``eval_analysis.METRIC_PAIRS``, where they are
+    also table keys and want to stay greppable lowercase — so the display form is
+    derived here rather than stored, exactly as metric column names are.
+    """
+    out = []
+    for w in str(name).split():
+        bare, tail = (w[:-1], w[-1]) if w[-1:] in ":,." else (w, "")
+        out.append(_PAIR_WORDS.get(bare.lower(), bare.capitalize()) + tail)
+    return " ".join(out)
+
+
+def metric_agreement_grid(ag, key="source_dataset", stats=("spearman", "pearson"),
+                          fontscale=1.15):
+    """``metric_agreement_dots``, one panel per group: does the agreement hold everywhere?
+
+    The pooled figure answers whether two comparable metrics agree at all. This one
+    answers where, which is the question that decides what a disagreement means. A
+    pair that correlates in one dataset and not another is not two broken judges —
+    it is one construct that only survives on some kinds of question, and the
+    faceting is what separates those two readings.
+
+    Takes the per-group table from ``eval_analysis.metric_agreement(d, by=...)``, so
+    the figure and the table in the report cannot drift apart. ``key`` names the
+    column(s) it was grouped on: one key gives a row of panels, and a pair of keys
+    (``["source_dataset", "variant"]``, matching ``metric_rail_grid``) gives the full
+    grid — first key across, second down. The crossed table has to have been built
+    with the same list, since that is what puts the two keys in their own columns.
+
+    A row with no dot carries a tick on the zero line instead, so an UNDEFINED
+    correlation never reads as "zero agreement". Undefined has two causes and the
+    ``n`` beside the tick separates them: no n at all means the pair had no rows
+    here, while a tick sitting next to a large n means one of the two metrics was
+    CONSTANT across those rows — every value identical, so there is no ranking to
+    correlate. The second is a finding, not a gap: it is what a metric looks like
+    when a whole cohort pins it to one value.
+
+    That ``n`` is a paired n — rows where BOTH metrics scored — and on the crossed
+    grid it is the figure's most important number: splitting five datasets three ways
+    leaves some cells with a handful of rows, and a correlation over a handful of
+    rows is noise that happens to have a decimal point.
+
+    Carries only its legend, its axis and its group headers; the words go in the
+    document's caption. The legend states the shape, the colour and the dash, so all
+    the caption still owes the reader is the number: it is the paired rows behind
+    that row's dots — rows where both metrics scored — and beside a dash it is what
+    says whether the correlation is undefined for want of rows or for want of
+    variance.
+    """
+    apply_style()
+    tbl = ag[ag["group"] != "overall"] if "group" in ag else ag
+    keys = [key] if isinstance(key, str) else list(key)
+    pairs = list(dict.fromkeys(tbl["pair"]))
+    # One key reads the ``group`` column, which IS that key's value; two keys read the
+    # per-key columns the crossed table carries, rather than splitting ``group`` back
+    # apart on its separator — a dataset whose name contained one would break that.
+    crossed = len(keys) > 1 and all(k in tbl for k in keys)
+    cols = _group_order(tbl[keys[0]] if crossed else tbl["group"], keys[0])
+    rows = _group_order(tbl[keys[1]], keys[1]) if crossed else [None]
+    if not len(tbl) or not pairs or not cols:
+        fig, ax = plt.subplots(figsize=(7, 3))
+        ax.set_title("no per-group metric agreement in this file")
+        return fig
+
+    def cell(rv, cv):
+        if not crossed:
+            return tbl[tbl["group"].astype(str) == str(cv)]
+        return tbl[(tbl[keys[0]].astype(str) == str(cv))
+                   & (tbl[keys[1]].astype(str) == str(rv))]
+
+    # Same sizing contract as ``metric_rail_grid``: type size is the readability
+    # lever, and only the geometry that type occupies follows it — the pair-name
+    # column on the left, and the row pitch, which here also has to hold two markers
+    # nudged apart vertically rather than one line of text.
+    fs = float(fontscale)
+    pt_tick, pt_n, pt_head, pt_foot = 8.5 * fs, 7.8 * fs, 10.0 * fs, 8.5 * fs
+    row_h = max(0.42, 0.045 * pt_tick)
+    fig, axes = plt.subplots(
+        len(rows), len(cols), sharex=True, sharey=True, squeeze=False,
+        figsize=(1.95 * len(cols) + 2.6 * fs,
+                 row_h * len(pairs) * len(rows) + 1.25 + 0.55 * fs))
+    y = np.arange(len(pairs))[::-1]
+    pos = dict(zip(pairs, y))
+    markers = {"spearman": "o", "pearson": "s"}
+    # Two statistics that usually land close together, nudged apart rather than
+    # hidden behind one another — the row rule still ties both to their label.
+    offsets = np.linspace(0.15, -0.15, len(stats)) if len(stats) > 1 else [0.0]
+
+    for ri, rv in enumerate(rows):
+        for ci, cv in enumerate(cols):
+            ax = axes[ri][ci]
+            ax.axvline(0, color=AXIS, lw=1)
+            for row in cell(rv, cv).itertuples():
+                yi = pos.get(row.pair)
+                if yi is None:
+                    continue
+                n = int(row.n) if np.isfinite(row.n) else 0
+                drawn = False
+                for stat, dy in zip(stats, offsets):
+                    v = getattr(row, stat, np.nan)
+                    if v is None or not np.isfinite(v):
+                        continue
+                    ax.plot([v], [yi + dy], marker=markers.get(stat, "o"),
+                            ms=7.5 * fs, color=POS if v > 0 else NEG, zorder=3,
+                            ls="none", markeredgecolor=SURFACE, markeredgewidth=1.4)
+                    drawn = True
+                if not drawn:
+                    ax.plot([0], [yi], marker="_", ms=9, color=INK_SECONDARY,
+                            zorder=4)
+                if n:
+                    # INK_SECONDARY, not INK_MUTED: a correlation over three rows and
+                    # one over three hundred are the same dot, and this is the only
+                    # thing separating them — data, not furniture.
+                    ax.annotate(f"{n}", (1.0, yi), xycoords=("axes fraction", "data"),
+                                xytext=(4, 0), textcoords="offset points",
+                                va="center", ha="left", fontsize=pt_n,
+                                color=INK_SECONDARY, annotation_clip=False)
+
+            ax.set_xlim(-1.15, 1.15)
+            ax.set_ylim(-0.6, len(pairs) - 0.4)
+            ax.set_yticks(y)
+            # Only the first column labels, and the others are left ALONE rather than
+            # given an empty list: ``sharey`` shares one formatter, so blanking it on
+            # a later panel blanks the first panel too. Sharing already hides them.
+            if ci == 0:
+                ax.set_yticklabels([_pair_label(p) for p in pairs], fontsize=pt_tick)
+            ax.tick_params(axis="y", length=0)
+            ax.tick_params(axis="x", labelsize=pt_tick)
+            ax.set_xticks([-1, 0, 1])
+            ax.set_xticklabels(["\N{MINUS SIGN}1", "0", "+1"])
+            ax.grid(axis="y", visible=True)
+            if ri == 0:
+                ax.set_title(_group_label(cv, keys[0]), fontsize=pt_head)
+            if ci == 0 and rv is not None:
+                # INK, overriding axes.labelcolor: this is the row header naming a
+                # group, exactly as the column titles do, so it takes the same ink.
+                # It sits outside the pair names, which are the y ticks.
+                ax.set_ylabel(_group_label(rv, keys[1]), fontsize=pt_head, color=INK,
+                              labelpad=8)
+            if ri == len(rows) - 1 and ci == len(cols) // 2:
+                ax.set_xlabel("correlation between the two metrics", fontsize=pt_tick)
+
+    # The legend carries all three of the figure's encodings, not just the shape one:
+    # marker = which statistic, colour = the sign, dash = no correlation exists. The
+    # colour swatches are plain line segments rather than markers on purpose — giving
+    # them a circle or a square would collide with the two shapes that mean something
+    # else. What the dash means is deliberately "undefined" and not "not scored": two
+    # of the cells it appears on carry n=50 and n=150 and were scored in full, and it
+    # is there because one of the two metrics came back constant, which leaves a
+    # correlation with a zero denominator. The ``n`` beside the dash is what separates
+    # that from the cells with genuinely no rows.
+    handles = [Line2D([], [], color=INK_SECONDARY, marker=markers[s], ls="none",
+                      ms=7.5 * fs, label=s.capitalize())
+               for s in stats if s in markers]
+    handles += [
+        Line2D([], [], color=POS, lw=5, label="positive correlation"),
+        Line2D([], [], color=NEG, lw=5, label="negative correlation"),
+        Line2D([], [], color=INK_SECONDARY, marker="_", ls="none", ms=9,
+               label="undefined"),
+    ]
+    # Legend placed in INCHES converted to figure fractions: this figure's height
+    # follows the pair count, and a fixed bottom fraction that clears the legend on a
+    # four-pair table eats a row on a ten-pair one.
+    h = fig.get_size_inches()[1]
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+               bbox_to_anchor=(0.5, 0.10 / h), fontsize=pt_foot)
+    # ``w_pad`` has to clear the per-row n's, which hang off the right edge of each
+    # panel as unclipped annotations tight_layout does not measure.
+    fig.tight_layout(rect=(0, (0.30 + 0.09 * fs) / h, 0.995, 1.0),
+                     w_pad=1.2, h_pad=0.5)
+    return fig
+
+
 def metric_agreement_dots(ag, stats=("spearman", "pearson")):
     """Do metrics that claim to measure the same thing actually agree?
 
@@ -1773,17 +1954,18 @@ def metric_agreement_dots(ag, stats=("spearman", "pearson")):
                     markeredgecolor=SURFACE, markeredgewidth=1.5)
         ax.annotate(f"n={int(row.n)}", (1.0, yi), xycoords=("axes fraction", "data"),
                     xytext=(6, 0), textcoords="offset points", va="center",
-                    ha="left", fontsize=7.5, color=INK_MUTED, annotation_clip=False)
+                    ha="left", fontsize=7.5, color=INK_SECONDARY,
+                    annotation_clip=False)
 
     ax.set_ylim(-0.6, len(tbl) - 0.4)
     ax.set_yticks(y)
-    ax.set_yticklabels(list(tbl["pair"]))
+    ax.set_yticklabels([_pair_label(p) for p in tbl["pair"]])
     ax.set_xlim(-1.05, 1.05)
     ax.set_xlabel("correlation between the two metrics")
     ax.grid(axis="y", visible=True)
     ax.set_title("Do comparable metrics agree? (negative = they rank queries oppositely)",
                  pad=26)
-    handles = [Line2D([], [], color=INK_MUTED, marker=markers[s], ls="none", ms=8,
+    handles = [Line2D([], [], color=INK_SECONDARY, marker=markers[s], ls="none", ms=8,
                       label=s.capitalize()) for s in stats if s in markers]
     ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.005),
               ncol=len(handles))
