@@ -26,7 +26,7 @@
 ##   1. Login-node launcher (recommended):  ./slurm/run_eval.sh
 ##      SLURM_JOB_ID is unset, so the script runs as a *submitter*: it sbatch-es
 ##      the array job for you and exits. Pick the shard count with the ARRAY_MAX
-##      env var — it becomes --array=0-${ARRAY_MAX} (default 14 → 15 shards) and
+##      env var — it becomes --array=0-${ARRAY_MAX} (default 12 → 13 shards) and
 ##      overrides the #SBATCH --array header:
 ##        ARRAY_MAX=9 ./slurm/run_eval.sh        # 10 shards
 ##      Override the newest-file default with RAG_RESULTS_FILE:
@@ -35,7 +35,7 @@
 ##   2. Plain sbatch:  sbatch slurm/run_eval.sh
 ##      SLURM sets SLURM_JOB_ID, so the submitter branch is skipped and the
 ##      worker body runs directly as the array job defined by the #SBATCH
-##      --array=0-14 header (15 shards). Note that RAG_RESULTS_FILE is NOT
+##      --array=0-12 header (13 shards). Note that RAG_RESULTS_FILE is NOT
 ##      resolved on this path, so each shard picks the newest RAG file on its
 ##      own and the merged filename carries no _from_<ragts> stamp — use the
 ##      launcher (or export RAG_RESULTS_FILE yourself) to keep that provenance.
@@ -96,13 +96,13 @@ stage_models() {
 # Job accounting (matters for the cluster's per-user submit cap, ~30 jobs):
 #   * The submitter first launches ONE stage job (downloads the model GGUFs to
 #     shared NFS) and holds the array behind it with --dependency=afterok.
-#   * The array submits ARRAY_MAX+1 independent tasks (default 15: indices
-#     0..14); SLURM counts each array task as one job.
+#   * The array submits ARRAY_MAX+1 independent tasks (default 13: indices
+#     0..12); SLURM counts each array task as one job.
 #   * The first task to start schedules ONE merge job, held by
 #     --dependency=afterok until every shard succeeds — a pending dependency
 #     job still counts against the cap.
-#   => one eval run = 1 stage + 15 shards + 1 merge = 17 jobs. Run this after the
-#      RAG run finishes so the two (17 each) don't queue together and exceed 30.
+#   => one eval run = 1 stage + 13 shards + 1 merge = 15 jobs. Run this after the
+#      RAG run finishes so the two (15 each) don't queue together and exceed 30.
 # ---------------------------------------------------------------------------
 if [ -z "${SLURM_JOB_ID:-}" ]; then
   ARRAY_MAX="${ARRAY_MAX:-12}"
@@ -276,14 +276,15 @@ export LLAMACPP_GEN_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_GEN_PORT}/v
 export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v1"
 
 # llama.cpp divides the total --ctx-size across the --parallel slots, so the
-# *per-request* budget is CONTEXT_LENGTH/GEN_PARALLEL (padded up to a multiple of
-# 256). At 32768/6 that is only 5632 tokens/slot — and RAGAS's AnswerCorrectness
-# metric can exceed it: when the small gemma judge emits malformed JSON, RAGAS's
-# recursive output-format-repair loop re-embeds the broken output each retry and
-# inflates the prompt past 6k tokens, tripping an "exceeds context size" 400.
-# Parallel=4 gives 32768/4 = 8192 tokens/slot with headroom; it is VRAM-neutral
-# (total KV cache is sized by CONTEXT_LENGTH, not the slot count) so it does not
-# worsen the nodes that already fail to load at higher memory pressure.
+# *per-request* budget is CONTEXT_LENGTH/GEN_PARALLEL, NOT CONTEXT_LENGTH. At the
+# earlier 6-slot setting that left well under 6k tokens/slot — and RAGAS's
+# AnswerCorrectness metric can exceed it: when the small gemma judge emits
+# malformed JSON, RAGAS's recursive output-format-repair loop re-embeds the broken
+# output each retry and inflates the prompt past 6k tokens, tripping an "exceeds
+# context size" 400. 30000/3 = 10000 tokens/slot gives ample headroom; dropping
+# slots is VRAM-neutral (total KV cache is sized by CONTEXT_LENGTH, not the slot
+# count) so it does not worsen the nodes that already fail to load at higher
+# memory pressure.
 CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-30000}"
 GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-3}"
 # 4096 (was 2048). RAGAS embeds each string separately — AnswerCorrectness's

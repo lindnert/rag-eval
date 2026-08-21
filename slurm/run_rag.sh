@@ -24,14 +24,14 @@
 ##   1. Login-node launcher (recommended):  ./slurm/run_rag.sh
 ##      SLURM_JOB_ID is unset, so the script runs as a *submitter*: it sbatch-es
 ##      the array job for you and exits. Pick the shard count with the ARRAY_MAX
-##      env var — it becomes --array=0-${ARRAY_MAX} (default 14 → 15 shards) and
+##      env var — it becomes --array=0-${ARRAY_MAX} (default 12 → 13 shards) and
 ##      overrides the #SBATCH --array header:
 ##        ARRAY_MAX=9 ./slurm/run_rag.sh        # 10 shards
 ##
 ##   2. Plain sbatch:  sbatch slurm/run_rag.sh
 ##      SLURM sets SLURM_JOB_ID, so the submitter branch is skipped and the
 ##      worker body runs directly as the array job defined by the #SBATCH
-##      --array=0-14 header (15 shards). ARRAY_MAX is NOT read on this path —
+##      --array=0-12 header (13 shards). ARRAY_MAX is NOT read on this path —
 ##      override the size on the command line instead:
 ##        sbatch --array=0-9 slurm/run_rag.sh   # 10 shards
 
@@ -86,14 +86,14 @@ stage_models() {
 # Job accounting (matters for the cluster's per-user submit cap, ~30 jobs):
 #   * The submitter first launches ONE stage job (downloads the gen GGUF to
 #     shared NFS) and holds the array behind it with --dependency=afterok.
-#   * The array submits ARRAY_MAX+1 independent tasks (default 15: indices
-#     0..14); SLURM counts each array task as one job.
+#   * The array submits ARRAY_MAX+1 independent tasks (default 13: indices
+#     0..12); SLURM counts each array task as one job.
 #   * The first task to start schedules ONE merge job, held by
 #     --dependency=afterok until every shard succeeds — a pending dependency
 #     job still counts against the cap.
-#   => one RAG run = 1 stage + 15 shards + 1 merge = 17 jobs. slurm/run_eval.sh
-#      is the same (17); run it after RAG finishes so the two don't queue
-#      together (17 + 17 would exceed 30). Raise ARRAY_MAX up to 27 (1 stage + 28
+#   => one RAG run = 1 stage + 13 shards + 1 merge = 15 jobs. slurm/run_eval.sh
+#      is the same (15); run it after RAG finishes so the two don't queue
+#      together (15 + 15 would exceed 30). Raise ARRAY_MAX up to 27 (1 stage + 28
 #      shards + 1 merge = 30) for more parallelism. There is no %-throttle, so
 #      all shards can run at once (each is --exclusive → one node), nodes
 #      permitting.
@@ -236,12 +236,14 @@ export LLAMACPP_EMB_BASE_URL="http://${LLAMACPP_GEN_HOST}:${LLAMACPP_EMB_PORT}/v
 export LLAMACPP_EMB_MODEL="${LLAMACPP_EMB_MODEL:-lm-kit/bge-m3-gguf:Q4_K_M}"
 
 # llama.cpp divides --ctx-size evenly across the --parallel slots, so the
-# per-request window is CONTEXT_LENGTH / GEN_PARALLEL. With a ~2250-token RAG
-# prompt and a 3072-token completion budget (thinking + answer, see
-# RAG_SC_REGEN_MAX_TOKENS)and 572 HyDE, each slot needs ~5734 tokens. 23000/4 = 5750/slot
-# clears that. Concurrency is dropped 6→4 to buy the bigger per-slot window
-# without growing total KV-cache VRAM (KV scales with CONTEXT_LENGTH, shared
-# across slots — fewer slots means each gets a larger share at the same cost).
+# per-request window is CONTEXT_LENGTH / GEN_PARALLEL, NOT CONTEXT_LENGTH. The
+# binding single request is the rag_sc regen: a ~2250-token RAG prompt plus a
+# 3072-token completion budget (thinking + answer, see RAG_SC_REGEN_MAX_TOKENS)
+# = ~5350 tokens. The HyDE call is smaller (query + RAG_SC_HYDE_MAX_TOKENS).
+# 23000/3 = ~7666/slot clears that with room to spare. The slot count is kept
+# low deliberately: it buys the bigger per-slot window without growing total
+# KV-cache VRAM (KV scales with CONTEXT_LENGTH, shared across slots — fewer
+# slots means each gets a larger share at the same cost).
 CONTEXT_LENGTH="${LLAMACPP_CONTEXT_LENGTH:-23000}"
 GEN_PARALLEL="${LLAMACPP_GEN_PARALLEL:-3}"
 # Keep the client's in-flight request cap in lockstep with the server's slot
