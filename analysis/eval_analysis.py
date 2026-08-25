@@ -170,6 +170,76 @@ ABSTENTION_SCORED_DATASETS = {"medqa"}
 # 'insufficient', so it never abstains here"), so its 0% abstention rate on the
 # probe is a property of the prompt, not a finding about the model.
 ABSTAINING_VARIANTS = ("rag", "rag_sc")
+
+# --- multiple-choice flattening ---------------------------------------------
+# MMLU and MEDQA ship as multiple-choice items; both loaders keep only the stem
+# and the correct option's TEXT, dropping the distractors, so the pipeline is
+# asked an open-ended question. A stem that pointed at its option list ("which of
+# the following …") still points at it afterwards, at nothing.
+MC_DERIVED_DATASETS = ("mmlu", "medqa")
+# The pointer phrases actually present in the run. `which of these`,
+# `all of the above` and lettered `A) B)` blocks are matched too but occur zero
+# times — kept so the flag stays valid if the sample is redrawn.
+MC_POINTER_RE = re.compile(
+    r"of the following"
+    r"|which (one )?of these"
+    r"|which statements? (about|is|are)"
+    r"|the (factors|treatments|options|statements|choices) below"
+    r"|statements? (is|are) (true|correct|false)"
+    r"|(both|all|none) of (the )?(above|options|statements)"
+    r"|^\s*[a-e][).:]\s", re.IGNORECASE | re.MULTILINE)
+# The pointer alone is a poor predictor: 43 of 50 MEDQA stems carry one and none
+# of them break, because a clinical vignette (median ~740 chars: age, vitals,
+# labs, imaging) is still answerable once the options are gone. An MMLU stem
+# (median ~85 chars) is often nothing BUT the pointer — "Which of the following
+# statements about proteolysis is correct?" has no proposition left in it. So the
+# flag that matters is pointer AND short stem, i.e. not self-contained. The
+# threshold sits in the empty gap between the two datasets' length distributions;
+# it separates them, it is not tuned against any score.
+MC_SELF_CONTAINED_CHARS = 300
+# A gold that is itself an index into the deleted option list ("All of the
+# above"). Unscoreable by construction: no open-ended answer can match it.
+MC_GOLD_POINTER_RE = re.compile(
+    r"all of (the )?(above|options)|all options given"
+    r"|both of the statements|none of the (above|options)"
+    r"|options given (is|are) correct", re.IGNORECASE)
+# The answer-side symptom, and the only part of this audit that is a direct
+# count rather than an inference: the model replying "please provide the list of
+# statements" instead of answering. Deliberately narrow — it must name the
+# missing material, so ordinary clinical prose ("the first-line choice is …")
+# does not match.
+MC_OPTION_REQUEST_RE = re.compile(
+    r"please (provide|share|list|specify) the (list|options|specific|multiple)"
+    r"|you (have not|haven'?t|did not|didn'?t) (provide|provided|share|shared|list|listed)"
+    r"|provide the (list|options|specific|multiple)"
+    r"|(specific|the) (options|statements|choices) (you|to choose|are|were|is)"
+    r"|without the (options|list|specific)"
+    r"|cannot (select|identify) (the|which|it)"
+    r"|list of (statements|options|factors|choices)"
+    r"|options to choose"
+    r"|question was cut off", re.IGNORECASE)
+# Manual adjudication of the rows that asked for the options, still volunteered
+# substantive content, and were graded 0.0 on answer_accuracy anyway. Read by
+# hand on 2026-08-25 against the run below; keyed by id so a redrawn sample just
+# prints fewer notes instead of printing stale ones. The point of keeping it is
+# that the group is NOT uniform — most of the zeros are real misses caused by
+# the missing options, but not all of them are, and the report should not claim
+# otherwise in either direction.
+MC_ADJUDICATED = {
+    "mmlu_212": "0.00 correct. Gold is the FALSE statement (starch -> insulin -> "
+                "motility); the answer lists true principles plus three guessed "
+                "false ones, none of them the gold. Disjoint.",
+    "mmlu_106": "0.00 correct on the string (gold 'Parental anxiety' never "
+                "appears), but the GOLD is itself doubtful: parental anxiety is "
+                "commonly reported as a risk factor for eating disorders, so the "
+                "item was only answerable via the deleted distractor set.",
+    "mmlu_197": "0.00 too harsh. Gold 'Have been unchanged'; the answer opens "
+                "'rates ... have stabilized or declined'. Stabilised ~ unchanged, "
+                "so the gold claim is present but hedged across two mutually "
+                "exclusive outcomes, which is plausibly why the judge withheld "
+                "credit. Judge severity on a degenerate input, not a model error.",
+}
+
 # ID-context retrieval metrics additionally need a gold reference-context set,
 # which only the synthetic guideline questions carry -> everywhere else null is
 # expected, not an error.
@@ -909,6 +979,175 @@ def probe_non_abstentions(df, datasets=ABSTENTION_SCORED_DATASETS,
             out[c] = out[c].map(
                 lambda t: re.sub(r"\s+", " ", str(t)).strip()[:max_chars])
     return out.sort_values(["id", "variant"])
+
+
+def mc_flatten_audit(df, datasets=MC_DERIVED_DATASETS,
+                     self_contained_chars=MC_SELF_CONTAINED_CHARS):
+    """One row per QUESTION of the multiple-choice-derived datasets, flagged for
+    the scars left by dropping the option list.
+
+    Question level, not row level: "the stem points at an option list" is a
+    property of the query, and the three variant rows that share a query are one
+    observation measured three times, not three observations.
+
+    ``pointer``          the stem still refers to the deleted options.
+    ``short_stem``       nothing much left besides the pointer.
+    ``dangling``         both — the query is not answerable as written. This is
+                         the flag to use; ``pointer`` alone over-flags MEDQA,
+                         whose vignettes survive option removal intact.
+    ``visual_ref``       refers to an image the pipeline was never given.
+    ``gold_pointer``     the GOLD is an option index ("All of the above"), so the
+                         item is unscoreable however the system answers.
+    """
+    if not {"source_dataset", "query", "id"} <= set(df):
+        return pd.DataFrame()
+    q = df[df["source_dataset"].astype(str).isin(datasets)]
+    q = q.drop_duplicates(["source_dataset", "id"])
+    if not len(q):
+        return pd.DataFrame()
+
+    query = q["query"].astype(str)
+    gold = q["reference_answer"].astype(str) if "reference_answer" in q else pd.Series("", index=q.index)
+    out = pd.DataFrame({
+        "dataset": q["source_dataset"].astype(str),
+        "id": q["id"].astype(str),
+        "chars": query.str.len(),
+        "pointer": query.str.contains(MC_POINTER_RE),
+        "short_stem": query.str.len() < self_contained_chars,
+        # Exam items also carry figures, dropped by the same loaders. Bare
+        # ``figure``/``image`` is safe here because the flag is computed on the
+        # MC datasets only, where those words never occur in prose.
+        "visual_ref": query.str.contains(
+            r"\b(?:is shown|as shown|arrows?|photograph|photo|figure|image"
+            r"|micrograph|radiograph|exhibit)\b", case=False, regex=True),
+        "gold_pointer": gold.str.contains(MC_GOLD_POINTER_RE),
+    })
+    out["dangling"] = out["pointer"] & out["short_stem"]
+    return out.sort_values(["dataset", "id"]).reset_index(drop=True)
+
+
+def option_request_rows(df, max_chars=220):
+    """The rows where the model answered "please provide the list of options"
+    (or "you did not provide the image") instead of answering — the measurable
+    consequence of the flattening, and the only part of this audit that is a
+    direct count rather than an inference.
+
+    These are NOT abstentions: they carry none of the rejection strings, so the
+    abstention detector counts them as answers and every reference metric grades
+    a request for clarification against a nutrition fact.
+
+    The group is bimodal, so ``noncommittal`` splits it: ``ragas_answer_relevancy``
+    = 0.0 EXACTLY is RAGAS's own noncommittal detector firing, i.e. the row is a
+    bare request with nothing to grade. The rest asked for the options and then
+    volunteered an answer anyway, and land in the ordinary 0.5-0.8 band. Averaging
+    the two together mixes "the metric returned a structural zero" with "the model
+    answered and was graded", which are different events; report the split.
+
+    Run on the RAW frame: ``prepare`` nulls cells these rows still occupy.
+    """
+    if "answer" not in df:
+        return pd.DataFrame()
+    hit = df[df["answer"].astype(str).str.contains(MC_OPTION_REQUEST_RE)]
+    if not len(hit):
+        return pd.DataFrame()
+    cols = [c for c in ("id", "source_dataset", "variant", "lang",
+                        "ragas_scores.ragas_answer_relevancy",
+                        "ragas_scores.ragas_answer_correctness",
+                        "ragas_scores.ragas_answer_accuracy",
+                        "deepeval_scores.deepeval_relevance",
+                        "query", "answer") if c in hit]
+    out = hit[cols].rename(columns=lambda c: c.split(".")[-1])
+    rel = "ragas_answer_relevancy"
+    out["noncommittal"] = (pd.to_numeric(out[rel], errors="coerce").eq(0.0)
+                           if rel in out else False)
+    for c in ("query", "answer"):
+        if c in out:
+            out[c] = out[c].map(
+                lambda t: re.sub(r"\s+", " ", str(t)).strip()[:max_chars])
+    tail = [c for c in ("query", "answer") if c in out]
+    out = out[[c for c in out.columns if c not in tail] + tail]
+    return out.sort_values(["source_dataset", "variant", "id"])
+
+
+def option_request_contrast(df, degenerate, metrics=sorted(ANSWER_METRICS)):
+    """Within each affected (dataset, variant) cell: the option-request rows
+    against the OTHER rows of the same cell.
+
+    Deliberately a within-cell contrast, not a cross-variant one. Comparing these
+    rows to ``rag``/``rag_sc`` answers the wrong question, because the variants
+    also differ in whether they may abstain at all; holding the variant fixed
+    isolates what the missing option list did.
+
+    Reports mean, median, the count of exact 0.0 scores on each side, and a
+    Mann-Whitney U with rank-biserial. Rank-based because these distributions are
+    not shifted normals but two clusters (see ``option_request_rows``). One test
+    per metric within a single cell, so no multiplicity correction is applied
+    here — but n on the flagged side is small and the group is defined by a regex
+    over the answer text, so this is a descriptive contrast and not a randomised
+    one. The counts and the zero-tallies are the evidence; the p-value only says
+    the two clusters are not a coincidence.
+    """
+    from scipy.stats import mannwhitneyu
+
+    if not len(degenerate) or "variant" not in df:
+        return pd.DataFrame()
+    bad = set(zip(degenerate["source_dataset"], degenerate["variant"], degenerate["id"]))
+    rows = []
+    for ds, var in sorted(set(zip(degenerate["source_dataset"], degenerate["variant"]))):
+        cell = df[(df["source_dataset"].astype(str) == ds)
+                  & (df["variant"].astype(str) == var)]
+        is_bad = pd.Series([k in bad for k in zip(cell["source_dataset"],
+                                                  cell["variant"], cell["id"])],
+                           index=cell.index)
+        for m in (m for m in metrics if m in df):
+            a = pd.to_numeric(cell.loc[is_bad, m], errors="coerce").dropna()
+            b = pd.to_numeric(cell.loc[~is_bad, m], errors="coerce").dropna()
+            rec = {"dataset": ds, "variant": var, "metric": m.split(".")[-1],
+                   "n_flag": len(a), "mean_flag": a.mean(), "med_flag": a.median(),
+                   "zeros_flag": int((a == 0).sum()),
+                   "n_rest": len(b), "mean_rest": b.mean(), "med_rest": b.median(),
+                   "zeros_rest": int((b == 0).sum()),
+                   "delta": a.mean() - b.mean(),
+                   "rank_biserial": np.nan, "p": np.nan}
+            if len(a) >= 3 and len(b) >= 3 and (a.nunique() > 1 or b.nunique() > 1):
+                u, p = mannwhitneyu(a, b, alternative="two-sided")
+                rec["rank_biserial"] = 2 * u / (len(a) * len(b)) - 1
+                rec["p"] = p
+            rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+def mc_flatten_impact(df, degenerate, metrics=sorted(ANSWER_METRICS)):
+    """What the degenerate rows do to the cells they sit in: each affected
+    (dataset, variant) scored with them and without.
+
+    The point of the table is the ``delta`` column. These rows are an artifact of
+    dataset preparation, so whatever they subtract is not a property of the
+    system, and a cell whose delta is large should be reported with the
+    sensitivity stated rather than as a result.
+    """
+    if not len(degenerate) or "variant" not in df:
+        return pd.DataFrame()
+    keys = set(zip(degenerate["source_dataset"], degenerate["variant"]))
+    bad = set(zip(degenerate["source_dataset"], degenerate["variant"], degenerate["id"]))
+    cols = [m for m in metrics if m in df]
+    rows = []
+    for ds, var in sorted(keys):
+        cell = df[(df["source_dataset"].astype(str) == ds)
+                  & (df["variant"].astype(str) == var)]
+        is_bad = pd.Series([k in bad for k in zip(cell["source_dataset"],
+                                                  cell["variant"], cell["id"])],
+                           index=cell.index)
+        keep = cell[~is_bad]
+        rec = {"dataset": ds, "variant": var, "n": len(cell),
+               "n_degenerate": len(cell) - len(keep)}
+        for m in cols:
+            with_, without = cell[m].mean(), keep[m].mean()
+            rec[m.split(".")[-1]] = with_
+            rec[f"{m.split('.')[-1]}_excl"] = without
+            rec[f"{m.split('.')[-1]}_delta"] = without - with_
+        rows.append(rec)
+    return pd.DataFrame(rows)
 
 
 # The DeepEval metrics that persist a per-cell ``{n_verdicts, yes, no, idk}`` tally.
@@ -3211,6 +3450,117 @@ if __name__ == "__main__":
                       f"{r.get('original_medqa_answer', '?')}")
                 print(_indent(f"Q: {r['query']}", 4))
                 print(_indent(f"A: {r['answer']}", 4))
+
+        # Also the raw frame, and for the same reason: the degenerate rows below
+        # are scored rows that should never have been scored, and any exclusion
+        # applied first would hide how many there were.
+        print("\n=== multiple-choice flattening: questions that lost their options ===")
+        mc = mc_flatten_audit(d)
+        if len(mc):
+            prev = mc.groupby("dataset")[["pointer", "short_stem", "dangling",
+                                          "visual_ref", "gold_pointer"]].sum()
+            prev.insert(0, "questions", mc.groupby("dataset").size())
+            prev.insert(1, "median_chars", mc.groupby("dataset")["chars"].median())
+            print(f"{'/'.join(MC_DERIVED_DATASETS)} are multiple-choice sets whose "
+                  f"loaders keep the stem and the correct option's text and drop the "
+                  f"distractors. A stem that referred to its options still refers to "
+                  f"them, at nothing. Counted over distinct questions:")
+            print(prev.to_string())
+            print(f"\n`pointer` alone is not the useful flag — read `dangling` "
+                  f"(pointer AND stem < {MC_SELF_CONTAINED_CHARS} chars). A clinical "
+                  f"vignette stays answerable without its options; a bare "
+                  f"'which of the following statements is correct?' does not. The "
+                  f"median-stem-length column is why the two datasets behave "
+                  f"differently despite carrying the same phrase.")
+            mc.to_csv(paths.table(eval_path, "mc_flatten_audit"), index=False)
+            if int(mc["gold_pointer"].sum()):
+                gp = mc.loc[mc["gold_pointer"], ["dataset", "id"]]
+                print(f"\n{len(gp)} questions have a gold that is itself an option "
+                      f"index ('All of the above'), so no open-ended answer can match "
+                      f"it and the item is unscoreable however the system behaves: "
+                      f"{', '.join(gp['id'])}")
+
+        degenerate = option_request_rows(d)
+        print(f"\n{len(degenerate)} answers ask for the material the loader dropped — "
+              f"the option list, or the figure an exam item referred to — instead of "
+              f"answering. These are not abstentions: they carry no rejection string, "
+              f"so the abstention detector counts them as answers and both reference "
+              f"metrics grade a request for clarification against a nutrition fact.")
+        if len(degenerate):
+            by = degenerate.groupby(["source_dataset", "variant"]).size()
+            print(by.to_string())
+            degenerate.to_csv(paths.table(eval_path, "mc_option_requests"), index=False)
+            print(degenerate.drop(columns=[c for c in ("query", "answer")
+                                           if c in degenerate])
+                  .round(3).to_string(index=False))
+            nc = int(degenerate["noncommittal"].sum())
+            print(f"\nThe group is bimodal, so read it split rather than averaged: "
+                  f"{nc} of {len(degenerate)} score ragas_answer_relevancy = 0.0 "
+                  f"EXACTLY, which is RAGAS's noncommittal detector firing on a bare "
+                  f"request with nothing to grade. The other {len(degenerate) - nc} "
+                  f"score in the ordinary band; most of those asked for the options "
+                  f"and then volunteered an answer anyway. The flag is the metric's "
+                  f"verdict rather than a check on the text, so it is not exact — a "
+                  f"bare request can still clear zero — but the mean over the whole "
+                  f"group mixes 'the metric returned a structural zero' with 'the "
+                  f"model answered and was graded', which are different events.")
+            for _, r in degenerate.iterrows():
+                tag = "noncommittal" if r["noncommittal"] else "hedged"
+                print(f"\n  [{r['id']} / {r['variant']} / {tag}]")
+                print(_indent(f"Q: {r['query']}", 4))
+                print(_indent(f"A: {r['answer']}", 4))
+
+            contrast = option_request_contrast(d, degenerate)
+            if len(contrast):
+                print("\n--- within each affected cell: these rows vs the rest ---")
+                print(contrast.round(3).to_string(index=False))
+                contrast.to_csv(paths.table(eval_path, "mc_option_request_contrast"),
+                                index=False)
+                print("Within-cell on purpose: the variant is held fixed, because the "
+                      "variants also differ in whether they may abstain at all, so a "
+                      "cross-variant comparison would answer a different question.\n"
+                      "Expect the three answer metrics to disagree, and note WHICH "
+                      "way. answer_relevancy separates hardest and is effectively a "
+                      "detector for this failure rather than a measurement of it. "
+                      "answer_accuracy is close to a floor: a judge shown a request "
+                      "for clarification against a gold fact has no partial credit to "
+                      "award. answer_correctness moves least and typically reaches no "
+                      "exact zeros at all — it carries a token-overlap component, and "
+                      "these answers echo the stem's vocabulary back while asking for "
+                      "the options, so they collect lexical credit the answer has not "
+                      "earned. Correctness is therefore the metric LEAST able to "
+                      "detect this artifact; if it is cited as a robustness check "
+                      "behind accuracy, say so there.")
+
+            adj = {k: v for k, v in MC_ADJUDICATED.items()
+                   if k in set(degenerate["id"])}
+            if adj:
+                print(f"\n--- manual adjudication of zero-scored hedged rows "
+                      f"({len(adj)} read by hand) ---")
+                print("Not all of the accuracy zeros are the same thing, and the "
+                      "aggregate should not be described as if they were:")
+                for k, v in sorted(adj.items()):
+                    print(_indent(f"{k}: {v}", 4))
+                print(_indent(
+                    "Net: the accuracy floor on these rows is mostly a real miss "
+                    "caused by the missing options, with a thin layer of judge "
+                    "severity on top. Re-crediting the over-harsh one does not "
+                    "change the aggregate, which is the reason to state the "
+                    "caveat rather than to correct the scores.", 4))
+
+            impact = mc_flatten_impact(d, degenerate)
+            if len(impact):
+                print("\n--- what those rows cost the cell they sit in ---")
+                print(impact.round(3).to_string(index=False))
+                impact.to_csv(paths.table(eval_path, "mc_flatten_impact"), index=False)
+                print("`_excl` recomputes the cell without them, `_delta` is the "
+                      "difference. They are a dataset-preparation artifact, so a cell "
+                      "with a large delta should be reported with the sensitivity "
+                      "stated rather than as a property of the system. Note which "
+                      "variant they land in: the abstention clause gives rag/rag_sc a "
+                      "sanctioned exit from an unanswerable question and no_rag has "
+                      "none, so the artifact penalises the baseline arm specifically "
+                      "and inflates the apparent gain from retrieval.")
 
         d, drop_report = drop_eval_errors(d)
         print(f"\n=== dropped {drop_report['n_dropped']} evaluator-failure rows "
