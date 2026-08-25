@@ -164,6 +164,12 @@ REFERENCE_METRICS = {"ragas_scores.ragas_answer_accuracy",
 # those rows is a measurement we want, and dropping them would delete the evidence.
 # Everywhere else abstaining is a non-answer to a question that was in scope.
 ABSTENTION_SCORED_DATASETS = {"medqa"}
+# The variants whose abstention rate is a measurement at all. ``no_rag`` gets a
+# system prompt with no abstention clause and is short-circuited before the
+# rejection check in ``rag.utils._finalize_answer`` ("no_rag has no context to be
+# 'insufficient', so it never abstains here"), so its 0% abstention rate on the
+# probe is a property of the prompt, not a finding about the model.
+ABSTAINING_VARIANTS = ("rag", "rag_sc")
 # ID-context retrieval metrics additionally need a gold reference-context set,
 # which only the synthetic guideline questions carry -> everywhere else null is
 # expected, not an error.
@@ -854,6 +860,55 @@ def metrics_on_abstentions(df, families=ABSTENTION_EXCLUDED_FAMILIES):
         "reads_one": sorted(mid.index[mid > 0.5]),
     }
     return tab, info
+
+
+def probe_non_abstentions(df, datasets=ABSTENTION_SCORED_DATASETS,
+                          variants=ABSTAINING_VARIANTS, max_chars=400):
+    """The out-of-scope probe rows the system ANSWERED instead of declining — one
+    row each, with the query, the answer and the signals, for reading by hand.
+
+    MEDQA is loaded as a rejection probe with the refusal string as its gold
+    (``dataset/MEDQA/loader.py``), so every one of these rows scores ~0 on both
+    reference metrics whatever it says, and no aggregate can tell an out-of-scope
+    hallucination from a question the corpus turned out to cover. Only the rows
+    themselves can, and there are few enough of them to look at.
+
+    ``no_rag`` is excluded (``ABSTAINING_VARIANTS``): it is never offered the
+    abstention instruction, so its rows are answered by construction and would
+    swamp the handful that are a decision. ``retrieval_best`` and
+    ``ctx_relevance`` (the DeepEval context judge, which scores retrieval against
+    the QUESTION and is therefore defined on abstentions too) are the two columns
+    to read first: high on both means the nutrition corpus really does cover the
+    question, which makes the refusal gold wrong for that row rather than the
+    answer.
+
+    Run on the RAW frame — ``prepare`` nulls the faithfulness cells of abstentions.
+    """
+    if "source_dataset" not in df or "variant" not in df:
+        return pd.DataFrame()
+    probe = df[df["source_dataset"].astype(str).isin(datasets)]
+    answered = probe[probe["variant"].astype(str).isin(variants)
+                     & ~ra._abstained(probe)]
+    if not len(answered):
+        return pd.DataFrame()
+
+    cols = [c for c in ("id", "variant", "lang", "retrieval_best", "retrieval_average",
+                        "deepeval_scores.deepeval_contextual_relevance",
+                        "ragas_scores.ragas_faithfulness",
+                        "deepeval_scores.deepeval_faithfulness",
+                        "ragas_scores.ragas_answer_correctness",
+                        "gen_logprob_stats.mean",
+                        "dataset_metadata.original_medqa_answer",
+                        "query", "answer") if c in answered]
+    # Short names, except the logprob mean: stripped to its last component it
+    # becomes a column called "mean" sitting among six other numeric columns.
+    out = answered[cols].rename(columns=lambda c: (
+        "logprob_mean" if c == "gen_logprob_stats.mean" else c.split(".")[-1]))
+    for c in ("query", "answer"):
+        if c in out:
+            out[c] = out[c].map(
+                lambda t: re.sub(r"\s+", " ", str(t)).strip()[:max_chars])
+    return out.sort_values(["id", "variant"])
 
 
 # The DeepEval metrics that persist a per-cell ``{n_verdicts, yes, no, idk}`` tally.
@@ -3126,6 +3181,36 @@ if __name__ == "__main__":
                   f"score_histogram_by_*.csv rather than printed — 12 bins x "
                   f"{hist.index.get_level_values('metric').nunique()} metrics x 5 "
                   f"datasets does not read as a console table.")
+
+        # Still the raw frame: these rows are the ones an exclusion would be most
+        # likely to remove, and they are the evidence for what the probe's
+        # abstention rate actually measures.
+        print("\n=== out-of-scope probe: the rows that did NOT abstain ===")
+        probe_rows = probe_non_abstentions(d)
+        probe_all = d[d["source_dataset"].astype(str).isin(ABSTENTION_SCORED_DATASETS)]
+        n_elig = int(probe_all["variant"].astype(str).isin(ABSTAINING_VARIANTS).sum())
+        print(f"{'/'.join(sorted(ABSTENTION_SCORED_DATASETS))} is a rejection probe whose "
+              f"gold IS the refusal string, so an answered row scores ~0 on both "
+              f"reference metrics whatever it says. {len(probe_rows)} of the {n_elig} "
+              f"rows that could abstain answered instead "
+              f"({probe_rows['id'].nunique() if len(probe_rows) else 0} distinct "
+              f"questions); the {len(probe_all) - n_elig} no_rag rows are excluded "
+              f"because that variant is never given the abstention instruction.")
+        if len(probe_rows):
+            print(probe_rows.drop(columns=[c for c in ("query", "answer")
+                                           if c in probe_rows])
+                  .round(3).to_string(index=False))
+            probe_rows.to_csv(paths.table(eval_path, "probe_non_abstentions"),
+                              index=False)
+            print("\nread these by hand — high retrieval_best AND contextual_relevance "
+                  "means the corpus does cover the question (clinical-nutrition "
+                  "guidelines are written about disease states), so the refusal gold is "
+                  "wrong for that row rather than the answer being a hallucination:")
+            for _, r in probe_rows.iterrows():
+                print(f"\n  [{r['id']} / {r['variant']}] gold: "
+                      f"{r.get('original_medqa_answer', '?')}")
+                print(_indent(f"Q: {r['query']}", 4))
+                print(_indent(f"A: {r['answer']}", 4))
 
         d, drop_report = drop_eval_errors(d)
         print(f"\n=== dropped {drop_report['n_dropped']} evaluator-failure rows "
