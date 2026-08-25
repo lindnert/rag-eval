@@ -597,6 +597,113 @@ def metric_error_reasons(df):
     return out
 
 
+def _metric_error_cells(df, metric):
+    """Boolean mask of rows where the evaluator recorded an exception for one metric.
+
+    Both evaluators write per-cell errors, in different shapes (see
+    ``metric_error_reasons``), so the column is looked up rather than derived.
+    """
+    for col in (f"ragas_scores.ragas_metric_errors.{metric.split('.')[-1]}",
+                f"{metric}_error"):
+        if col in df:
+            return _nonempty(df[col])
+    return pd.Series(False, index=df.index)
+
+
+def error_length_profile(df, metrics=None, by="source_dataset", text_col="answer",
+                         min_errors=1):
+    """Is a metric's failure rate a function of how long the answer was?
+
+    The metric-status table says HOW MANY cells a scorer failed to produce and
+    ``metric_error_reasons`` says which exception it raised; neither says whether the
+    failures are a random subset of the rows or a systematically different one. That
+    difference decides how the gap is reported: an exception that fires uniformly
+    costs precision, while one that fires on the longest answers censors the cohort,
+    and a mean computed over what is left is a mean over the short answers.
+
+    ``LengthFinishReasonError`` is the case that motivated this — the judge's own
+    completion hits its token cap, which is a property of how much text it was asked
+    to decompose, so the failed cells should be the long ones. Reporting the two
+    medians side by side is what turns "40 cells are missing" into a statement about
+    which 40.
+
+    One row per (metric, ``by``-group) with at least ``min_errors`` failures, so the
+    table lists only the cells where there is something to explain. Columns:
+    ``n_attempted`` (rows where the metric either landed a value or recorded an
+    exception — the scorer's own denominator, which is NOT the applicable-cell count
+    in the status table: a cell can be skipped as ``na_*`` without either); ``n_scored``
+    / ``n_error`` / ``error_rate``; ``error_types`` (the exception classes, with counts
+    where there is more than one); and the ``text_col`` length in characters —
+    ``len_med_scored`` against ``len_med_error``, with the means and the errored p90
+    alongside, since a median pair can hide a heavy tail.
+
+    Run on the RAW frame: ``prepare`` nulls metric cells, which would move rows out of
+    ``n_scored`` for reasons that have nothing to do with the scorer failing.
+    """
+    if text_col not in df:
+        return pd.DataFrame()
+    metrics = metrics or [c for c in ev.metric_cols(df)
+                          if _metric_error_cells(df, c).any()]
+    length = df[text_col].fillna("").astype(str).str.len()
+    by = [by] if isinstance(by, str) else list(by or [])
+    rows = []
+    for metric in sorted(set(metrics)):
+        err = _metric_error_cells(df, metric)
+        if metric not in df or not err.any():
+            continue
+        val = df[metric]
+        # "Attempted" is value-or-exception. A cell with neither was never tried (the
+        # evaluators skip whole metric families on a rejected row), and counting those
+        # into the denominator would report a skip as a success.
+        scored = _nonempty(val) if val.dtype == object else val.notna()
+        scored = scored & ~err
+        attempted = scored | err
+        groups = ([(name, g) for name, g in df.groupby(by, observed=True)]
+                  if by else [((), df)])
+        for name, g in groups:
+            name = name if isinstance(name, tuple) else (name,)
+            idx = g.index
+            e, s = err.loc[idx], scored.loc[idx]
+            n_err, n_ok = int(e.sum()), int(s.sum())
+            if n_err < min_errors:
+                continue
+            n_att = int(attempted.loc[idx].sum())
+            types = _error_types(df, metric, idx[e])
+            le, ls = length.loc[idx[e]], length.loc[idx[s]]
+            rows.append(dict(zip(by, name), **{
+                "metric": metric.split(".")[-1],
+                "n_attempted": n_att, "n_scored": n_ok, "n_error": n_err,
+                "error_rate": n_err / n_att if n_att else _NAN,
+                "error_types": types,
+                "len_med_scored": float(ls.median()) if n_ok else _NAN,
+                "len_med_error": float(le.median()) if n_err else _NAN,
+                "len_mean_scored": float(ls.mean()) if n_ok else _NAN,
+                "len_mean_error": float(le.mean()) if n_err else _NAN,
+                "len_p90_error": float(le.quantile(0.9)) if n_err else _NAN,
+            }))
+    out = pd.DataFrame(rows)
+    if not len(out):
+        return out
+    return (out.set_index(["metric"] + by).sort_index() if by
+            else out.set_index("metric").sort_index())
+
+
+def _error_types(df, metric, idx):
+    """The exception classes behind a set of failed cells, as one printable string —
+    bare when there is only one, ``"Type xN"`` joined by ``+`` when there are several.
+    """
+    for col in (f"ragas_scores.ragas_metric_errors.{metric.split('.')[-1]}",
+                f"{metric}_error"):
+        if col in df:
+            vc = (df.loc[idx, col].astype(str).str.split(":").str[0].str.strip()
+                  .value_counts())
+            if not len(vc):
+                return ""
+            return (vc.index[0] if len(vc) == 1
+                    else " + ".join(f"{k} x{v}" for k, v in vc.items()))
+    return ""
+
+
 # The three metric families ``classify_metrics`` marks ``na_rejected``, in the order
 # the report argues them. Grouped rather than merged because the three exclusions
 # rest on DIFFERENT evidence, and one table showing all three side by side is what
@@ -1136,6 +1243,26 @@ def metric_error_report(df, cls=None, source=None):
             if missing > 0:
                 emit(f"      {missing} error cell(s) with no recorded cause — the value "
                      f"simply never landed")
+
+            # WHICH cells failed, not just how many. An exception that fires on the
+            # longest answers censors the cohort, so the surviving mean describes the
+            # short ones; one that fires uniformly only costs n. The two medians are
+            # what tells those apart, and the claim "the failures are the long answers"
+            # has to be read off a table rather than asserted from the exception name.
+            lp = error_length_profile(df)
+            flags["error_length_profile"] = lp
+            if len(lp):
+                emit("")
+                emit(f"    which cells failed — answer length (characters) on "
+                     f"the scored vs the errored cells of the same metric x dataset:")
+                emit(_indent(lp.round(3).to_string(), 6))
+                emit(f"      n_attempted = value landed OR exception recorded, which is "
+                     f"the scorer's own denominator and not the applicable-cell count "
+                     f"above (a cell can be skipped as na_* without either). Read "
+                     f"len_med_error against len_med_scored: a gap means the missing "
+                     f"cells are a length-selected subset, so that metric's remaining "
+                     f"mean is computed over the shorter answers and its coverage "
+                     f"limit belongs in the text.")
         else:
             emit("    no recorded cause available: this file predates the per-metric "
                  "error fields (ragas_metric_errors / deepeval_*_error)")
@@ -1275,6 +1402,259 @@ def metric_distribution(df, by=None, metrics=None):
     return ev.metric_summary_by(df, by, metrics)
 
 
+# The range each score can take BY DEFINITION, read off the scorer's source rather
+# than off the data: ``(lo, hi, basis, definition)``. The point is that "every score
+# I observed is in [0, 1]" is not the same statement as "this score is a [0, 1]
+# score", and only the second one licenses reporting a metric as a percentage or
+# feeding it to a test that assumes a bounded scale.
+#
+# Three of these are similarities, and ragas leaves all three UNCLIPPED:
+# ``SemanticSimilarity`` returns the raw dot product of two L2-normalised
+# embeddings (``_answer_similarity.py``; ``threshold`` is None here, so no
+# binarisation), and ``ResponseRelevancy`` returns the mean cosine between the
+# question and the questions it regenerates from the answer
+# (``_answer_relevance.py``). A cosine is in [-1, 1], so those metrics have a
+# negative floor whatever the observed minimum happens to be.
+#
+# ``ragas_answer_accuracy`` is NOT one of them despite the name suggesting a
+# similarity: ragas's ``AnswerAccuracy`` (``_nv_metrics.py``) asks two independently
+# prompted judges for a rating in {0, 2, 4}, maps each to {0, 0.5, 1.0} and averages
+# them, so its support is the five-point grid {0, 0.25, 0.5, 0.75, 1.0} and it cannot
+# leave [0, 1] by construction.
+SCORE_BOUNDS = {
+    "ragas_scores.ragas_faithfulness": (
+        0.0, 1.0, "LLM ratio",
+        "supported statements / statements, one NLI verdict per statement"),
+    "ragas_scores.ragas_answer_relevancy": (
+        -1.0, 1.0, "cosine",
+        "mean cosine(question, 3 questions regenerated from the answer), "
+        "multiplied by 0 if every regeneration is judged noncommittal"),
+    "ragas_scores.ragas_faithfulness_with_hhem": (
+        0.0, 1.0, "NLI probability",
+        "mean HHEM-2.1 entailment probability over the answer's statements"),
+    "ragas_scores.ragas_answer_accuracy": (
+        0.0, 1.0, "judge grid",
+        "mean of two independent LLM ratings in {0, 2, 4}, rescaled by /4 - "
+        "a 5-level grid, not a similarity"),
+    "ragas_scores.ragas_answer_correctness": (
+        -0.25, 1.0, "cosine (25%)",
+        "0.75 x statement-level F1 + 0.25 x cosine(answer, reference); the "
+        "cosine term is raw, so the composite floor is 0.75x0 + 0.25x(-1)"),
+    "ragas_scores.ragas_id_context_recall": (
+        0.0, 1.0, "set overlap", "gold chunk ids retrieved / gold chunk ids"),
+    "ragas_scores.ragas_id_context_precision": (
+        0.0, 1.0, "set overlap", "gold chunk ids retrieved / chunks retrieved"),
+    "ragas_scores.ragas_id_context_ap": (
+        0.0, 1.0, "set overlap", "average precision over the ranked chunk ids"),
+    "deepeval_scores.deepeval_faithfulness": (
+        0.0, 1.0, "LLM ratio",
+        "yes verdicts / claims (penalize_ambiguous_claims=True, so an idk scores 0)"),
+    "deepeval_scores.deepeval_relevance": (
+        0.0, 1.0, "LLM ratio", "relevant statements / statements in the answer"),
+    "deepeval_scores.deepeval_contextual_relevance": (
+        0.0, 1.0, "LLM ratio", "relevant statements / statements in the contexts"),
+}
+
+# What an unlisted metric is assumed to be. Stated rather than silently defaulted,
+# because a new metric that is in fact a similarity would otherwise be audited
+# against the wrong floor and pass.
+DEFAULT_SCORE_BOUND = (0.0, 1.0, "assumed", "not declared in SCORE_BOUNDS")
+
+
+def score_range_audit(df, metrics=None, bounds=None):
+    """Did any score leave the range its own definition allows, and how close did it
+    come? One row per metric, on the RAW numeric cells.
+
+    Motivation. Several of these metrics are cosine similarities that ragas does not
+    clip (see ``SCORE_BOUNDS``), so their true floor is negative even though every
+    table in this report shows them between 0 and 1. That matters in two directions.
+    A negative value that DID occur is not a low score, it is a value outside the
+    scale the results chapter describes, and it silently drags a mean below what the
+    metric's own documentation says is possible. A negative value that did NOT occur
+    is a fact worth stating rather than assuming: the audit turns "presumably fine"
+    into a count.
+
+    Columns: ``basis`` (what the number is - a cosine, a ratio of LLM verdicts, a
+    grid of judge ratings), ``can_be_negative`` (the whole question, decided by the
+    definition and not by the sample); the declared ``lo`` / ``hi`` against the
+    observed ``min`` / ``max``; ``n_below`` / ``n_above`` / ``n_negative`` (violations
+    - all three should be 0); ``margin_to_lo``, the distance from the observed
+    minimum to the declared floor, which is the only column that says how NEAR a
+    negative value the run came rather than merely that none appeared; and
+    ``n_unique``, which separates a continuous score from a discrete grid that
+    ``score_levels`` should be read for instead.
+
+    Run on the raw frame. ``prepare`` nulls the abstained cells, and an out-of-range
+    value on a row that is later excluded is still a scorer fact worth knowing.
+    """
+    bounds = SCORE_BOUNDS if bounds is None else bounds
+    metrics = metrics or score_cols(df)
+    rows = []
+    for metric in metrics:
+        if metric not in df:
+            continue
+        val = pd.to_numeric(df[metric], errors="coerce").dropna()
+        if val.empty:
+            continue
+        lo, hi, basis, _ = bounds.get(metric, DEFAULT_SCORE_BOUND)
+        rows.append({
+            "metric": metric.split(".")[-1], "basis": basis,
+            "can_be_negative": lo < 0, "n_scored": len(val),
+            "lo": lo, "hi": hi,
+            "min": float(val.min()), "max": float(val.max()),
+            "n_below": int((val < lo - 1e-9).sum()),
+            "n_above": int((val > hi + 1e-9).sum()),
+            "n_negative": int((val < 0).sum()),
+            "margin_to_lo": float(val.min() - lo),
+            "n_unique": int(val.nunique()),
+        })
+    out = pd.DataFrame(rows)
+    return out.set_index("metric") if len(out) else out
+
+
+def score_definitions(metrics=None, bounds=None):
+    """``{short metric name: definition}`` for the metrics in ``bounds`` - the legend
+    that makes ``score_range_audit`` readable without opening the scorer's source.
+    Kept out of the table itself so the numeric columns stay printable.
+    """
+    bounds = SCORE_BOUNDS if bounds is None else bounds
+    keys = list(bounds) if metrics is None else [m for m in metrics if m in bounds]
+    return {k.split(".")[-1]: bounds[k][3] for k in keys}
+
+
+def score_levels(df, metrics=None, by=None, max_levels=8):
+    """The full value-frequency table for the metrics that emit only a handful of
+    distinct values - the honest form of a "distribution" for a discrete score.
+
+    ``metric_distribution`` reports mean, quartiles and the two rail fractions, which
+    is the right summary for a continuous metric and a misleading one for a grid: the
+    mean of ``ragas_answer_accuracy`` sits near the middle of its five levels while
+    almost nothing is scored there, and a quartile of a five-point grid is just one
+    of the five points. This lists every level with its count instead, so a bimodal
+    metric reads as bimodal.
+
+    Metrics are auto-selected as those with at most ``max_levels`` distinct values,
+    so the table covers whatever grids a run happens to contain. ``by`` (e.g.
+    ``"source_dataset"``, ``"variant"``, or a list) breaks each metric down within
+    the group, with ``frac`` normalised inside the group so rows are comparable
+    across groups of different sizes.
+    """
+    cand = metrics or score_cols(df)
+    by = [by] if isinstance(by, str) else list(by or [])
+    rows = []
+    for metric in cand:
+        if metric not in df:
+            continue
+        val = pd.to_numeric(df[metric], errors="coerce")
+        if val.dropna().empty or (metrics is None and val.nunique() > max_levels):
+            continue
+        groups = ([(name, g) for name, g in val.groupby(
+                      [df[c] for c in by], observed=True)]
+                  if by else [((), val)])
+        for name, g in groups:
+            name = name if isinstance(name, tuple) else (name,)
+            g = g.dropna()
+            if g.empty:
+                continue
+            vc = g.value_counts().sort_index()
+            for level, n in vc.items():
+                rows.append(dict(zip(by, name), **{
+                    "metric": metric.split(".")[-1], "value": float(level),
+                    "n": int(n), "frac": float(n) / len(g),
+                }))
+    out = pd.DataFrame(rows)
+    if not len(out):
+        return out
+    return out.set_index(["metric"] + by + ["value"]).sort_index()
+
+
+OUT_OF_RANGE_BIN = "outside range"
+
+DEFAULT_SCORE_BINS = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+
+
+def score_histogram(df, metrics=None, bins=DEFAULT_SCORE_BINS, by=None, min_levels=9):
+    """The binned distribution of the CONTINUOUS scores, with the two rails split out
+    as rows of their own.
+
+    The complement of ``score_levels``: that one lists every value of a metric whose
+    support is a handful of points, this one bins the metrics that emit too many
+    distinct values to list. Between them every score column in the run is covered.
+
+    Why the rails get their own rows rather than falling into the first and last bin.
+    An exact 0.0 or 1.0 is usually produced by a different mechanism than the values
+    around it, so pooling it into ``(0.0, 0.1]`` averages two things together.
+    ``ragas_answer_relevancy`` is the clearest case: its score is
+    ``mean cosine(...) * int(not all_noncommittal)``, so an exact 0.0 is the
+    noncommittal GATE firing — the judge decided the answer evades the question and
+    multiplied the similarity away — and not a cosine that happened to be zero. Those
+    rows are a refusal-detection event, and reading them as "relevance near zero"
+    both misdescribes them and hides how far the real distribution's floor actually
+    sits above zero.
+
+    Columns: ``n``, ``frac`` (within the metric, or within the ``by`` group), and
+    ``cum_frac``, which is what a sentence like "90% of rows score below 0.8" is read
+    off. Bin edges are right-closed, so ``(0.5, 0.6]`` includes 0.6.
+
+    Metrics are auto-selected as those with at least ``min_levels`` distinct values.
+    Pass ``metrics`` explicitly to bin one regardless.
+    """
+    cand = metrics or score_cols(df)
+    by = [by] if isinstance(by, str) else list(by or [])
+    edges = list(bins)
+    labels = ([f"= {edges[0]:g}"]
+              + [f"({edges[k]:g}, {edges[k + 1]:g}]" for k in range(len(edges) - 1)]
+              + [f"= {edges[-1]:g}"])
+    rows = []
+    for metric in cand:
+        if metric not in df:
+            continue
+        val = pd.to_numeric(df[metric], errors="coerce")
+        if val.dropna().empty or (metrics is None and val.nunique() < min_levels):
+            continue
+        groups = ([(name, g) for name, g in val.groupby(
+                      [df[c] for c in by], observed=True)]
+                  if by else [((), val)])
+        for name, g in groups:
+            name = name if isinstance(name, tuple) else (name,)
+            g = g.dropna()
+            if g.empty:
+                continue
+            # The interior is everything strictly between the rails; the rails are
+            # counted by equality so a bin never claims a row twice.
+            lo_hits, hi_hits = (g == edges[0]), (g == edges[-1])
+            interior = g[~(lo_hits | hi_hits)]
+            counts = {lab: 0 for lab in labels}
+            counts[labels[0]] = int(lo_hits.sum())
+            counts[labels[-1]] = int(hi_hits.sum())
+            n_out = 0
+            if len(interior):
+                # No ``include_lowest``: the interior is strictly inside the rails by
+                # construction, so a value in (0, 0.1] already lands in the first bin
+                # and widening it would only invent a left edge below ``lo``.
+                cut = pd.cut(interior, bins=edges, right=True, labels=labels[1:-1])
+                for lab, n in cut.value_counts().items():
+                    counts[lab] += int(n)
+                # Anything ``cut`` could not place is outside [lo, hi] — impossible for
+                # a well-behaved metric, which is exactly why it gets a visible row
+                # instead of silently dropping out of the fractions.
+                n_out = int(cut.isna().sum())
+            cum = 0
+            for lab in labels + ([OUT_OF_RANGE_BIN] if n_out else []):
+                n = n_out if lab == OUT_OF_RANGE_BIN else counts[lab]
+                cum += n
+                rows.append(dict(zip(by, name), **{
+                    "metric": metric.split(".")[-1], "bin": lab, "n": n,
+                    "frac": n / len(g), "cum_frac": cum / len(g),
+                }))
+    out = pd.DataFrame(rows)
+    if not len(out):
+        return out
+    out["bin"] = pd.Categorical(out["bin"], labels + [OUT_OF_RANGE_BIN],
+                                ordered=True)
+    return out.set_index(["metric"] + by + ["bin"]).sort_index()
+
+
 def means_by(df, by="source_dataset", metrics=None):
     """Mean of every metric grouped by a column (default ``source_dataset``).
 
@@ -1306,6 +1686,14 @@ def _corr(x, y):
     return n, x[m].corr(y[m]), x[m].corr(y[m], method="spearman")
 
 
+def _pinned(s):
+    """Share of ``s`` sitting on its single most common value — 1.0 when the metric
+    returned one number for the whole group, which is when a correlation with it stops
+    meaning anything.
+    """
+    return float(s.value_counts(normalize=True).iloc[0]) if len(s) else _NAN
+
+
 def metric_agreement(df, pairs=METRIC_PAIRS, by=None, tol=0.2,
                      drop_rejections_for_faith=True):
     """How closely each comparable metric pair agrees, overall or per ``by`` group.
@@ -1318,6 +1706,17 @@ def metric_agreement(df, pairs=METRIC_PAIRS, by=None, tol=0.2,
     only frac_within exposes them. Low correlation with a high frac_within means
     both hug the same rail (agree by default, not by signal). Faithfulness pairs
     drop abstentions by default (faithfulness is ill-defined on a non-answer).
+
+    ``pin_a`` / ``pin_b`` (share of the paired rows sitting on that metric's single
+    most common value) and ``nuniq_a`` / ``nuniq_b`` are the guard on the two
+    correlation columns; a/b are the first and second metric of the pair, the same
+    order ``mean_diff`` subtracts in. A correlation needs variance in BOTH variables,
+    so once one of them is on one value for most of the group, r is carried by the
+    remaining handful of rows and is close to uninterpretable however tight its
+    decimals look. The signature to watch for is a near-zero r beside a HIGH
+    ``frac_within`` and a ``pin_*`` near 1: that is not two metrics disagreeing, it is
+    one metric having nothing to say. Read it before attributing a low r to the
+    metrics measuring different things.
 
     ``by="source_dataset"`` / ``by="variant"`` gives the per-group table. ``by`` may
     also be a LIST of columns for the crossed table (``["source_dataset",
@@ -1352,6 +1751,8 @@ def metric_agreement(df, pairs=METRIC_PAIRS, by=None, tol=0.2,
                 "pearson": pear, "spearman": spear,
                 "mean_diff": diff.mean() if n else _NAN,
                 "frac_within": float((diff.abs() <= tol).mean()) if n else _NAN,
+                "pin_a": _pinned(x[keep]), "pin_b": _pinned(y[keep]),
+                "nuniq_a": int(x[keep].nunique()), "nuniq_b": int(y[keep].nunique()),
             })
         return pd.DataFrame(rows)
 
@@ -1369,7 +1770,8 @@ def metric_agreement(df, pairs=METRIC_PAIRS, by=None, tol=0.2,
                 frame[k] = str(v)
         frames.append(frame)
     cols = ["pair", "group", "family", "n", "pearson", "spearman",
-            "mean_diff", "frac_within"] + (keys if len(keys) > 1 else [])
+            "mean_diff", "frac_within", "pin_a", "pin_b", "nuniq_a",
+            "nuniq_b"] + (keys if len(keys) > 1 else [])
     return pd.concat(frames, ignore_index=True)[cols]
 
 
@@ -2641,7 +3043,89 @@ if __name__ == "__main__":
 
         print("\n=== metric-computation sanity (raw frame) ===")
         cls = classify_metrics(d)
-        metric_error_report(d, cls, source=eval_path)
+        err_flags = metric_error_report(d, cls, source=eval_path)
+        # The one table in that report worth having as a file: it is the evidence for
+        # every "metric X could not be scored on N of these rows" sentence, and the
+        # length columns are what make such a sentence a coverage limit rather than a
+        # footnote about n.
+        lp = err_flags.get("error_length_profile")
+        if lp is not None and len(lp):
+            lp.to_csv(paths.table(eval_path, "error_length_profile"))
+
+        # (0d) is the scale what the results chapter says it is? --------------------
+        # Still the RAW frame, deliberately: this audits what the SCORERS emitted, so
+        # a value outside its range must be caught before any exclusion can hide it,
+        # and the level counts below cover the abstained cells that `prepare` nulls.
+        print("\n=== score range audit: does any metric leave its declared range? ===")
+        print("raw frame, before any exclusion. Read before the distribution "
+              "table further down, because it is what licenses "
+              "reading these numbers as [0, 1] scores at all. Three of the ragas "
+              "metrics are cosine similarities that the library does not clip, so "
+              "their definitional floor is negative (can_be_negative=True) however "
+              "the sample happens to look; n_below / n_above / n_negative are the "
+              "violations and must all be 0, and margin_to_lo says how close the run "
+              "actually came to the floor.")
+        audit = score_range_audit(d)
+        if len(audit):
+            print(audit.round(4).to_string())
+            audit.to_csv(paths.table(eval_path, "score_range_audit"))
+            bad = audit[(audit["n_below"] + audit["n_above"]) > 0]
+            print(f"\nout-of-range cells: {int(bad[['n_below', 'n_above']].to_numpy().sum())}"
+                  + (f" — in {', '.join(bad.index)}; those means are computed over a "
+                     f"scale wider than the one reported" if len(bad)
+                     else " — every score is inside its own definition's range."))
+            print("\nwhat each number is:")
+            for name, definition in score_definitions().items():
+                print(f"  {name:32s} {definition}")
+
+        print("\n--- discrete metrics: every level with its count ---")
+        print("raw frame too, so the abstained rows are still in these counts - for "
+              "ragas_answer_accuracy that is the point, since an abstention scored "
+              "against a MEDQA gold that is itself a refusal is a legitimate 1.0. "
+              "mean and quartiles describe a continuous score; for a metric whose "
+              "support is a handful of points they invent values it never takes. "
+              "ragas_answer_accuracy is the case that matters: it is the mean of two "
+              "judge ratings in {0, 2, 4}/4, so 0.25 and 0.75 can ONLY arise from the "
+              "two judges disagreeing, and its mean lands between two levels that are "
+              "themselves nearly empty.")
+        lev = score_levels(d)
+        if len(lev):
+            print(lev.round(3).to_string())
+            lev.to_csv(paths.table(eval_path, "score_levels"))
+            for by in ("source_dataset", "variant"):
+                tab = score_levels(d, by=by)
+                if not len(tab):
+                    continue
+                print(f"\n--- the same levels by {by} ---")
+                print(tab.round(3).to_string())
+                tab.to_csv(paths.table(eval_path, f"score_levels_by_{by}"))
+
+
+
+        print("")
+        print("--- continuous metrics: binned, with the exact rails split out ---")
+        print("the complement of the table above; between them every score column "
+              "is covered. An exact 0.0 or 1.0 gets its own row because it is "
+              "usually a different mechanism from the values around it: every 0.0 "
+              "in ragas_answer_relevancy is the noncommittal GATE firing (the score "
+              "is mean-cosine x int(not all_noncommittal), so the judge zeroed a "
+              "similarity it had already computed), not a low similarity. Read "
+              "cum_frac to see where a metric's effective floor really sits — a "
+              "cosine-based score does not use the bottom half of [0, 1].")
+        hist = score_histogram(d)
+        if len(hist):
+            print(hist.round(4).to_string())
+            hist.to_csv(paths.table(eval_path, "score_histogram"))
+            for by in ("source_dataset", "variant"):
+                tab = score_histogram(d, by=by)
+                if not len(tab):
+                    continue
+                tab.to_csv(paths.table(eval_path, f"score_histogram_by_{by}"))
+            print("")
+            print(f"the by-dataset and by-variant cuts are written to "
+                  f"score_histogram_by_*.csv rather than printed — 12 bins x "
+                  f"{hist.index.get_level_values('metric').nunique()} metrics x 5 "
+                  f"datasets does not read as a console table.")
 
         d, drop_report = drop_eval_errors(d)
         print(f"\n=== dropped {drop_report['n_dropped']} evaluator-failure rows "
@@ -2712,6 +3196,12 @@ if __name__ == "__main__":
 
         # (2b) metric validation ----------------------------------------------------
         print("\n=== metric agreement (comparable metrics, overall) ===")
+        print("pin_a / pin_b are the guard on pearson/spearman: the share of the "
+              "paired rows on that metric's most common value (a/b = first/second "
+              "in the pair name). A near-zero r next to a HIGH frac_within and a "
+              "pin_* near 1 is range restriction, not disagreement — one metric "
+              "returned essentially one number, so there is nothing for the other "
+              "to correlate with and r rests on the few rows that moved.")
         ag = metric_agreement(d)
         print(ag.round(3).to_string(index=False))
         ag.to_csv(paths.table(eval_path, "eval_metric_agreement"), index=False)
