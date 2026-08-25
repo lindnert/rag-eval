@@ -107,6 +107,7 @@ paired with; see ``analysis.paths``. The figures themselves live in
 
 import math
 import re
+from typing import NamedTuple
 from datetime import datetime
 from pathlib import Path
 
@@ -229,6 +230,24 @@ RETRIEVAL_METRICS = [
     "deepeval_scores.deepeval_faithfulness", "deepeval_scores.deepeval_contextual_relevance",
     "ragas_scores.ragas_id_context_precision", "ragas_scores.ragas_id_context_recall",
 ]
+# Which metrics get a paired variant test, and against which variants.
+#
+# The pairs differ per metric and not by preference: faithfulness and context
+# relevance are only defined where there are retrieved contexts, so pairing them
+# against ``no_rag`` yields an empty intersection. Listing the pairs explicitly
+# keeps that a documented property of the metric rather than a silent empty
+# table. All three faithfulness scorers are here on purpose -- run side by side
+# on the same pairs, they say whether a variant effect is a property of the
+# system or of one judge.
+VARIANT_COMPARISONS = (
+    ("ragas_scores.ragas_answer_correctness", (("rag", "no_rag"), ("rag_sc", "rag"))),
+    ("deepeval_scores.deepeval_relevance", (("rag", "no_rag"), ("rag_sc", "rag"))),
+    ("deepeval_scores.deepeval_faithfulness", (("rag_sc", "rag"),)),
+    ("ragas_scores.ragas_faithfulness", (("rag_sc", "rag"),)),
+    ("ragas_scores.ragas_faithfulness_with_hhem", (("rag_sc", "rag"),)),
+    ("deepeval_scores.deepeval_contextual_relevance", (("rag_sc", "rag"),)),
+)
+
 # Pipeline signals shown alongside the worst/best rows.
 DISPLAY_SIGNALS = ["retrieval_best", "gen_logprob_stats.mean", "reretrieval_gain", "rejected"]
 NUM_SIGNALS = ["retrieval_best", "gen_logprob_stats.mean", "reretrieval_gain"]
@@ -730,6 +749,183 @@ def metrics_on_abstentions(df, families=ABSTENTION_EXCLUDED_FAMILIES):
     return tab, info
 
 
+# The DeepEval metrics that persist a per-cell ``{n_verdicts, yes, no, idk}`` tally.
+# ``deepeval_contextual_relevance`` is listed even though it currently tallies zeros
+# on every row: its metric object exposes ``verdicts_list`` (grouped per context)
+# rather than ``verdicts``, and the persistence helper in
+# ``evaluation/deepeval_eval.py`` reads only the latter. Keeping it in the list means
+# the table reports "this metric kept no verdicts" instead of silently omitting it.
+VERDICT_METRICS = ("deepeval_faithfulness", "deepeval_relevance",
+                   "deepeval_contextual_relevance")
+
+VERDICT_COHORTS = ("answered", "abstained")
+
+
+def _verdict_frame(df, metric):
+    """The four tally columns of one metric as a numeric frame, or ``None``.
+
+    Rows whose ``n_verdicts`` is 0 or missing are dropped: they mean the metric never
+    ran on that row (the evaluators skip answer relevancy on a refusal), which is a
+    different statement from "it ran and returned nothing", and counting them in would
+    deflate every fraction below by an arbitrary amount.
+    """
+    cols = {k: f"{_score_col(metric)}_verdicts.{k}"
+            for k in ("n_verdicts", "yes", "no", "idk")}
+    if not all(c in df for c in cols.values()):
+        return None
+    out = pd.DataFrame({k: pd.to_numeric(df[c], errors="coerce")
+                        for k, c in cols.items()}, index=df.index)
+    return out[out["n_verdicts"].fillna(0) > 0]
+
+
+def verdict_shape(df, metrics=VERDICT_METRICS, by=None, cohorts=VERDICT_COHORTS):
+    """What the DeepEval judges actually returned, at the CLAIM level, per cohort.
+
+    ``metrics_on_abstentions`` reports ``frac_idk`` on the abstained rows only, which
+    is enough to justify excluding them but not enough to support any claim about the
+    run: the abstentions are a few hundred near-identical refusals, so a shrug rate
+    measured on them describes one sentence rather than the data. This is the same
+    tally on the ANSWERED rows — the cohort every mean, correlation and paired test in
+    this report is computed over — with the abstained cohort kept alongside as the
+    contrast.
+
+    Why the claim level rather than the score level: DeepEval's verdict prompt reserves
+    "no" for a claim the context DIRECTLY contradicts, so a claim the context merely
+    fails to mention comes back "idk". With ``penalize_ambiguous_claims=True`` (enabled
+    2026-08-10) an "idk" contributes 0 exactly like a "no", so the score is
+    ``yes / n_verdicts`` and ``frac_idk`` is precisely the share of the score that turns
+    on that convention rather than on any contradiction having been found. RAGAS's NLI
+    prompt has no third option — a statement is supported or it is not — so this column
+    is the mechanical difference between two metrics that carry the same name. See
+    ``idk_counterfactual`` for what the convention does to their agreement.
+
+    Columns: ``n_rows`` (rows on which the metric returned at least one verdict);
+    ``n_verdicts`` and ``verdicts_per_row`` (the claim decomposition — a refusal yields
+    one claim, a real answer several); ``yes`` / ``no`` / ``idk`` counts and their
+    shares of ``n_verdicts``; ``rows_any_idk`` / ``rows_all_idk``, the ROW-level view of
+    the same thing (a metric can have a modest ``frac_idk`` and still shrug at least
+    once on most rows, and it is rows that the reported mean averages over);
+    ``pooled_score`` = ``frac_yes``, the claim-weighted score under the current
+    convention; and ``pooled_if_idk_yes`` = ``frac_yes + frac_idk``, the same quantity
+    under the convention in force before 2026-08-10. The gap between those two is the
+    entire effect of the setting.
+
+    Runs on either frame: ``prepare`` nulls score columns, not the ``*_verdicts.*``
+    tallies, so the abstained cohort is still countable afterwards. ``by`` adds a
+    breakdown (e.g. ``"source_dataset"`` or ``"variant"``) and is applied within each
+    cohort, never across them.
+    """
+    rej = ra._abstained(df)
+    by = [by] if isinstance(by, str) else list(by or [])
+    rows = []
+    for metric in metrics:
+        tal = _verdict_frame(df, metric)
+        if tal is None:
+            continue
+        for cohort in cohorts:
+            mask = rej if cohort == "abstained" else ~rej
+            sub = tal[mask.reindex(tal.index, fill_value=False)]
+            groups = ([(name, g) for name, g in sub.groupby(
+                          [df.loc[sub.index, c] for c in by], observed=True)]
+                      if by and len(sub) else [((), sub)])
+            for name, g in groups:
+                name = name if isinstance(name, tuple) else (name,)
+                n_rows, n_v = len(g), float(g["n_verdicts"].sum())
+                if not n_rows:
+                    continue
+                y, n, i = (float(g[k].sum()) for k in ("yes", "no", "idk"))
+                rows.append(dict(zip(by, name), **{
+                    "metric": metric, "cohort": cohort,
+                    "n_rows": n_rows, "n_verdicts": int(n_v),
+                    "verdicts_per_row": n_v / n_rows,
+                    "yes": int(y), "no": int(n), "idk": int(i),
+                    "frac_yes": y / n_v if n_v else _NAN,
+                    "frac_no": n / n_v if n_v else _NAN,
+                    "frac_idk": i / n_v if n_v else _NAN,
+                    "rows_any_idk": float((g["idk"] > 0).mean()),
+                    "rows_all_idk": float((g["idk"] >= g["n_verdicts"]).mean()),
+                    "pooled_score": y / n_v if n_v else _NAN,
+                    "pooled_if_idk_yes": (y + i) / n_v if n_v else _NAN,
+                }))
+    out = pd.DataFrame(rows)
+    if not len(out):
+        return out
+    out["metric"] = pd.Categorical(out["metric"], list(metrics), ordered=True)
+    out["cohort"] = pd.Categorical(out["cohort"], list(cohorts), ordered=True)
+    return out.set_index(["metric", "cohort"] + by).sort_index()
+
+
+def empty_verdict_metrics(df, metrics=VERDICT_METRICS):
+    """Metrics whose tally columns exist but are 0 on every row — the evaluator
+    persisted no verdicts at all. Reported rather than dropped, because "no verdicts
+    were kept" is a fact about the harness (``verdicts_list``, see ``VERDICT_METRICS``)
+    that a reader of the table would otherwise have to infer from an absence.
+    """
+    out = []
+    for metric in metrics:
+        cols = [f"{_score_col(metric)}_verdicts.{k}"
+                for k in ("n_verdicts", "yes", "no", "idk")]
+        if not all(c in df for c in cols):
+            continue
+        if not float(pd.to_numeric(df[cols[0]], errors="coerce").fillna(0).sum()):
+            out.append(metric)
+    return out
+
+
+def idk_counterfactual(df, metric="deepeval_faithfulness",
+                       against="ragas_scores.ragas_faithfulness",
+                       exclude_abstentions=True):
+    """What crediting "idk" as supported would do to one metric's level AND to its
+    agreement with a comparable metric. Returns ``(table, info)``.
+
+    The point of the split. ``penalize_ambiguous_claims`` is usually argued as a level
+    effect — it lowers the score — but the level is not what makes two faithfulness
+    metrics comparable; the RANKING is. This recomputes the score per row under the
+    other convention, straight from the persisted tallies
+    (``(yes + idk) / n_verdicts`` against ``yes / n_verdicts``), and correlates both
+    with ``against``. If the two conventions rank rows the same way, the setting is a
+    calibration choice and nothing more; if they do not, then the same answer decomposed
+    into the same claims is being scored on two different constructs, and a correlation
+    between the two libraries is partly reporting the convention.
+
+    ``info["recomputed_matches"]`` is the guard: the fraction of rows where
+    ``yes / n_verdicts`` reproduces the persisted score to 1e-6. It should be ~1.0. If
+    it is not, the tallies and the score did not come from the same metric object and
+    every number here is void — read that before reading the table.
+    """
+    score_col = _score_col(metric)
+    tal = _verdict_frame(df, metric)
+    info = {"n_rows": 0, "recomputed_matches": _NAN}
+    if tal is None or not len(tal) or score_col not in df:
+        return pd.DataFrame(), info
+    idx = tal.index
+    if exclude_abstentions:
+        idx = idx[~ra._abstained(df).reindex(idx, fill_value=False)]
+        tal = tal.loc[idx]
+    if not len(tal):
+        return pd.DataFrame(), info
+    strict = tal["yes"] / tal["n_verdicts"]
+    lenient = (tal["yes"] + tal["idk"]) / tal["n_verdicts"]
+    stored = pd.to_numeric(df.loc[idx, score_col], errors="coerce")
+    both = stored.notna()
+    info["n_rows"] = int(len(tal))
+    info["recomputed_matches"] = (
+        float((strict[both] - stored[both]).abs().le(1e-6).mean()) if both.any() else _NAN)
+    peer = against.split(".")[-1]
+    rows = []
+    for label, s in (("as scored (idk penalised)", strict),
+                     ("counterfactual (idk credited)", lenient)):
+        row = {"convention": label, "n_rows": int(len(s)),
+               "mean": float(s.mean()), "frac_0": float((s == 0).mean()),
+               "frac_1": float((s == 1).mean())}
+        if against in df:
+            n, pear, spear = _corr(s, pd.to_numeric(df.loc[idx, against], errors="coerce"))
+            row.update({"n_paired": n, f"pearson_vs_{peer}": pear,
+                        f"spearman_vs_{peer}": spear})
+        rows.append(row)
+    return pd.DataFrame(rows), info
+
+
 def metric_error_report(df, cls=None, source=None):
     """Prints the metric-computation sanity report: how many metric values are
     genuinely errors vs legitimately not applicable, broken down by dataset x
@@ -834,7 +1030,10 @@ def metric_error_report(df, cls=None, source=None):
              f"frac_0 / frac_1 describe the NULLED cells and mean_kept the surviving ones, "
              f"which is not the same average wherever those two differ; n_idk / frac_idk = "
              f"DeepEval verdicts on those rows that were neither supported nor "
-             f"contradicted (the 'idk' rail its score now penalises).")
+             f"contradicted (the 'idk' rail its score now penalises) — measured HERE on "
+             f"the abstained rows only, which are near-identical refusals; the same "
+             f"tally on the answered rows is in the 'verdict shape' table further "
+             f"down, and that is the one to quote for anything about the run.")
 
         # One paragraph per family, because the three exclusions rest on different
         # evidence and a single sentence covering all three would be true of none.
@@ -1309,6 +1508,817 @@ def reason_hits(df, patterns=FAILURE_PATTERNS, cols=None, id_col="id"):
     return pd.DataFrame(records)
 
 
+# --- (2e) Judge-prose failure taxonomy ---------------------------------------
+# ``mine_reasons`` above asks a blunt question: does this prose contain a phrase
+# that usually means the scorer broke? What follows asks a sharper one: given
+# that the judge DID score the row, is its stated justification defensible?
+#
+# The blunt version is no longer in the report, and the reason is instructive.
+# Its top hit on faithfulness was ``can ?not`` at 90 of 108 matches -- "cannot be
+# verified", which is the correct wording of a correct ``idk`` verdict. A phrase
+# list cannot separate a judge describing a failure from a judge failing.
+# ``mine_reasons`` / ``reason_hits`` stay available for ad-hoc use.
+#
+# The taxonomy is derived from the prompt chains, not invented. Each DeepEval
+# metric runs its own chain, and the chains differ in which row fields ever reach
+# the model:
+#
+#   deepeval_faithfulness         truths(context) + claims(answer), then
+#                                 verdicts(claims, truths), then reason(score,
+#                                 contradictions). The QUESTION appears in none
+#                                 of the four prompts, and the reason step sees
+#                                 neither the question NOR the answer.
+#   deepeval_contextual_relevance verdicts(input, context), reason(input,
+#                                 statements). The ANSWER is never shown -- it
+#                                 scores retrieval, not generation.
+#   deepeval_relevance            statements(answer), verdicts(input, statements),
+#                                 reason(input, statements). The CONTEXT is never
+#                                 shown.
+#
+# Every class below follows from one of those gaps, so each is gated to the
+# metric whose chain can actually produce it: "the judge ignored the question" is
+# a finding on faithfulness and a guaranteed false positive on the other two.
+DEEPEVAL_JUDGE_SEES = {
+    "deepeval_faithfulness": {"question": False, "context": True, "answer": True},
+    "deepeval_contextual_relevance": {"question": True, "context": True, "answer": False},
+    "deepeval_relevance": {"question": True, "context": False, "answer": True},
+}
+
+# The FINAL step of each chain is blinder still, and it is the step whose output
+# is the only thing persisted. ``generate_reason`` is a summariser over strings
+# the verdict step already produced, so it re-reads none of the row:
+#
+#   faithfulness         reason(score, contradictions)                  -- sees
+#                        neither the question, the answer, nor the context.
+#   contextual_relevance reason(score, input, irrelevancies, statements)
+#   relevance            reason(score, input, irrelevancies)            -- the
+#                        answer it is describing is not in the prompt.
+#
+# Two classes below are gated on THIS table rather than the one above:
+# ``speculative`` (prose guessing at an answer the step never received) and
+# ``meta_quote`` (prose quoting a verdict's *reason* as if it were source text).
+DEEPEVAL_REASON_SEES = {
+    "deepeval_faithfulness": {"question": False, "context": False, "answer": False},
+    "deepeval_contextual_relevance": {"question": True, "context": True, "answer": False},
+    "deepeval_relevance": {"question": True, "context": False, "answer": False},
+}
+
+_REASON_PREFIX_RE = re.compile(r"^\s*the score is\s*[0-9.]+\s*because\s*", re.IGNORECASE)
+# "likely provided", "an unspecified food" -- the judge guessing at text it was
+# never shown. Gated to the metrics whose reason step is blind to the ANSWER it
+# is describing (see ``DEEPEVAL_REASON_SEES``): faithfulness and relevance.
+_SPECULATIVE_RE = re.compile(
+    r"\b(?:likely|presumably|appears to (?:have|be)|seems to (?:have|be|discuss)"
+    r"|may have (?:stated|claimed)|an? unspecified|the \w+ in question|it is implied)\b",
+    re.IGNORECASE)
+# The judge penalising the answer for a referent that exists only in the QUESTION.
+#
+# The phrase list alone is not enough and the first version of this detector was
+# wrong because of it: keyed on "this food", it fired on NGQA and nowhere else,
+# which looks like a dataset finding and is really a vocabulary artifact. LLMDRS
+# has the identical failure in different words ("the context does not mention
+# Shoakram", "does not confirm Svetlana's treatment plan"), because its patient
+# profile lives in the query too. The entity test below is what actually
+# generalises; the phrases only cover the case where the judge names no referent
+# at all because it could not see one.
+_UNRESOLVED_REFERENT_RE = re.compile(
+    r"no specific question was provided|unspecified question|refers to .?this question"
+    r"|about the context'?s? (?:ability|sufficiency)|meta-statement"
+    r"|\ban? unspecified \w+|\bthe \w+ in question\b"
+    r"|does not (?:specify|identify) (?:which|the specific|a specific)\b",
+    re.IGNORECASE)
+# Capitalised names, acronyms and quoted spans -- the referents a denial clause
+# can be about. Filtered against the query and the context, never used alone.
+_PROPER_NOUN_RE = re.compile(r"\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*\b")
+_ACRONYM_RE = re.compile(r"\b[A-Z]{2,6}\b")
+# Words that are capitalised because a sentence or a clause started, or because
+# they are the judge's own vocabulary -- never a referent from the question.
+_ENTITY_STOPWORDS = frozenset({
+    "the", "this", "that", "these", "those", "context", "input", "output",
+    "additionally", "however", "while", "furthermore", "although", "statement",
+    "score", "reason", "retrieval", "claim", "user", "answer", "specifically",
+    "for", "instance", "example", "and", "but", "because", "since", "json",
+})
+# Citations to a source index that does not exist. Two forms occur: the spelled
+# "Context 5" / "Contradiction 1" and the compact "(C3)". The compact form is
+# matched case-sensitively and without a space so that a quoted "Vitamin C 90
+# mg/d" cannot be read as a citation to passage 90.
+_CITATION_WORD_RE = re.compile(r"\b(?:context|contradiction)\s*#?\s*(\d{1,2})\b",
+                               re.IGNORECASE)
+_CITATION_SHORT_RE = re.compile(r"(?<![A-Za-z])C(\d{1,2})\b")
+_CONTRADICTION_RE = re.compile(
+    r"contradict|incorrectly (?:stated|states|applied)|is (?:incorrect|wrong)"
+    r"|does not (?:provide|mention|contain|state)|not (?:present|in) the (?:retrieval )?context"
+    r"|unfaithful|unsupported", re.IGNORECASE)
+_ATTRIBUTION_RE = re.compile(
+    r"context[^.]{0,25}?(?:states?|says?|specifies|provides|mentions|indicates)",
+    re.IGNORECASE)
+_DENIAL_RE = re.compile(
+    r"not (?:found|present|mentioned|listed|provided)"
+    r"|does not (?:provide|mention|contain|state|specify|list|identify|discuss|include)"
+    r"|absent from", re.IGNORECASE)
+# A quoted span that opens like a verdict's own reasoning rather than like source
+# text. ``ContextualRelevancyTemplate.generate_reason`` hands the model two lists
+# under headings that read alike -- "Reasons for why the retrieval context is
+# irrelevant" (which are the *reason* fields of the "no" verdicts, meta-text) and
+# "Statement in the retrieval context that is relevant" (actual context text) --
+# and then instructs it to "quote data provided in the reasons for irrelevancy
+# and relevant statements". Quoting a reason as though it were a retrieved
+# passage is the predictable result.
+#
+# Two patterns, because verdict reasoning is recognisable either by how it opens
+# ("The context states ...", "This is a general dietary guideline ...") or by
+# vocabulary no retrieved passage would contain: a nutrition guideline never
+# refers to "the input". Anchoring on the opening alone missed a fifth of them.
+_META_QUOTE_START_RE = re.compile(
+    r"^\s*(?:the (?:context|input|statement|retrieval context|actual output)"
+    r"|this (?:statement|is an?)|these statements|the reasons? for irrelevanc"
+    r"|does not |it does not )", re.IGNORECASE)
+_META_QUOTE_BODY_RE = re.compile(
+    r"\bthe input\b|\bis not relevant to\b|\bdoes not address\b"
+    r"|\bnot relevant to (?:assessing|the)\b|reasons? for irrelevanc"
+    r"|\bthis statement\b|\bthe retrieval context\b", re.IGNORECASE)
+# A number with a unit: the only span in judge prose that can be compared across
+# answer / context / reason without semantic matching.
+_QUANTITY_RE = re.compile(
+    r"\d[\d.,]*\s*(?:µg|μg|mcg|mg|kcal|ml|IU|g|%)\s*(?:-\s*RAE)?"
+    r"\s*(?:/\s*(?:Tag|day|d|kg/d|kg/day)|\s*(?:pro Tag|per day|daily))?",
+    re.IGNORECASE)
+# Nouns too generic to prove a false denial: the context mentioning "sodium"
+# somewhere does not refute "the context gives no sodium VALUE for this dish".
+_GENERIC_DENIAL_TERMS = frozenset({
+    "the food", "this food", "the patient", "the context", "food items",
+    "calories", "sugar", "sodium", "protein", "cholesterol", "fat", "fiber",
+    "salt", "carbohydrates", "saturated fat", "added sugars", "protein content",
+    "nutritional information",
+})
+
+
+def _reason_body(series):
+    """Judge prose with its "The score is X.XX because" preamble removed.
+
+    The preamble carries the score, which ``deepeval_reason_consistency`` already
+    checks; leaving it in would let its digits be read as a quantity or a
+    citation by the detectors below.
+    """
+    return (series.astype("string").fillna("")
+            .str.replace(_REASON_PREFIX_RE, "", regex=True))
+
+
+def _norm_text(text):
+    """Casefolded, punctuation-stripped, single-spaced -- for substring tests
+    between prose and source text that should ignore quoting and hyphenation."""
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", str(text).lower())).strip()
+
+
+def _norm_quantity(text):
+    """A quantity reduced to the form in which "850 ug-RAE/Tag" and
+    "850 ug-RAE/day" are the same value.
+
+    Deliberately collapses the German and English unit words: a judge treating
+    that pair as a contradiction is exactly the failure this is meant to catch,
+    so the normaliser has to see through it.
+    """
+    t = str(text).lower().replace("µ", "u").replace("μ", "u")
+    t = re.sub(r"\bmcg\b", "ug", t)
+    t = re.sub(r"\b(?:pro\s+)?tag\b", "day", t)
+    t = re.sub(r"\bt(?:ä|ae)glich\b", "day", t)
+    t = re.sub(r"\b(?:daily|per\s+day)\b", "day", t)
+    t = re.sub(r"\bd\b", "day", t)
+    t = re.sub(r"(\d),(\d)", r"\1.\2", t)
+    return re.sub(r"[^a-z0-9.]", "", t)
+
+
+def _quantities(text):
+    return {q for q in (_norm_quantity(m.group(0))
+                        for m in _QUANTITY_RE.finditer(str(text)))
+            if len(q) > 2}
+
+
+def _cited_indices(text):
+    idx = {int(m.group(1)) for m in _CITATION_WORD_RE.finditer(text)}
+    idx |= {int(m.group(1)) for m in _CITATION_SHORT_RE.finditer(text)}
+    return idx
+
+
+# Apostrophe-safe quote extraction. A naive ``'([^']+)'`` treats the apostrophes
+# in "the patient's needs ... Adelina's diet" as a matching pair and yields a
+# fragment starting mid-word, which then reads as a quoted statement that is
+# nowhere in the corpus. The lookarounds require the delimiters not to sit
+# against a letter, which is true of a real quotation and false of a possessive.
+def _quote_patterns(lo, hi):
+    return (rf'"([^"]{{{lo},{hi}}})"',
+            f"“([^”]{{{lo},{hi}}})”",
+            rf"(?<![A-Za-z])'([^']{{{lo},{hi}}})'(?![A-Za-z])")
+
+
+def _quoted_terms(text):
+    """Concrete multi-word spans the prose sets apart -- quoted or parenthesised.
+
+    Single words are dropped on purpose: a false denial has to be provable, and
+    only a specific multi-word term ("choline-rich eggs", "flour tortillas")
+    makes "the context does not mention X" checkable by substring.
+    """
+    out = []
+    for pattern in _quote_patterns(6, 80):
+        out.extend(m.group(1) for m in re.finditer(pattern, text))
+    for m in re.finditer(r"\(([^)]{6,120})\)", text):
+        out.extend(part.strip() for part in m.group(1).split(","))
+    terms = []
+    for raw in out:
+        norm = _norm_text(raw.strip(" .,;:"))
+        if len(norm) >= 6 and len(norm.split()) >= 2 and norm not in _GENERIC_DENIAL_TERMS:
+            terms.append(norm)
+    return terms
+
+
+def _contexts_text(df):
+    """One normalised blob of retrieved context per row (empty where none)."""
+    if "contexts" not in df:
+        return pd.Series("", index=df.index, dtype="object")
+    return df["contexts"].map(
+        lambda cs: _norm_text(" ".join(cs)) if isinstance(cs, (list, tuple)) else "")
+
+
+def _n_contexts(df):
+    if "contexts" not in df:
+        return pd.Series(0, index=df.index, dtype="int64")
+    return df["contexts"].map(lambda cs: len(cs) if isinstance(cs, (list, tuple)) else 0)
+
+
+# Each detector takes (df, body, score) and returns a boolean Series on df.index.
+# ``body`` is the prose without its score preamble; ``score`` the recorded metric.
+
+def _detect_speculative(df, body, score):
+    return body.str.contains(_SPECULATIVE_RE)
+
+
+def _quoted_spans(text):
+    """Every quoted span, whole and untrimmed -- for asking what KIND of string
+    the judge quoted, where ``_quoted_terms`` asks whether a term is present."""
+    spans = []
+    for pattern in _quote_patterns(12, 300):
+        spans.extend(m.group(1) for m in re.finditer(pattern, text))
+    return spans
+
+
+def _denied_entities(clause):
+    """Candidate referents named in a denial clause: quoted terms, proper nouns,
+    acronyms. Normalised, stopworded, and only ever meaningful once tested
+    against the question and the context by ``_detect_question_blind``."""
+    raw = list(_quoted_terms(clause))
+    raw += _PROPER_NOUN_RE.findall(clause)
+    raw += _ACRONYM_RE.findall(clause)
+    out = []
+    for term in raw:
+        norm = _norm_text(term)
+        if len(norm) >= 4 and not all(w in _ENTITY_STOPWORDS for w in norm.split()):
+            out.append(norm)
+    return out
+
+
+def _detect_question_blind(df, body, score):
+    """The judge faults the answer for a referent that the QUESTION supplies and
+    the context legitimately lacks.
+
+    Faithfulness compares claims against retrieved text with the question absent
+    from every prompt, so an answer that correctly reasons about the patient,
+    dish or condition named in the query looks ungrounded. The test is
+    positional, not lexical: an entity named inside a denial clause, present in
+    this row's question, absent from this row's contexts. That holds whatever the
+    entity is -- "Lebkuchen" on NGQA, "Shoakram" on LLMDRS -- which a phrase list
+    does not.
+    """
+    if "query" not in df:
+        return body.str.contains(_UNRESOLVED_REFERENT_RE)
+    query = df["query"].fillna("").map(_norm_text)
+    ctx = _contexts_text(df)
+    flags = []
+    for text, q, blob in zip(body, query, ctx):
+        hit = bool(_UNRESOLVED_REFERENT_RE.search(text))
+        if not hit and q:
+            hit = any(term in q and term not in blob
+                      for clause in _denial_clauses(text)
+                      for term in _denied_entities(clause))
+        flags.append(hit)
+    return pd.Series(flags, index=df.index)
+
+
+def _detect_meta_quote(df, body, score):
+    """The reason quotes a verdict's own reasoning as though it were retrieved text.
+
+    A reader who trusts the quotation marks comes away believing the passages
+    contain sentences like "The context states this applies to 'Children and
+    adolescents,' but the input profile describes a 20-year-old adult" -- which
+    is the judge's earlier commentary, not a guideline. See ``_META_QUOTE_RE``
+    for why the template invites it.
+    """
+    def _is_meta(span):
+        return bool(_META_QUOTE_START_RE.match(span)
+                    or _META_QUOTE_BODY_RE.search(span))
+
+    return pd.Series(
+        [any(_is_meta(q) for q in _quoted_spans(t)) for t in body],
+        index=df.index)
+
+
+def _detect_fabricated_citation(df, body, score):
+    n_ctx = _n_contexts(df)
+    return pd.Series(
+        [bool(_cited_indices(t) - set(range(1, max(int(n), 1) + 1)))
+         for t, n in zip(body, n_ctx)],
+        index=df.index)
+
+
+def _detect_self_refuting(df, body, score):
+    """The judge calls the answer contradictory while quoting the answer's own
+    value as the one the context gives.
+
+    Requires all three of: a sub-perfect score, contradiction language, and a
+    quantity that the reason attributes to the context and the answer also
+    states. Any two of those can co-occur innocently; together they mean the
+    reason refutes itself.
+    """
+    if "answer" not in df:
+        return pd.Series(False, index=df.index)
+    answers = df["answer"].fillna("")
+    flags = []
+    for text, ans, sc in zip(body, answers, score):
+        flags.append(bool(
+            pd.notna(sc) and sc < 1.0
+            and _CONTRADICTION_RE.search(text)
+            and _ATTRIBUTION_RE.search(text)
+            and (_quantities(text) & _quantities(ans))))
+    return pd.Series(flags, index=df.index)
+
+
+def _denial_clauses(text):
+    """The clauses of a reason that actually assert an absence.
+
+    Scoping matters more than it looks. A contextual-relevance reason routinely
+    quotes context statements it found RELEVANT in one clause and denies
+    something else in another; matching the denial phrase against terms drawn
+    from the whole reason would flag every one of those as a false denial. Only
+    a term inside the denying clause is evidence about what was denied.
+    """
+    return [c for c in re.split(r"[.;]|,\s+(?:and|or|but)\s+", text) if _DENIAL_RE.search(c)]
+
+
+def _detect_false_denial(df, body, score):
+    """The judge states a concrete term is absent from the context while the
+    context contains it verbatim.
+
+    Restricted to multi-word terms the prose itself sets apart (see
+    ``_quoted_terms``) and to the clause doing the denying (see
+    ``_denial_clauses``), so neither a generic noun appearing somewhere in the
+    passages nor a correctly quoted statement elsewhere in the reason can be
+    mistaken for a refutation.
+    """
+    ctx = _contexts_text(df)
+    flags = []
+    for text, blob in zip(body, ctx):
+        hit = False
+        if blob:
+            hit = any(term in blob
+                      for clause in _denial_clauses(text)
+                      for term in _quoted_terms(clause))
+        flags.append(hit)
+    return pd.Series(flags, index=df.index)
+
+
+class JudgeErrorClass(NamedTuple):
+    """One failure mode visible in a DeepEval judge's stated reason.
+
+    ``metrics`` gates the class to the metrics whose prompt chain can produce it
+    (see ``DEEPEVAL_JUDGE_SEES``). ``precision`` records how the counts should be
+    read: an ``exact`` class is decidable from the row alone, a ``candidate``
+    class is a regex lead that needs eyeballing before it is quoted as an error.
+
+    ``stage`` is the column that decides what a hit is worth, and it exists
+    because every class here is detected in the same place -- the reason string --
+    while only some of them are ABOUT the scoring:
+
+      ``verdict``  the prose describes why claims were faulted, so it is evidence
+                   about the yes/no/idk verdicts that produced the score. A hit
+                   means the score itself is suspect.
+      ``reason``   the prose is an artifact of the summarising step that runs
+                   AFTER ``_calculate_score`` (``self.score = ...`` on the line
+                   above ``self.reason = ...`` in all three metrics). A hit
+                   CANNOT have moved the score. It is a documentation defect: it
+                   makes the string unsafe to quote, and nothing more.
+
+    Reporting the two together as "judge errors" overstates the second kind.
+    """
+    name: str
+    metrics: tuple
+    detect: object
+    precision: str
+    stage: str
+    description: str
+
+
+# Ordered verdict-stage first: those are the hits that bear on a score. The
+# reason-stage classes below them are prose defects on a string generated after
+# the score was fixed, and are reported so the prose is not mined as evidence.
+JUDGE_ERROR_CLASSES = (
+    JudgeErrorClass(
+        "question_blind", ("deepeval_faithfulness",), _detect_question_blind,
+        "candidate", "verdict",
+        "Faults the answer for a referent the question supplies and the context "
+        "lacks; the faithfulness chain never receives the question."),
+    JudgeErrorClass(
+        "self_refuting", ("deepeval_faithfulness",), _detect_self_refuting,
+        "exact", "verdict",
+        "Calls the answer contradictory while quoting the answer's own value as "
+        "the context's correct one."),
+    # Faithfulness only, and not for want of trying: on contextual relevance the
+    # same detector fires on correct reasons. That judge's job IS to call
+    # retrieved content irrelevant, and it says so with the same words ("the
+    # context does not provide dietary recommendations") while correctly quoting
+    # a statement that is present. Absence and irrelevance are one vocabulary and
+    # two claims, and only faithfulness penalises the ANSWER for the first.
+    JudgeErrorClass(
+        "false_denial", ("deepeval_faithfulness",),
+        _detect_false_denial, "candidate", "verdict",
+        "States a concrete multi-word term is absent from the context, which "
+        "contains it verbatim."),
+    JudgeErrorClass(
+        "speculative", ("deepeval_faithfulness", "deepeval_relevance"),
+        _detect_speculative, "candidate", "reason",
+        "Guesses at the answer's content ('likely provided'); both reason steps "
+        "are blind to the answer they describe. Score already fixed."),
+    JudgeErrorClass(
+        # Faithfulness only. Contextual relevance's reason prompt contains no
+        # numbered list of anything -- just the input, two flat string lists and
+        # the score -- so there is no index for the model to miscount, and it
+        # scored 0 of 536 there. Carrying an unreachable class would pad the
+        # table with a row that can only ever read zero.
+        "fabricated_citation", ("deepeval_faithfulness",),
+        _detect_fabricated_citation, "exact", "reason",
+        "Numbers its contradiction strings as if they were passages, citing an "
+        "index beyond the contexts that exist. Score already fixed."),
+    # Contextual relevance only. Removed from answer relevance on the evidence:
+    # it never fired there, and that metric's reason step is handed a different
+    # mix of strings, so a shared class would imply a shared mechanism that is
+    # not there.
+    #
+    # Kept deliberately mild. The template hands the model a list of verdict
+    # REASONS and a list of context STATEMENTS and tells it to quote from both,
+    # so quoting a reason is compliance, not confusion, and the prose usually
+    # attributes it ("as noted by the reason that ..."). A minority genuinely
+    # relabels reasons as context content. Either way the score was fixed before
+    # this string existed: the only real cost is that these quoted spans cannot
+    # be cited as evidence of what was retrieved.
+    JudgeErrorClass(
+        "meta_quote", ("deepeval_contextual_relevance",),
+        _detect_meta_quote, "candidate", "reason",
+        "Quotes a verdict's own reasoning inside quotation marks; usually "
+        "attributed as such, sometimes passed off as retrieved text."),
+)
+
+
+def _reason_col(metric):
+    return f"deepeval_scores.{metric}_reason"
+
+
+def _score_col(metric):
+    return f"deepeval_scores.{metric}"
+
+
+def judge_error_classes(metric):
+    """The taxonomy entries that apply to one DeepEval metric."""
+    return tuple(c for c in JUDGE_ERROR_CLASSES if metric in c.metrics)
+
+
+def judge_error_flags(df, metric="deepeval_faithfulness", exclude_abstentions=True):
+    """Boolean flag per row x error class for one DeepEval metric.
+
+    Returns ``(flags, mask)``: a DataFrame with one column per applicable class,
+    and the mask of rows eligible at all -- metric scored, prose present, and (by
+    default) not an abstention, since an abstention's faithfulness is not a
+    judgement about an answer and is excluded from the analysis cohort anyway.
+
+    Every table below is built from this one function, so adding a failure mode
+    means adding one ``JUDGE_ERROR_CLASSES`` entry and nothing else.
+    """
+    scol, rcol = _score_col(metric), _reason_col(metric)
+    if scol not in df or rcol not in df:
+        return pd.DataFrame(index=df.index), pd.Series(False, index=df.index)
+
+    score = pd.to_numeric(df[scol], errors="coerce")
+    prose = df[rcol].astype("string").fillna("")
+    mask = score.notna() & prose.str.strip().ne("")
+    if exclude_abstentions:
+        mask &= ~ra._abstained(df)
+
+    body = _reason_body(df[rcol])
+    flags = pd.DataFrame(index=df.index)
+    for cls in judge_error_classes(metric):
+        flags[cls.name] = cls.detect(df, body, score).fillna(False) & mask
+    return flags, mask
+
+
+def judge_error_summary(df, metrics=None, exclude_abstentions=True):
+    """Per metric x error class: how often the judge's stated reason is indefensible.
+
+    ``n_eligible`` is the cohort each rate is over. ``mean_score_flagged`` vs
+    ``mean_score_rest`` shows which way the class pulls the metric -- a class that
+    only ever fires at 0.00 is a one-directional bias, not noise. ``precision``
+    carries the class's exact/candidate status, so a table in the appendix can say
+    which counts are decidable and which are leads.
+    """
+    metrics = metrics or [m for m in DEEPEVAL_JUDGE_SEES
+                          if _score_col(m) in df and _reason_col(m) in df]
+    rows = []
+    for metric in metrics:
+        flags, mask = judge_error_flags(df, metric, exclude_abstentions)
+        if not len(flags.columns):
+            continue
+        score = pd.to_numeric(df[_score_col(metric)], errors="coerce")
+        n_elig = int(mask.sum())
+        for cls in judge_error_classes(metric):
+            hit = flags[cls.name]
+            rest = mask & ~hit
+            rows.append({
+                "metric": metric,
+                "error_class": cls.name,
+                "stage": cls.stage,
+                "affects_score": cls.stage == "verdict",
+                "precision": cls.precision,
+                "n_eligible": n_elig,
+                "n_flagged": int(hit.sum()),
+                "rate": round(hit.sum() / n_elig, 4) if n_elig else _NAN,
+                "mean_score_flagged":
+                    round(float(score[hit].mean()), 3) if hit.any() else _NAN,
+                "mean_score_rest":
+                    round(float(score[rest].mean()), 3) if rest.any() else _NAN,
+            })
+    return pd.DataFrame(rows)
+
+
+def judge_error_by(df, metric="deepeval_faithfulness", by="source_dataset",
+                   exclude_abstentions=True, as_rate=True):
+    """The taxonomy broken down by group -- the table that says whether a failure
+    mode is a property of the judge or of one dataset's task shape.
+
+    Rows are the groups, columns the error classes, plus ``n_eligible`` and
+    ``any_class``. With ``as_rate`` the cells are shares of that group's eligible
+    rows, otherwise raw counts. A class concentrated in a single dataset is a
+    task-shape artifact and belongs in that dataset's caveats rather than in a
+    general claim about the judge.
+    """
+    flags, mask = judge_error_flags(df, metric, exclude_abstentions)
+    if not len(flags.columns) or by not in df:
+        return pd.DataFrame()
+    grp = df[by].astype("object")
+    out = pd.DataFrame({"n_eligible": mask.groupby(grp, observed=True).sum()})
+    for name in flags.columns:
+        out[name] = flags[name].groupby(grp, observed=True).sum()
+    out["any_class"] = flags.any(axis=1).groupby(grp, observed=True).sum()
+    out = out[out["n_eligible"] > 0]
+    if as_rate:
+        cols = [c for c in out.columns if c != "n_eligible"]
+        out[cols] = out[cols].div(out["n_eligible"], axis=0).round(3)
+    return out.astype({"n_eligible": "int64"})
+
+
+def judge_error_rows(df, metric="deepeval_faithfulness", classes=None,
+                     exclude_abstentions=True, max_chars=400, id_col="id"):
+    """Long evidence table -- one row per (row, error class) hit, with the prose.
+
+    This is what an appendix quotes: a reader has to be able to check the
+    classification, and no summary rate lets them. ``max_chars`` truncates the
+    prose only; the score and the paired RAGAS faithfulness travel with it, so a
+    hit can be read against the metric it disagrees with.
+    """
+    flags, _ = judge_error_flags(df, metric, exclude_abstentions)
+    if not len(flags.columns):
+        return pd.DataFrame()
+    wanted = [c for c in flags.columns if classes is None or c in classes]
+    keep = [c for c in (id_col, "source_dataset", "variant", "lang") if c in df]
+    scol, rcol = _score_col(metric), _reason_col(metric)
+    score = pd.to_numeric(df[scol], errors="coerce")
+    peer = "ragas_scores.ragas_faithfulness"
+    peer_val = pd.to_numeric(df[peer], errors="coerce") if peer in df else None
+    records = []
+    for name in wanted:
+        for i in df.index[flags[name]]:
+            rec = {k: df.at[i, k] for k in keep}
+            rec["error_class"] = name
+            rec[metric] = score.at[i]
+            if peer_val is not None:
+                rec["ragas_faithfulness"] = peer_val.at[i]
+            rec["reason"] = str(df.at[i, rcol])[:max_chars]
+            records.append(rec)
+    out = pd.DataFrame(records)
+    return out.sort_values(["error_class"] + keep) if len(out) else out
+
+
+PEER_FAITHFULNESS = ("ragas_scores.ragas_faithfulness",
+                     "ragas_scores.ragas_faithfulness_with_hhem")
+
+
+def peer_scores_on_flagged(df, metric="deepeval_faithfulness",
+                           peers=PEER_FAITHFULNESS, stages=("verdict",),
+                           exclude_abstentions=True):
+    """What the OTHER metrics said about the rows where this judge got it wrong.
+
+    Restricted by default to ``stage="verdict"`` classes, because those are the
+    only ones where the flagged prose is evidence about a scoring decision; a
+    reason-stage artifact says nothing about whether the score was right, so
+    pooling it in would dilute the comparison with rows that are fine.
+
+    The reliability argument this supports: if a second and a third scorer, one
+    of them not an LLM at all, rate these rows near 1.0 while the flagged judge
+    rates them near 0.0, the disagreement localises to the flagged judge rather
+    than to the answers. ``frac_one`` is the sharpest column for that -- it counts
+    how often a peer called the very same answer FULLY grounded.
+
+    ``__unflagged__`` is the control: the gap between a class row and it is the
+    claim, not the class row alone.
+    """
+    flags, mask = judge_error_flags(df, metric, exclude_abstentions)
+    if not len(flags.columns):
+        return pd.DataFrame()
+    wanted = [c.name for c in judge_error_classes(metric)
+              if c.stage in stages and c.name in flags.columns]
+    if not wanted:
+        return pd.DataFrame()
+    cols = [_score_col(metric)] + [p for p in peers if p in df]
+    vals = {c: pd.to_numeric(df[c], errors="coerce") for c in cols}
+    any_hit = flags[wanted].any(axis=1) & mask
+
+    def _stats(name, sel):
+        row = {"group": name, "n": int(sel.sum())}
+        for c in cols:
+            v = vals[c][sel].dropna()
+            short = c.split(".")[-1]
+            row[f"{short}_n"] = len(v)
+            row[f"{short}_mean"] = round(float(v.mean()), 3) if len(v) else _NAN
+            row[f"{short}_frac_one"] = round(float((v == 1.0).mean()), 3) if len(v) else _NAN
+            row[f"{short}_frac_zero"] = round(float((v == 0.0).mean()), 3) if len(v) else _NAN
+        return row
+
+    rows = [_stats(name, flags[name] & mask) for name in wanted]
+    rows.append(_stats("__any_verdict_stage__", any_hit))
+    rows.append(_stats("__unflagged__", mask & ~any_hit))
+    rows.append(_stats("__all_eligible__", mask))
+    return pd.DataFrame(rows)
+
+
+def variant_flip(df, metric, a="rag", b="rag_sc", threshold=None,
+                 exclude_abstentions=True, id_col="id"):
+    """Paired 2x2: for questions scored under BOTH variants, who moved and which way.
+
+    A difference in two group rates does not say whether the same questions
+    behave differently -- it can be two disjoint sets of rows drifting. Pairing on
+    ``id_col`` and crosstabbing the outcome under ``a`` against the outcome under
+    ``b`` shows the discordant cells directly, and an exact McNemar test says
+    whether the imbalance between them survives the sample size.
+
+    ``threshold`` picks what "outcome" means. Given a number, a row counts as a
+    hit when the metric is BELOW it (so the table reads low-score vs not). Given
+    ``None``, the outcome is "this row tripped any judge-error class", which is
+    the flagged/clean cut. Returns ``(table, stats)``.
+    """
+    if threshold is None:
+        flags, mask = judge_error_flags(df, metric, exclude_abstentions)
+        if not len(flags.columns):
+            return pd.DataFrame(), {}
+        hit, label = flags.any(axis=1), "flagged"
+    else:
+        val = pd.to_numeric(df[_score_col(metric)], errors="coerce")
+        mask = val.notna()
+        if exclude_abstentions:
+            mask &= ~ra._abstained(df)
+        hit, label = val < threshold, f"below_{threshold:g}"
+
+    sub = df.loc[mask, [id_col, "variant"]].copy()
+    sub["hit"] = hit[mask]
+    sub["variant"] = sub["variant"].astype(str)
+    sub = sub[sub["variant"].isin([a, b])]
+    piv = sub.pivot_table(index=id_col, columns="variant", values="hit",
+                          aggfunc="max").dropna()
+    if a not in piv or b not in piv or piv.empty:
+        return pd.DataFrame(), {}
+
+    tab = pd.crosstab(piv[a].astype(bool), piv[b].astype(bool))
+    tab = tab.reindex(index=[False, True], columns=[False, True], fill_value=0)
+    tab.index = pd.Index([f"{a} clean", f"{a} {label}"], name="")
+    tab.columns = pd.Index([f"{b} clean", f"{b} {label}"], name="")
+
+    only_a = int(tab.iloc[1, 0])
+    only_b = int(tab.iloc[0, 1])
+    stats = {"metric": metric, "outcome": label, "n_paired": int(len(piv)),
+             f"{a}_rate": round(float(piv[a].mean()), 3),
+             f"{b}_rate": round(float(piv[b].mean()), 3),
+             f"only_{a}": only_a, f"only_{b}": only_b,
+             "n_discordant": only_a + only_b}
+    if only_a + only_b:
+        try:
+            from scipy.stats import binomtest
+            pval = float(binomtest(only_a, only_a + only_b, 0.5).pvalue)
+            # Rounding to 4dp turns a decisive p into a bare "0.0", which reads
+            # like a missing value rather than a result.
+            stats["mcnemar_p"] = round(pval, 4) if pval >= 1e-4 else f"{pval:.1e}"
+        except ImportError:
+            stats["mcnemar_p"] = _NAN
+    else:
+        stats["mcnemar_p"] = _NAN
+    return tab, stats
+
+
+def score_rail_counts(df, metrics=None, by=("source_dataset", "variant"),
+                      exclude_abstentions=True):
+    """How many rows of each group sit exactly on 0.0 and exactly on 1.0.
+
+    ``metric_distribution`` already reports ``frac_zero`` / ``frac_one``, but a
+    fraction is the wrong unit for a claim like "the judge returns 0.00 on 258 of
+    300 NGQA retrieval rows": the sentence names a count, so the table backing it
+    should print one. This also excludes abstentions by default, which
+    ``metric_distribution`` deliberately does not.
+
+    A rail count is the bluntest statement of non-discriminativeness there is: a
+    metric with 86% of its mass on one rail is not ranking those rows, whatever
+    its mean says.
+    """
+    metrics = metrics or [c for c in score_cols(df) if c.startswith("deepeval_scores.")]
+    rows = []
+    keep = df[~ra._abstained(df)] if exclude_abstentions else df
+    by = [by] if isinstance(by, str) else list(by)
+    groups = ([(name, sub) for name, sub in keep.groupby(by, observed=True)]
+              if by else [((), keep)])
+    for name, sub in groups:
+        name = name if isinstance(name, tuple) else (name,)
+        for metric in metrics:
+            if metric not in sub:
+                continue
+            val = pd.to_numeric(sub[metric], errors="coerce").dropna()
+            if val.empty:
+                continue
+            n = len(val)
+            n_zero, n_one = int((val == 0.0).sum()), int((val == 1.0).sum())
+            rows.append(dict(zip(by, name), **{
+                "metric": metric.split(".")[-1], "n_scored": n,
+                "n_zero": n_zero, "n_one": n_one,
+                "frac_zero": round(n_zero / n, 3), "frac_one": round(n_one / n, 3),
+                "n_between": n - n_zero - n_one,
+                "mean": round(float(val.mean()), 3),
+            }))
+    out = pd.DataFrame(rows)
+    return out.set_index(by + ["metric"]).sort_index() if len(out) and by else out
+
+
+def judge_error_divergence(df, metric="deepeval_faithfulness",
+                           against="ragas_scores.ragas_faithfulness",
+                           exclude_abstentions=True):
+    """Does each error class explain the disagreement between two metrics?
+
+    Per class: the two means over the flagged rows, how the pair orders there
+    (``n_lower`` counts rows where the DeepEval metric sits below its
+    counterpart), and the correlation recomputed with the class REMOVED.
+
+    ``delta_r`` is the honest test. If dropping a class barely moves ``r``, that
+    class is not what drives the two metrics apart, however indefensible its
+    individual reasons are -- a distinction worth making before a handful of
+    quotable errors gets promoted into an explanation of a correlation.
+    """
+    scol = _score_col(metric)
+    if scol not in df or against not in df:
+        return pd.DataFrame()
+    flags, mask = judge_error_flags(df, metric, exclude_abstentions)
+    x = pd.to_numeric(df[scol], errors="coerce")
+    y = pd.to_numeric(df[against], errors="coerce")
+    mask = mask & x.notna() & y.notna()
+    if not mask.any():
+        return pd.DataFrame()
+    _, base_r, base_rho = _corr(x[mask], y[mask])
+
+    def _row(name, hit, r_without, rho_without):
+        return {
+            "error_class": name, "n": int(hit.sum()),
+            "mean_metric": round(float(x[hit].mean()), 3),
+            "mean_against": round(float(y[hit].mean()), 3),
+            "n_lower": int((x[hit] < y[hit]).sum()),
+            "n_higher": int((x[hit] > y[hit]).sum()),
+            "n_equal": int((x[hit] == y[hit]).sum()),
+            "pearson_without": round(r_without, 4),
+            "delta_pearson": round(r_without - base_r, 4),
+            "spearman_without": round(rho_without, 4),
+            "delta_spearman": round(rho_without - base_rho, 4),
+        }
+
+    rows = [_row("__baseline__", mask, base_r, base_rho)]
+    subsets = [(name, flags[name] & mask) for name in flags.columns]
+    subsets.append(("__all_flagged__", flags.any(axis=1) & mask))
+    for name, hit in subsets:
+        if not hit.any():
+            continue
+        _, r_without, rho_without = _corr(x[mask & ~hit], y[mask & ~hit])
+        rows.append(_row(name, hit, r_without, rho_without))
+    return pd.DataFrame(rows)
+
+
 # --- (2d) How the variants compare -------------------------------------------
 # The paired test itself is ``analysis.analysis.compare_variants`` (shared with
 # plots.variant_effect_forest); what follows are the cuts that only belong to
@@ -1529,6 +2539,23 @@ def signal_vs_metric(df, signal, metrics=RETRIEVAL_METRICS, by=None, rows_mask=N
 
 # --- helpers -----------------------------------------------------------------
 
+def round_keeping_pvalues(df, ndigits=3, p_cols=("wilcoxon_p",)):
+    """``df.round(n)`` that does not flatten a decisive p-value into ``0.0``.
+
+    Rounding the whole frame to 3 dp turns 4e-07 into 0.0, which reads as a
+    missing value in the very column where the magnitude is the finding. The
+    named columns are rendered in scientific notation below 1e-4 instead.
+    """
+    out = df.round(ndigits)
+    for col in p_cols:
+        if col in df:
+            out[col] = [
+                "" if pd.isna(v) else (f"{v:.1e}" if abs(v) < 1e-4 else f"{round(v, 4):g}")
+                for v in pd.to_numeric(df[col], errors="coerce")
+            ]
+    return out
+
+
 def _indent(text, n=4):
     pad = " " * n
     return "\n".join(pad + line for line in text.splitlines())
@@ -1715,10 +2742,141 @@ if __name__ == "__main__":
             rc_mism.to_csv(paths.table(eval_path, "eval_reason_mismatches"),
                            index=False)
 
-        print("\n=== reason-string mining (failure-phrase hit rate per judge) ===")
-        reasons = mine_reasons(d)
-        print(reasons.to_string())
-        reasons.to_csv(paths.table(eval_path, "reason_mining"))
+        # (2e) judge-prose failure taxonomy -----------------------------------------
+        # Abstentions are excluded throughout: their faithfulness is not a
+        # judgement about an answer, and they are dropped from the analysis
+        # cohort anyway.
+        print("\n=== judge-error taxonomy (is the judge's stated reason defensible?) ===")
+        print("one block per metric, because the classes differ between them: each is "
+              "gated to the metric whose prompt chain can actually produce it. A "
+              "'candidate' rate is a regex lead to eyeball, an 'exact' one is "
+              "decidable from the row alone.")
+        for m in DEEPEVAL_JUDGE_SEES:
+            for label, table in (("chain", DEEPEVAL_JUDGE_SEES),
+                                 ("reason step", DEEPEVAL_REASON_SEES)):
+                sees = table[m]
+                print(f"  {m} ({label}): sees "
+                      + (", ".join(k for k, v in sees.items() if v) or "-")
+                      + " | blind to "
+                      + (", ".join(k for k, v in sees.items() if not v) or "-"))
+        jerr = judge_error_summary(d)
+        jerr.to_csv(paths.table(eval_path, "judge_error_summary"), index=False)
+
+        for metric in DEEPEVAL_JUDGE_SEES:
+            if not judge_error_classes(metric) or _score_col(metric) not in d:
+                continue
+            short = metric.replace("deepeval_", "")
+            print(f"\n########## {metric} ##########")
+            print(jerr[jerr["metric"] == metric].drop(columns="metric")
+                  .to_string(index=False))
+            for by in ("source_dataset", "variant"):
+                tab = judge_error_by(d, metric, by=by)
+                if not len(tab):
+                    continue
+                print(f"\n--- {metric}: error rate by {by} ---")
+                print(tab.to_string())
+                tab.to_csv(paths.table(eval_path, f"judge_error_{short}_by_{by}"))
+            # rag vs rag_sc on the SAME questions. Printed twice: once on the
+            # flagged/clean cut, once on the metric itself, because a rate that
+            # improves between two groups and a rate that improves on the same
+            # questions are different claims.
+            for thr, note in ((None, "judge-error flag"), (0.5, "metric < 0.5")):
+                tab, st = variant_flip(d, metric, threshold=thr)
+                if not len(tab):
+                    continue
+                print(f"\n--- {metric}: rag vs rag_sc on the same questions "
+                      f"({note}) ---")
+                print(tab.to_string())
+                print("  " + "  ".join(f"{k}={v}" for k, v in st.items()
+                                       if k not in ("metric", "outcome")))
+
+            ev_rows = judge_error_rows(d, metric)
+            if len(ev_rows):
+                ev_rows.to_csv(paths.table(eval_path, f"judge_error_rows_{short}"),
+                               index=False)
+                print(f"\n{len(ev_rows)} flagged reasons written to "
+                      f"{paths.rel(paths.table(eval_path, f'judge_error_rows_{short}'))}")
+            # Faithfulness is the only one of the three with a comparable metric to
+            # be divergent FROM, so this cut belongs inside its block rather than
+            # after all three, where it would read as a property of the taxonomy.
+            if metric == "deepeval_faithfulness":
+                peer = peer_scores_on_flagged(d, metric)
+                if len(peer):
+                    print(f"\n--- {metric}: what the other faithfulness scorers "
+                          f"said about the score-affecting error rows ---")
+                    print("verdict-stage classes only, abstentions excluded. Read "
+                          "each row against __unflagged__: a peer near 1.0 where "
+                          "this judge is near 0.0 localises the disagreement.")
+                    print(peer.to_string(index=False))
+                    peer.to_csv(paths.table(eval_path, "judge_error_peer_scores"),
+                                index=False)
+
+                div = judge_error_divergence(d, metric)
+                if len(div):
+                    print(f"\n--- {metric}: does any class explain the gap to "
+                          f"ragas_faithfulness? ---")
+                    print("delta_pearson is the test: a class whose removal barely "
+                          "moves r is not what drives the two metrics apart, however "
+                          "indefensible its individual reasons are.")
+                    print(div.to_string(index=False))
+                    div.to_csv(paths.table(eval_path, "judge_error_divergence"),
+                               index=False)
+
+        print("\n=== verdict shape: what the DeepEval judges returned per claim ===")
+        print("the taxonomy above asks whether the judge's PROSE is defensible; this "
+              "asks what its verdicts were, one row per metric x cohort. Read frac_idk "
+              "first: DeepEval reserves 'no' for a direct contradiction, so an "
+              "unsupported claim comes back 'idk', and with penalize_ambiguous_claims "
+              "an idk scores 0 exactly like a no. pooled_score (= frac_yes) is the "
+              "claim-weighted score as computed; pooled_if_idk_yes is the same number "
+              "under the pre-2026-08-10 convention.")
+        vshape = verdict_shape(d)
+        if len(vshape):
+            print(vshape.round(3).to_string())
+            vshape.to_csv(paths.table(eval_path, "verdict_shape"))
+            for by in ("source_dataset", "variant"):
+                tab = verdict_shape(d, by=by, cohorts=("answered",))
+                if not len(tab):
+                    continue
+                print(f"\n--- verdict shape on ANSWERED rows by {by} ---")
+                print(tab.round(3).to_string())
+                tab.to_csv(paths.table(eval_path, f"verdict_shape_by_{by}"))
+        empty = empty_verdict_metrics(d)
+        if empty:
+            print(f"\nno verdicts persisted at all for: {', '.join(empty)} — the "
+                  f"evaluator reads the metric's `verdicts` attribute, and "
+                  f"ContextualRelevancyMetric exposes `verdicts_list` (grouped per "
+                  f"context) instead. The SCORES for those metrics are unaffected "
+                  f"(DeepEval computes them internally); only this claim-level view of "
+                  f"them is missing, so no idk rate can be quoted for them.")
+
+        for metric, peer in (("deepeval_faithfulness",
+                              "ragas_scores.ragas_faithfulness"),):
+            cf, cf_info = idk_counterfactual(d, metric, against=peer)
+            if not len(cf):
+                continue
+            print(f"\n--- {metric}: does the idk convention drive the gap to "
+                  f"{peer.split('.')[-1]}? ---")
+            print(f"per-row score recomputed from the persisted tallies under both "
+                  f"conventions, abstentions excluded, n = {cf_info['n_rows']}. "
+                  f"Sanity check: yes/n_verdicts reproduces the stored score on "
+                  f"{cf_info['recomputed_matches']:.1%} of rows — if that is not ~100% "
+                  f"the rest of this table is void.")
+            print(cf.round(3).to_string(index=False))
+            cf.to_csv(paths.table(eval_path, f"idk_counterfactual_{metric}"),
+                      index=False)
+            print("the correlation columns are the ones that matter: a level shift is "
+                  "a calibration choice, a rank change means the two libraries are "
+                  "scoring different constructs and any pooled correlation between "
+                  "them is partly reporting the convention.")
+
+
+        print("\n=== score rails: how much of each metric sits exactly on 0 or 1 ===")
+        print("counts, abstentions excluded - the unit a claim like 'the judge "
+              "returns 0.00 on N of M rows' is actually made in.")
+        rails = score_rail_counts(d)
+        print(rails.to_string())
+        rails.to_csv(paths.table(eval_path, "score_rail_counts"))
 
         # (2d) how the variants compare ---------------------------------------------
         for by in ("source_dataset", "variant"):
@@ -1730,12 +2888,17 @@ if __name__ == "__main__":
         print("\n=== paired variant comparisons (Wilcoxon signed-rank) ===")
         print("the results-chapter spine; only meaningful for a metric that the "
               "distribution table above shows actually spreads.")
-        for metric in ("ragas_scores.ragas_answer_correctness",
-                       "deepeval_scores.deepeval_relevance"):
-            for a, b in (("rag", "no_rag"), ("rag_sc", "rag")):
+        print("compare n_pairs down the block before comparing effects: the three "
+              "faithfulness metrics are answered-only (their abstained cells were "
+              "nulled upstream), while contextual relevance scores RETRIEVAL and is "
+              "therefore defined on abstentions too, so it pairs a larger cohort.")
+        for metric, pairs in VARIANT_COMPARISONS:
+            if metric not in d:
+                continue
+            for a, b in pairs:
                 cmp = ev.compare_variants(d, metric, a=a, b=b)
                 print(f"\n{metric}: {a} vs {b}")
-                print(cmp.round(3).to_string())
+                print(round_keeping_pvalues(cmp).to_string())
                 cmp.to_csv(paths.table(
                     eval_path, f"compare_{a}_vs_{b}_{metric.split('.')[-1]}"))
 
