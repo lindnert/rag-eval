@@ -301,6 +301,11 @@ def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=2000):
       - ``n_pairs`` (and ``n_unpaired`` dropped for lacking a partner);
       - ``mean_a`` / ``mean_b`` / ``mean_diff`` / ``median_diff``;
       - ``frac_a_gt_b``: share of questions where a strictly beat b;
+      - ``n_nontied``: pairs the signed-rank test actually ranks, i.e. ``n_pairs``
+        minus the ties. Read it next to ``n_pairs`` before reading the effect
+        size: on a metric welded to a rail these diverge hard — DeepEval Relevance
+        pairs 273 questions and ranks 26 of them — and it is ``n_nontied`` that
+        says how much evidence ``wilcoxon_p`` and ``rank_biserial`` rest on;
       - ``wilcoxon_p``: two-sided Wilcoxon signed-rank p-value (non-parametric,
         the right test for these bounded, non-normal scores);
       - ``rank_biserial``: matched-pairs effect size in [-1, 1] (magnitude, since a
@@ -335,6 +340,7 @@ def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=2000):
             "mean_diff": diffs.mean() if n else float("nan"),
             "median_diff": float(np.median(diffs)) if n else float("nan"),
             "frac_a_gt_b": float((diffs > 0).mean()) if n else float("nan"),
+            "n_nontied": int(len(nonzero)),
         }
         if wilcoxon is None or len(nonzero) == 0:
             row["wilcoxon_p"] = float("nan")

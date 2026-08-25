@@ -268,7 +268,7 @@ def dataset_label(name):
 # Display names for the variants: the data keeps the pipeline's own identifiers, the
 # figure prints how the thesis writes them. Callers opt in through ``variant_label``,
 # so a figure whose axis is meant to show the literal column value still can.
-VARIANT_LABELS = {"no_rag": "Baseline", "rag": "RAG", "rag_sc": "RAG-SC"}
+VARIANT_LABELS = {"no_rag": "Baseline LLM", "rag": "Naive RAG", "rag_sc": "SC-RAG"}
 
 
 def variant_label(name):
@@ -1014,6 +1014,223 @@ def variant_effect_forest(df, metrics=None, comparisons=None):
     # Top of the rect is 1.0: the reserve above it was for the suptitle this figure no
     # longer draws, and left in it is just a band of blank paper in the PDF.
     fig.tight_layout(rect=(0, 0.05, 0.96, 1.0), w_pad=3.5)
+    return fig
+
+
+def _fmt_p(p):
+    """A p-value as a figure annotation: three decimals, or ``p<0.001``.
+
+    Scientific notation (``2.6e-06``) is right in the console table and wrong on a
+    figure — nobody compares exponents across rows at a glance, and the only claim
+    the annotation has to carry is "far below the threshold".
+    """
+    if not np.isfinite(p):
+        return "p=n/a"
+    return "p<0.001" if p < 0.001 else f"p={p:.3f}"
+
+
+# Metric pairs that measure the same thing under a condition this run happens to
+# satisfy, and are therefore drawn as one row.
+#
+# ID-based context precision and recall are |gold ∩ retrieved| over |retrieved| and
+# over |gold| respectively (evaluation/ragas_eval.py). Retrieval returns k=3 and
+# every synthetic golden was built from exactly 3 chunks, so the two denominators
+# are equal on all 136 scored rows and the metrics are algebraically identical --
+# two rows of it would be one piece of evidence presented as two.
+#
+# The condition is a property of the RUN, not of the metrics: change k or the
+# golden builder and they separate again. So this is a request to collapse, checked
+# against the numbers at draw time by _collapse_equivalent, and silently ignored
+# when they no longer agree.
+EQUIVALENT_METRICS = [
+    ("ragas_scores.ragas_id_context_precision", "ragas_scores.ragas_id_context_recall"),
+]
+
+# The stats that have to match before two metrics are called one row. Deliberately
+# the whole visible row -- both panels, both counts -- and not just the mean.
+_EQUIV_COLS = ("n_pairs", "n_nontied", "mean_diff", "ci_low", "ci_high",
+               "wilcoxon_p", "rank_biserial")
+
+
+def _collapse_equivalent(rows, pairs=EQUIVALENT_METRICS):
+    """``[(metric, stats)]`` -> ``[(label, stats)]``, merging the equivalent pairs.
+
+    A pair merges only if every stat in ``_EQUIV_COLS`` agrees, so the merge cannot
+    quietly hide a run where the two metrics came apart: there the check fails and
+    both rows are drawn, which is the outcome that wants looking at.
+    """
+    stats = dict(rows)
+    merged_away, labels = set(), {}
+    for keep, drop in pairs:
+        if keep not in stats or drop not in stats:
+            continue
+        a, b = stats[keep], stats[drop]
+        same = all(np.isclose(float(a[c]), float(b[c]), rtol=0, atol=1e-9,
+                              equal_nan=True) for c in _EQUIV_COLS)
+        if same:
+            merged_away.add(drop)
+            # "RAGAS Context Precision/Recall" — the shared prefix is not repeated.
+            labels[keep] = f"{metric_label(keep)}/{metric_label(drop).split()[-1]}"
+    return [(labels.get(m, metric_label(m)), r)
+            for m, r in rows if m not in merged_away]
+
+
+def paired_comparison_plot(df, comparisons, alpha=0.05):
+    """The ``paired variant comparisons (Wilcoxon signed-rank)`` table, drawn.
+
+    One row per (metric, variant pair) in ``comparisons`` — the same
+    ``eval_analysis.VARIANT_COMPARISONS`` the table is printed from, so the figure
+    and the table can never drift apart — and two panels per row, because the
+    table's two effect columns answer different questions and are on different
+    scales:
+
+      - LEFT: the paired mean difference ``a − b`` with its 95% bootstrap CI, in
+        the metric's own units. This is what "how much better" means to a reader,
+        but it is only comparable down the column for metrics that share a scale.
+      - RIGHT: the rank-biserial correlation, the matched-pairs effect size that
+        belongs to the Wilcoxon test the section is named for. It is scale-free
+        and bounded to [-1, 1], so it IS comparable down the column — a 0.06 mean
+        gain on contextual relevance and a 0.078 one on RAGAS faithfulness are the
+        same size in metric units and very different as effects.
+
+    Each panel is coloured by ITS OWN verdict, which is the honest way to draw two
+    statistics that can disagree: the left panel by whether the bootstrap CI
+    clears zero, the right by whether the Wilcoxon p clears ``alpha``. Where a row
+    is grey on one side and coloured on the other, the mean and the ranks are
+    telling different stories and the row deserves the reader's attention rather
+    than a single merged verdict.
+
+    Rows are grouped by COMPARISON rather than kept in the table's metric-major
+    order. Within a group every row is the same question asked of a different
+    judge ("does self-correction change anything?"), which is exactly the
+    comparison the eye should be making; interleaving the two comparisons invites
+    reading a rag-vs-no_rag effect against a rag_sc-vs-rag one. Metric order
+    inside a group follows ``comparisons``.
+
+    Each row is annotated ``n = ranked pairs / all pairs``. The two differ by the
+    ties, which the signed-rank test discards, and on a rail-pinned metric they
+    differ by almost everything — so the second number sizes the pairing and the
+    FIRST one sizes the test.
+
+    Metric pairs listed in ``EQUIVALENT_METRICS`` share a row when their statistics
+    actually coincide — see ``_collapse_equivalent``. The table upstream still
+    prints them separately, on purpose: there the duplication IS the evidence that
+    the two are the same measurement on this run, whereas on a figure it would read
+    as two independent findings agreeing.
+
+    Supersedes ``variant_effect_forest``, which draws the same mean differences off
+    its own metric list and without the significance or effect-size columns; the
+    two disagreeing about which metrics get compared is exactly how a comparison
+    ends up in one figure and missing from the table.
+    """
+    apply_style()
+
+    # Group the (metric, pair) rows by comparison, keeping the caller's metric
+    # order inside each group. dict preserves first-seen order, so the groups come
+    # out in the order the comparisons are first mentioned.
+    groups = {}
+    for metric, pairs in comparisons:
+        if metric not in df:
+            continue
+        for a, b in pairs:
+            r = ev.compare_variants(df, metric, a=a, b=b).loc["overall"]
+            if not r.get("n_pairs"):
+                continue
+            groups.setdefault((a, b), []).append((metric, r))
+    if not groups:
+        raise ValueError("no comparison in `comparisons` has a non-empty pairing")
+
+    # Every row of every group shares ONE pair of axes, with the groups separated by
+    # a header slot rather than by a subplot boundary. Stacked subplots would be the
+    # obvious layout and are the wrong one: their per-panel padding is a fixed number
+    # of points, so a two-row group and a six-row group end up with different row
+    # heights and different bar thicknesses, and bar thickness is the one thing on
+    # this figure that must NOT carry meaning.
+    HEADER, GAP = 0.85, 0.9
+    slot, placed, headers = 0.0, [], []
+    for gi, ((a, b), rows) in enumerate(groups.items()):
+        if gi:
+            slot += GAP
+        # "SC-RAG vs. Naive RAG", never the reverse: the header names a and b in the
+        # order the arithmetic subtracts them, so the reader maps a positive bar onto
+        # the first name. Naming the pair the other way round silently inverts every
+        # row in the group.
+        headers.append((slot, f"{variant_label(a)}  vs.  {variant_label(b)}", gi > 0))
+        slot += HEADER
+        for label, r in _collapse_equivalent(rows):
+            placed.append((-slot, label, r))
+            slot += 1.0
+    bottom = -(slot - 1.0)
+
+    fig, (ax_diff, ax_eff) = plt.subplots(
+        1, 2, sharey=True, figsize=(11.5, 0.42 * slot + 1.6))
+
+    for ax in (ax_diff, ax_eff):
+        ax.axvline(0, color=AXIS, lw=1)
+        ax.grid(axis="y", visible=False)
+        ax.set_ylim(bottom - 0.6, 0.6)
+    ax_diff.set_yticks([y for y, _, _ in placed])
+    ax_diff.set_yticklabels([label for _, label, _ in placed])
+    ax_eff.set_xlim(-1.05, 1.05)
+
+    for y, sep_label, draw_rule in headers:
+        if draw_rule:
+            for ax in (ax_diff, ax_eff):
+                ax.axhline(-y + GAP / 2, color=GRID, lw=1, zorder=1)
+        ax_diff.annotate(sep_label, (0.0, -y), xycoords=("axes fraction", "data"),
+                         va="center", ha="left", fontsize=10.5, color=INK_SECONDARY)
+
+    for y, _, r in placed:
+        spans_zero = r["ci_low"] <= 0 <= r["ci_high"]
+        c = NEUTRAL if spans_zero else (POS if r["mean_diff"] > 0 else NEG)
+        ax_diff.plot([r["ci_low"], r["ci_high"]], [y, y], color=c, lw=2,
+                     solid_capstyle="butt", zorder=2)
+        ax_diff.plot([r["mean_diff"]], [y], marker="o", ms=8, zorder=3,
+                     color=SURFACE if spans_zero else c,
+                     markeredgecolor=c, markeredgewidth=2)
+
+        p, rb = r["wilcoxon_p"], r["rank_biserial"]
+        sig = np.isfinite(p) and p < alpha
+        ce = NEUTRAL if not sig else (POS if rb > 0 else NEG)
+        # A bar, not a dot: the rank-biserial is a magnitude measured FROM zero, and
+        # the length IS the quantity. Hollow where the test does not reject, so a
+        # large-but-unsupported effect cannot be mistaken for a finding.
+        ax_eff.barh(y, rb, height=0.5, zorder=2, color=ce if sig else SURFACE,
+                    edgecolor=ce, linewidth=1.6)
+        # BOTH counts, because on a rail-pinned metric they are worlds apart and
+        # only the first one is the evidence behind this panel: DeepEval Relevance
+        # pairs 273 questions and the signed-rank test ranks 26 of them. Annotating
+        # n_pairs alone — as this figure first did — invites reading a large
+        # rank-biserial off 26 pairs as if it stood on 273.
+        ax_eff.annotate(f"{_fmt_p(p)}   n={int(r['n_nontied'])}/{int(r['n_pairs'])}",
+                        (1.0, y), xycoords=("axes fraction", "data"),
+                        xytext=(6, 0), textcoords="offset points",
+                        va="center", ha="left", fontsize=7.5, color=INK_MUTED,
+                        annotation_clip=False)
+
+    # "first − second", not "a − b": the group headers now name the variants, so the
+    # letters no longer appear anywhere on the figure for these to refer back to.
+    ax_diff.set_xlabel("paired mean difference, first − second (95% CI)")
+    ax_eff.set_xlabel("rank-biserial effect size\n"
+                      "(Wilcoxon signed-rank; n = ranked pairs / all pairs)")
+
+    handles = [
+        Line2D([], [], color=POS, lw=2, marker="o", ms=7,
+               label="first named variant wins"),
+        Line2D([], [], color=NEG, lw=2, marker="o", ms=7,
+               label="second named variant wins"),
+        Line2D([], [], color=NEUTRAL, lw=2, marker="o", ms=7,
+               markerfacecolor=SURFACE, markeredgewidth=2,
+               label=f"no detectable difference (CI spans zero / p ≥ {alpha:g})"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=3,
+               bbox_to_anchor=(0.5, -0.01))
+    # The legend reserve is a fixed 0.75 INCH converted to a fraction, not a fixed
+    # fraction: the figure grows with the metric count, and 7% of a tall figure is a
+    # band of blank paper the same legend did not need when it was short.
+    # Right margin pulled in to 0.9: the p / n annotations hang outside the right
+    # panel's axes, and tight_layout does not measure text it was told not to clip.
+    fig.tight_layout(rect=(0, 0.75 / fig.get_figheight(), 0.9, 1.0), w_pad=1.2)
     return fig
 
 

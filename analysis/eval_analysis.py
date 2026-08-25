@@ -315,13 +315,33 @@ RETRIEVAL_METRICS = [
 # table. All three faithfulness scorers are here on purpose -- run side by side
 # on the same pairs, they say whether a variant effect is a property of the
 # system or of one judge.
+#
+# The list is every metric that CAN be paired, in METRIC_ORDER, rather than a
+# selection: it drives both this table and plots.paired_comparison_plot, and a
+# metric left out here is a comparison the results chapter never sees. That is not
+# hypothetical -- answer_accuracy is the one reference metric on which rag_sc beats
+# rag, and while it was missing the table said self-correction bought no answer
+# quality at all.
+#
+# That is why the three ragas_id_context_* rows are here despite pairing 68
+# questions against the 250-370 above them. They need a gold reference-context set,
+# so they exist for the synthetic guideline questions only -- and they are the ONLY
+# retrieval measure in the run with a ground truth. Dropping them for thin n left
+# deepeval_contextual_relevance as the sole voice on whether self-correction
+# retrieves better, and it happens to be the one that says yes. Their n is on the
+# figure and in the table; a reader can discount them, but not if they are absent.
 VARIANT_COMPARISONS = (
     ("ragas_scores.ragas_answer_correctness", (("rag", "no_rag"), ("rag_sc", "rag"))),
+    ("ragas_scores.ragas_answer_accuracy", (("rag", "no_rag"), ("rag_sc", "rag"))),
+    ("ragas_scores.ragas_answer_relevancy", (("rag", "no_rag"), ("rag_sc", "rag"))),
     ("deepeval_scores.deepeval_relevance", (("rag", "no_rag"), ("rag_sc", "rag"))),
-    ("deepeval_scores.deepeval_faithfulness", (("rag_sc", "rag"),)),
     ("ragas_scores.ragas_faithfulness", (("rag_sc", "rag"),)),
     ("ragas_scores.ragas_faithfulness_with_hhem", (("rag_sc", "rag"),)),
+    ("deepeval_scores.deepeval_faithfulness", (("rag_sc", "rag"),)),
     ("deepeval_scores.deepeval_contextual_relevance", (("rag_sc", "rag"),)),
+    ("ragas_scores.ragas_id_context_precision", (("rag_sc", "rag"),)),
+    ("ragas_scores.ragas_id_context_recall", (("rag_sc", "rag"),)),
+    ("ragas_scores.ragas_id_context_ap", (("rag_sc", "rag"),)),
 )
 
 # Pipeline signals shown alongside the worst/best rows.
@@ -3864,7 +3884,17 @@ if __name__ == "__main__":
         # once you can see its shape.
         print("\n=== headline figures ===")
         plots.save_all({
-            "fig_variant_effects": lambda: plots.variant_effect_forest(d),
+            # The paired-comparison table above, drawn from the same
+            # VARIANT_COMPARISONS list so the two can never disagree. It carries the
+            # Wilcoxon p and the rank-biserial effect size, which is what makes the
+            # small mean differences readable: on a metric-units axis a real effect
+            # on a compressed metric and no effect at all look identical.
+            #
+            # This replaced plots.variant_effect_forest, which drew the same mean
+            # differences off its own metric list — so the chapter had one figure and
+            # one table that silently compared different sets of metrics.
+            "fig_paired_comparisons": lambda: plots.paired_comparison_plot(
+                d, VARIANT_COMPARISONS),
             "fig_metric_rails": lambda: plots.metric_rail_plot(d),
             # The same figure faceted: the pooled rails say whether a metric can
             # discriminate at all, these say where. They are the `per dataset x
