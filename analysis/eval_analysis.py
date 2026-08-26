@@ -1171,6 +1171,364 @@ def mc_flatten_impact(df, degenerate, metrics=sorted(ANSWER_METRICS)):
     return pd.DataFrame(rows)
 
 
+# --- LLMDRS answer leakage ---------------------------------------------------
+# LLMDRS items are free-text patient profiles, and their closing sections
+# ("Additional Information", the diet history) are written by the same hand as
+# the gold recommendation. On some of them that prose stops describing the
+# patient and starts prescribing: "Bakytzhan should consume smaller, more
+# frequent meals", "his diet requires modifications, including reducing
+# saturated fats, choosing healthier fats, and incorporating high fibre foods".
+# The question therefore already contains part of the answer it is graded
+# against, and a system that merely paraphrases the prompt can collect
+# reference-metric credit it did not earn.
+#
+# Keyed by id, so a redrawn sample silently flags fewer questions instead of
+# flagging the wrong ones. This is a property of the DATASET, not of the run,
+# which is why the list is a constant here rather than a detector: the leak is a
+# shift in the prose's illocutionary force (describing vs. prescribing), and no
+# keyword rule separates "she avoids smoke" from "she should avoid smoke"
+# reliably enough to carry a caveat in the results chapter.
+#
+# ADJUDICATION (all 50 stems read against their own gold, 2026-08-26). The
+# membership test is narrow on purpose: the stem must state recommendation
+# CONTENT, not merely that a recommendation exists. "Her GP suggested she make
+# some adjustments" is the question; "limiting sodium intake, increasing fluid
+# intake" is the answer. Three of the ten were found by the sweep rather than by
+# the initial read, and one initially-flagged item did not survive it:
+#
+#   +llmdrs_7   "Aida should adopt a balanced, calorie-controlled diet,
+#               including whole grains, lean proteins, and an increased intake
+#               of fruits and vegetables" — the most explicit stem in the set.
+#   +llmdrs_47  shares an eight-word phrase with its own gold's closing summary:
+#               "a well-balanced diet with reduced-fat intake" + exercise.
+#   +llmdrs_49  states the gold's recommendations #1 and #2 outright ("limiting
+#               sodium intake, increasing fluid intake"); tightest leak here.
+#   -llmdrs_25  REJECTED. The GP "suggested she make some adjustments" and names
+#               none, and the diet history it carries (fried eggs, butter,
+#               deep-fried dishes) is the ANTI-pattern the gold argues against —
+#               a foil, not a leak. Its gold-vocabulary overlap is 45th of 50.
+ANSWER_LEAK_DATASET = "llmdrs"
+ANSWER_LEAK_IDS = tuple(f"llmdrs_{n}" for n in
+                        (6, 7, 8, 9, 10, 11, 47, 48, 49, 50))
+
+# A SECOND, weaker leak mechanism, kept out of the set above because pooling the
+# two would be a category error. Here the stem prescribes nothing; it describes a
+# patient who is already compliant, and the gold then endorses that description
+# rather than replacing it — llmdrs_29's gold opens "Nurgul is already eating a
+# balanced diet ... Continue to prioritize these nutrient-rich foods". The credit
+# a model can collect is real but partial (that gold spends most of its length on
+# content the stem does not carry: omega-3s, antioxidants, hydration targets),
+# which is why llmdrs_29 sits 47th of 50 on vocabulary overlap while belonging in
+# the caveat. Reported as a sensitivity row, never merged into the primary set.
+ANSWER_LEAK_COMPLIANT_IDS = ("llmdrs_29",)
+
+# Function words dropped before measuring query/gold vocabulary overlap. Short
+# and deliberately generic: the point is to stop the overlap being dominated by
+# English glue, not to build a stemmer. Tokens of <= 2 characters go too.
+_LEAK_STOPWORDS = frozenset("""
+a an the and or of to in for with on at is are was were be been being has have
+had he she it they them her his their as that this these those not no if then
+than by from into out up down over under more most some such can could should
+would may might will shall do does did about also which who whom while when
+where there here own very just each both any all other same
+""".split())
+
+
+def _content_tokens(text):
+    """Lower-cased alphabetic tokens of length > 2 that are not function words."""
+    return {w for w in re.findall(r"[a-z]+", str(text).lower())
+            if len(w) > 2 and w not in _LEAK_STOPWORDS}
+
+
+def answer_leak_flag(df, ids=ANSWER_LEAK_IDS, dataset=ANSWER_LEAK_DATASET):
+    """Boolean Series over ``df``: does this row's question already state part of
+    its own gold answer? False everywhere outside ``dataset``."""
+    if "id" not in df:
+        return pd.Series(False, index=df.index)
+    flag = df["id"].astype(str).isin(set(ids))
+    if dataset is not None and "source_dataset" in df:
+        flag &= df["source_dataset"].astype(str) == str(dataset)
+    # Named, because it is used as a crosstab axis: an unnamed boolean Series
+    # inherits ``id`` from the column it was built off and labels the table with it.
+    return flag.rename("answer_leak")
+
+
+def answer_leak_overlap(df, ids=ANSWER_LEAK_IDS, dataset=ANSWER_LEAK_DATASET):
+    """One row per LLMDRS QUESTION, with the share of the gold answer's
+    vocabulary that already appears in the prompt.
+
+    The manipulation check on the hand-made flag: if the nine ids really do carry
+    answer text, they should sit above the rest on a measure that knows nothing
+    about the annotation. ``overlap`` is |content words of query ∩ content words
+    of gold| / |content words of gold| — a recall of the gold's vocabulary, so a
+    long profile is not rewarded for its length the way an F1 would be.
+
+    It is a WEAK check in one specific direction, and the report says so: every
+    LLMDRS profile shares vocabulary with its recommendation by construction (the
+    foods, the diagnosis, the patient's name), so the floor is well above zero
+    and the flagged items are expected to sit higher, not alone. Read it as
+    corroboration of the flag's direction, never as a substitute for it.
+    """
+    need = {"id", "query", "reference_answer"}
+    if not need <= set(df):
+        return pd.DataFrame()
+    q = df if dataset is None or "source_dataset" not in df else \
+        df[df["source_dataset"].astype(str) == str(dataset)]
+    q = q.drop_duplicates("id")
+    if not len(q):
+        return pd.DataFrame()
+    rows = []
+    for _, r in q.iterrows():
+        gold = _content_tokens(r["reference_answer"])
+        rows.append({
+            "id": str(r["id"]),
+            "leak": str(r["id"]) in set(ids),
+            "query_chars": len(str(r["query"])),
+            "gold_chars": len(str(r["reference_answer"])),
+            "n_gold_tokens": len(gold),
+            "overlap": (len(_content_tokens(r["query"]) & gold) / len(gold)
+                        if gold else _NAN),
+        })
+    return pd.DataFrame(rows).sort_values("overlap", ascending=False)
+
+
+def _bootstrap_diff_ci(a, b, n_boot=2000, alpha=0.05, seed=0):
+    """Percentile bootstrap CI for the UNPAIRED difference of means ``a - b``.
+
+    The two groups are different questions, so each is resampled independently —
+    unlike ``analysis._bootstrap_ci``, which resamples one vector of paired
+    differences.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    if not len(a) or not len(b):
+        return _NAN, _NAN
+    rng = np.random.default_rng(seed)
+    da = rng.choice(a, size=(n_boot, len(a)), replace=True).mean(axis=1)
+    db = rng.choice(b, size=(n_boot, len(b)), replace=True).mean(axis=1)
+    lo, hi = np.quantile(da - db, [alpha / 2, 1 - alpha / 2])
+    return float(lo), float(hi)
+
+
+def _holm(pvals):
+    """Holm-Bonferroni adjusted p-values, NaNs passed through.
+
+    Holm rather than Bonferroni because it is uniformly more powerful at the same
+    family-wise error rate, and the family here is small enough that the
+    difference decides whether the one nominally significant cell survives.
+    """
+    p = np.asarray(pvals, dtype=float)
+    out = np.full(p.shape, _NAN)
+    idx = np.flatnonzero(np.isfinite(p))
+    if not len(idx):
+        return out
+    order = idx[np.argsort(p[idx])]
+    m, running = len(order), 0.0
+    for rank, i in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * float(p[i])))
+        out[i] = running
+    return out
+
+
+def answer_leak_contrast(df, metrics=None, level="variant",
+                         ids=ANSWER_LEAK_IDS, dataset=ANSWER_LEAK_DATASET):
+    """Within LLMDRS: the nine answer-leaking questions against the other 41.
+
+    Run on the PREPARED frame, so the contrast is computed over exactly the cells
+    the results chapter reports — evaluator failures dropped, faithfulness and
+    reference metrics already nulled on abstentions. A leak-vs-rest table built
+    on the raw frame would compare cells the thesis never averages.
+
+    Two levels, because they answer two different questions and have different
+    independence properties:
+
+    ``level="variant"``   one test per metric x variant. Each question
+                          contributes ONE row to each test, so the samples are
+                          independent, and the variant is held fixed — the same
+                          reason ``option_request_contrast`` is a within-cell
+                          contrast. This is the table for the appendix.
+    ``level="question"``  one test per metric, each question contributing the
+                          mean of its variant scores. Pooling the raw rows
+                          instead would triple n by counting every question three
+                          times; averaging first keeps one observation per
+                          question and buys the power the per-variant cells lack.
+                          Note the cohort shifts slightly per metric: a question
+                          whose rag_sc row abstained is averaged over the
+                          variants that were scored.
+
+    Reports mean, median, the mean difference with a bootstrap CI, and a
+    Mann-Whitney U with rank-biserial (rank-based: these are bounded scores,
+    several of them pinned to a rail, and 9-vs-41 is far too small to lean on a
+    normal approximation). ``p_holm`` corrects across the rows of the returned
+    table — one family, corrected once, rather than a per-call correction the
+    caller has to remember to apply.
+
+    Read the effect sizes and the n columns, not the p-values: nine questions
+    cannot support a hypothesis test that would survive on its own, and the
+    purpose of the table is to bound the size of a possible contamination, not to
+    establish one.
+    """
+    from scipy.stats import mannwhitneyu
+
+    if "source_dataset" not in df or "variant" not in df:
+        return pd.DataFrame()
+    sub = df[df["source_dataset"].astype(str) == str(dataset)]
+    if not len(sub):
+        return pd.DataFrame()
+    if metrics is None:
+        metrics = [m for m in plots.order_metrics(sorted(ANSWER_METRICS | CONTEXT_METRICS))
+                   if m in sub and sub[m].notna().any()]
+    leak = answer_leak_flag(sub, ids=ids, dataset=dataset)
+
+    rows = []
+    for m in metrics:
+        if m not in sub:
+            continue
+        if level == "question":
+            wide = sub.assign(_v=pd.to_numeric(sub[m], errors="coerce")) \
+                      .groupby("id", observed=True)["_v"].mean().dropna()
+            groups = [("pooled", wide[wide.index.isin(set(ids))],
+                       wide[~wide.index.isin(set(ids))])]
+        else:
+            groups = []
+            for var in [v for v in ("no_rag", "rag", "rag_sc")
+                        if (sub["variant"].astype(str) == v).any()]:
+                cell = sub["variant"].astype(str) == var
+                vals = pd.to_numeric(sub.loc[cell, m], errors="coerce")
+                groups.append((var, vals[leak[cell]].dropna(),
+                               vals[~leak[cell]].dropna()))
+        for var, a, b in groups:
+            if not len(a) or not len(b):
+                continue
+            lo, hi = _bootstrap_diff_ci(a, b)
+            rec = {"metric": m.split(".")[-1], "variant": var,
+                   "n_leak": len(a), "mean_leak": a.mean(), "med_leak": a.median(),
+                   "n_rest": len(b), "mean_rest": b.mean(), "med_rest": b.median(),
+                   "delta": a.mean() - b.mean(), "ci_low": lo, "ci_high": hi,
+                   "rank_biserial": _NAN, "p": _NAN}
+            if len(a) >= 3 and len(b) >= 3 and (a.nunique() > 1 or b.nunique() > 1):
+                u, p = mannwhitneyu(a, b, alternative="two-sided")
+                rec["rank_biserial"] = 2 * u / (len(a) * len(b)) - 1
+                rec["p"] = float(p)
+            rows.append(rec)
+    out = pd.DataFrame(rows)
+    if len(out):
+        out["p_holm"] = _holm(out["p"])
+    return out
+
+
+def _tex_num(v, nd=3, sign=False):
+    """One number for the LaTeX table: fixed decimals, en-dash for a missing one.
+
+    Wrapped in math mode so a negative value prints a real minus sign — a table of
+    effect sizes typeset with ASCII hyphens is the classic giveaway of a
+    pasted-in console dump. ``sign=True`` keeps the ``+`` on positive differences,
+    so the direction of every ``delta`` is readable without hunting for the ones
+    that lack a minus.
+    """
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "--"
+    return f"${v:{'+' if sign else ''}.{nd}f}$"
+
+
+def _tex_p(v):
+    """A p-value for the LaTeX table, with a floor rather than 0.000."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "--"
+    return "$<0.001$" if v < 0.001 else f"${v:.3f}$"
+
+
+def answer_leak_latex(contrast, label="tab:llmdrs-answer-leak", caption=None,
+                      style="full"):
+    """``answer_leak_contrast`` as a ``booktabs`` table, ready to paste into the
+    appendix.
+
+    Emitted as a file rather than copied out of the console so the appendix table
+    is reproducible from the run: re-analysing the same results file rewrites it,
+    and a number in the thesis can be traced to the row that produced it.
+
+    The metric name is printed once per group instead of on every row (no
+    ``multirow`` dependency — the table needs ``booktabs`` and nothing else), and
+    the CI shares a cell with the mean difference, which is the only way ten
+    columns fit a portrait page. A contrast with one row per metric — the
+    ``level="question"`` cut, whose ``variant`` is ``pooled`` throughout — drops
+    the variant column and the group rules with it, since neither separates
+    anything there.
+
+    ``style="simple"`` prints the two group means, their difference and a
+    p-value, and nothing else. It is the version to put in front of a reader who
+    should not have to learn three statistics to read one caveat: the bootstrap
+    CI, the rank-biserial effect size and the Holm column all answer questions
+    that only arise once the table is being defended, and none of them changes
+    what this one says. The multiplicity warning the dropped Holm column carried
+    moves into the caption, where it costs a sentence instead of a column — it is
+    not discarded, because the whole point of the table is that a lone p below
+    0.05 among eight tests is not a finding.
+    """
+    if not len(contrast):
+        return ""
+    simple = style == "simple"
+    by_variant = contrast["variant"].nunique() > 1
+    # n from the widest row rather than hard-coded: abstentions and scorer
+    # failures thin individual cells, so the group sizes belong to the data.
+    n_leak = int(contrast["n_leak"].max())
+    n_rest = int(contrast["n_rest"].max())
+    if caption is None:
+        caption = (f"LLMDRS questions whose prompt already states part of the gold "
+                   f"recommendation ($n={n_leak}$) against the remaining LLMDRS "
+                   f"questions ($n={n_rest}$), per metric and variant. "
+                   "$\\Delta$ is the difference "
+                   "in means (leaking $-$ rest) with a percentile bootstrap 95\\% "
+                   "CI; $r_{\\mathrm{rb}}$ is the rank-biserial effect size of a "
+                   "two-sided Mann-Whitney $U$ test; $p_{\\mathrm{Holm}}$ corrects "
+                   "across all rows of the table.")
+    if simple:
+        # The two n's stay, folded into one column. They are counts, not a
+        # statistic to explain, and without them a reader takes the caption's
+        # group sizes to hold on every row — which they do not: a scorer failure
+        # or an abstention thins individual metrics (correctness loses one
+        # question on each side), and a mean over 9 presented as a mean over 10
+        # is the kind of quiet error a simplified table exists to avoid.
+        head = ("Metric & " + ("Variant & " if by_variant else "")
+                + r"$n$ (leak/rest) & Leaking & Rest & $\Delta$ & $p$ \\")
+        spec = ("ll" if by_variant else "l") + "crrrr"
+    else:
+        head = ("Metric & " + ("Variant & " if by_variant else "")
+                + r"$n_{\mathrm{leak}}$ & $\bar{x}_{\mathrm{leak}}$ & "
+                  r"$n_{\mathrm{rest}}$ & $\bar{x}_{\mathrm{rest}}$ & "
+                  r"$\Delta$ [95\% CI] & "
+                  r"$r_{\mathrm{rb}}$ & $p$ & $p_{\mathrm{Holm}}$ \\")
+        spec = ("ll" if by_variant else "l") + "rrrrlrrr"
+    lines = ["% requires \\usepackage{booktabs}",
+             "\\begin{table}[htbp]", "  \\centering",
+             f"  \\caption{{{caption}}}", f"  \\label{{{label}}}",
+             "  \\footnotesize",
+             f"  \\begin{{tabular}}{{{spec}}}", "    \\toprule",
+             f"    {head}", "    \\midrule"]
+    prev = None
+    for _, r in contrast.iterrows():
+        if by_variant and prev is not None and r["metric"] != prev:
+            lines.append("    \\addlinespace")
+        name = plots.metric_label(r["metric"]) if r["metric"] != prev else ""
+        prev = r["metric"]
+        var = f"{plots.variant_label(r['variant'])} & " if by_variant else ""
+        if simple:
+            lines.append(
+                f"    {name} & {var}{int(r['n_leak'])}/{int(r['n_rest'])} & "
+                f"{_tex_num(r['mean_leak'])} & {_tex_num(r['mean_rest'])} & "
+                f"{_tex_num(r['delta'], sign=True)} & {_tex_p(r['p'])} \\\\")
+            continue
+        delta = (f"{_tex_num(r['delta'], sign=True)} [{_tex_num(r['ci_low'])}, "
+                 f"{_tex_num(r['ci_high'])}]")
+        lines.append(
+            f"    {name} & {var}{int(r['n_leak'])} & {_tex_num(r['mean_leak'])} & "
+            f"{int(r['n_rest'])} & {_tex_num(r['mean_rest'])} & {delta} & "
+            f"{_tex_num(r['rank_biserial'])} & {_tex_p(r['p'])} & "
+            f"{_tex_p(r['p_holm'])} \\\\")
+    lines += ["    \\bottomrule", "  \\end{tabular}", "\\end{table}", ""]
+    return "\n".join(lines)
+
+
 # --- NGQA conflict structure -------------------------------------------------
 # NGQA asks "is this food healthy for THIS user". The graph answers it with
 # ``contradict`` edges (condition -> nutrient tag), and ``dataset/NGQA/NGQA.py``
@@ -3812,6 +4170,162 @@ if __name__ == "__main__":
                       "(opioid_misuse) appears nowhere in the knowledge base, so no "
                       "retriever can recover it. Both are properties of the reference, "
                       "not of the pipeline.")
+
+        # (1c) LLMDRS answer leakage ------------------------------------------------
+        # On the PREPARED frame on purpose, unlike the two dataset audits above:
+        # those count rows that should never have been scored, so they have to run
+        # before any exclusion. This one asks whether the numbers the results
+        # chapter reports are inflated on those questions, so it has to be computed
+        # over exactly the cells that chapter averages.
+        ov = answer_leak_overlap(d)
+        leak_rows = answer_leak_flag(d)
+        if len(ov) and int(leak_rows.sum()):
+            n_leak_q = int(ov["leak"].sum())
+            print(f"\n=== {ANSWER_LEAK_DATASET.upper()} answer leakage: do the "
+                  f"{n_leak_q} questions that state part of their own answer score "
+                  f"better? ===")
+            print(f"{n_leak_q} of the {len(ov)} {ANSWER_LEAK_DATASET.upper()} stems "
+                  f"({', '.join(ANSWER_LEAK_IDS)}) close with prescriptive prose — "
+                  f"'X should consume smaller, more frequent meals', 'his diet "
+                  f"requires modifications, including reducing saturated fats' — so "
+                  f"the question already contains part of the recommendation it is "
+                  f"graded against, and a system that paraphrases the prompt can "
+                  f"collect reference-metric credit it did not earn. Read by hand "
+                  f"over all {len(ov)} stems against their own golds; the "
+                  f"adjudication is a constant in this module. The bar is that the "
+                  f"stem states recommendation CONTENT: naming that a "
+                  f"recommendation exists ('her GP suggested some adjustments') is "
+                  f"the question, naming what it says ('limiting sodium intake, "
+                  f"increasing fluid intake') is the answer.")
+            if ANSWER_LEAK_COMPLIANT_IDS:
+                print(f"\n{', '.join(ANSWER_LEAK_COMPLIANT_IDS)} is held OUT of that "
+                      f"set and tested separately below: there the stem prescribes "
+                      f"nothing but describes an already-compliant patient, and the "
+                      f"gold endorses that description instead of replacing it "
+                      f"('Nurgul is already eating a balanced diet ... continue to "
+                      f"prioritize these'). Real, but a different mechanism and a "
+                      f"partial one, so pooling it into the set above would average "
+                      f"two things that are not the same event.")
+
+            print("\n--- manipulation check: gold-vocabulary recall of the prompt ---")
+            ov_sum = ov.groupby("leak")[["overlap", "query_chars", "gold_chars"]] \
+                       .agg(["count", "mean", "median"])
+            print(ov_sum.round(3).to_string())
+            ov.to_csv(paths.table(eval_path, "answer_leak_overlap"), index=False)
+            print("`overlap` is |content words of query ∩ content words of gold| / "
+                  "|content words of gold|, and it knows nothing about the "
+                  "annotation. The flagged questions sit above the rest on it, which "
+                  "corroborates the flag's DIRECTION and no more: every profile "
+                  "shares vocabulary with its own recommendation by construction, so "
+                  "the floor is far from zero and the two groups overlap heavily. "
+                  "Note query_chars in the same table — the flagged stems are also "
+                  "the longer ones, so length is a live confound in everything below "
+                  "and a difference cannot be attributed to the leak alone.")
+
+            llm = d[d["source_dataset"].astype(str) == ANSWER_LEAK_DATASET]
+            tab = (pd.crosstab(llm["variant"].astype(str), answer_leak_flag(llm),
+                               values=ra._abstained(llm), aggfunc="mean")
+                   if "variant" in llm else pd.DataFrame())
+            if len(tab):
+                print("\n--- abstention rate, leaking vs rest (the cohorts differ) ---")
+                print(tab.rename(columns={False: "rest", True: "leaking"})
+                      .round(3).to_string())
+                print(f"Not a result in itself — it is the reason the n columns "
+                      f"below are not {n_leak_q} and {len(ov) - n_leak_q} "
+                      f"everywhere. An abstained row carries no "
+                      "faithfulness and no reference score, so each metric is "
+                      "compared over the rows it was actually computed on.")
+
+            leak_tab = answer_leak_contrast(d)
+            if len(leak_tab):
+                print(f"\n--- per metric x variant: the {n_leak_q} against the "
+                      f"other {len(ov) - n_leak_q} ---")
+                print(round_keeping_pvalues(leak_tab, p_cols=("p", "p_holm"))
+                      .to_string(index=False))
+                leak_tab.to_csv(paths.table(eval_path, "answer_leak_contrast"),
+                                index=False)
+                worst = leak_tab.loc[leak_tab["p"].idxmin()] if leak_tab["p"].notna().any() else None
+                n_sig = int((leak_tab["p_holm"] < 0.05).sum())
+                print(f"\n{len(leak_tab)} tests, {n_sig} of them significant after "
+                      f"Holm correction across the table"
+                      + (f" (smallest raw p: {worst['metric']} / {worst['variant']}, "
+                         f"p={worst['p']:.3f}, p_holm={worst['p_holm']:.3f}, "
+                         f"rank-biserial {worst['rank_biserial']:+.3f})"
+                         if worst is not None else "") + ".")
+                print(f"Within-variant on purpose: each question contributes one row "
+                      f"to each test, so the two samples are independent, and the "
+                      f"variant is held fixed. Read the effect sizes and the n "
+                      f"columns, not the p-values — {n_leak_q} questions cannot "
+                      f"support a hypothesis test on their own, and the table exists "
+                      f"to BOUND a possible contamination rather than to establish "
+                      f"one.")
+
+            pooled = answer_leak_contrast(d, level="question")
+            if len(pooled):
+                print("\n--- one observation per question (mean over its variants) ---")
+                print(round_keeping_pvalues(pooled, p_cols=("p", "p_holm"))
+                      .to_string(index=False))
+                pooled.to_csv(paths.table(eval_path, "answer_leak_contrast_pooled"),
+                              index=False)
+                print("The higher-powered cut of the same data: averaging a "
+                      "question's variant scores keeps n at one per question, where "
+                      "pooling the raw rows would count each question three times "
+                      "and inflate n threefold on correlated observations. It is a "
+                      "separate correction family, so p_holm here is over these rows "
+                      "only.")
+
+            # Sensitivity: does the verdict turn on where the second mechanism was
+            # put? Run the question-level cut again with the already-compliant
+            # stem folded in. If the two agree, the adjudication boundary is not
+            # load-bearing and the caveat can be stated without defending it.
+            if ANSWER_LEAK_COMPLIANT_IDS:
+                widened = answer_leak_contrast(
+                    d, level="question",
+                    ids=tuple(ANSWER_LEAK_IDS) + tuple(ANSWER_LEAK_COMPLIANT_IDS))
+                if len(widened):
+                    print(f"\n--- sensitivity: the same cut with "
+                          f"{', '.join(ANSWER_LEAK_COMPLIANT_IDS)} folded in "
+                          f"({len(ANSWER_LEAK_IDS) + len(ANSWER_LEAK_COMPLIANT_IDS)} "
+                          f"vs the rest) ---")
+                    print(round_keeping_pvalues(widened, p_cols=("p", "p_holm"))
+                          .to_string(index=False))
+                    widened.to_csv(
+                        paths.table(eval_path, "answer_leak_contrast_widened"),
+                        index=False)
+                    print("Read it against the table above, not on its own: the "
+                          "question is only whether the conclusion moves when the "
+                          "boundary between the two leak mechanisms does.")
+
+            # Two LaTeX tables, and the SIMPLE one is the appendix table. The
+            # thesis needs a reader to take one point from this — the leaking
+            # questions do not score better — and the full table asks them to
+            # learn a bootstrap CI, a rank-biserial and a Holm correction to get
+            # there. The full per-variant table is still written, as the thing to
+            # produce if the caveat is ever challenged.
+            tex = answer_leak_latex(
+                pooled, label="tab:llmdrs-answer-leak", style="simple",
+                caption=(
+                    f"Do the LLMDRS questions whose prompt already states part of "
+                    f"the gold recommendation score better than the rest? Each "
+                    f"question enters once, as the mean of its scores across the "
+                    f"three variants. Leaking / Rest are the group means, $\\Delta$ "
+                    f"their difference, and $p$ comes from a two-sided "
+                    f"Mann-Whitney $U$ test. Eight tests are reported, so a single "
+                    f"$p$ below $0.05$ is expected by chance alone: after "
+                    f"correcting for multiple comparisons none of them is "
+                    f"significant."))
+            if tex:
+                tex_path = paths.table(eval_path, "answer_leak_contrast.tex")
+                tex_path.write_text(tex, encoding="utf-8")
+                full_tex = answer_leak_latex(
+                    leak_tab, label="tab:llmdrs-answer-leak-full")
+                full_path = paths.table(eval_path,
+                                        "answer_leak_contrast_full.tex")
+                full_path.write_text(full_tex, encoding="utf-8")
+                print(f"\nappendix-ready LaTeX (booktabs): the simplified "
+                      f"question-level table is {paths.rel(tex_path)}; the full "
+                      f"per-metric x variant table, with effect sizes, bootstrap "
+                      f"CIs and the Holm column, is {paths.rel(full_path)}.")
 
         # (2a) metric distribution / discriminativeness -----------------------------
         print("\n=== per-metric distribution (is the metric discriminative?) ===")
