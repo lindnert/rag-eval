@@ -105,6 +105,7 @@ paired with; see ``analysis.paths``. The figures themselves live in
 ``analysis.plots``.
 """
 
+import csv
 import math
 import re
 from typing import NamedTuple
@@ -1166,6 +1167,145 @@ def mc_flatten_impact(df, degenerate, metrics=sorted(ANSWER_METRICS)):
             rec[m.split(".")[-1]] = with_
             rec[f"{m.split('.')[-1]}_excl"] = without
             rec[f"{m.split('.')[-1]}_delta"] = without - with_
+        rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+# --- NGQA conflict structure -------------------------------------------------
+# NGQA asks "is this food healthy for THIS user". The graph answers it with
+# ``contradict`` edges (condition -> nutrient tag), and ``dataset/NGQA/NGQA.py``
+# turns those into the reference answer: any edge -> "not recommended because
+# ...", no edge -> "appears suitable because ...". So ``has_conflict`` is the
+# single structural property the reference text hinges on, and it is carried on
+# every row as ``dataset_metadata.has_conflict``.
+#
+# The second axis is NOT in the results file. NGQA's own ``difficulty`` label is
+# essentially "how many nutrient tags are relevant, and do they point one way or
+# both ways" — the relevant subset lives in the CSV's ``answer_medium`` column,
+# and it is a strict subset of the food's tags. Deriving it from the query text
+# instead does not work: the full tag list is mixed on almost every food, which
+# collapses 50 of the 53 consistent-evidence questions into the mixed group. So
+# the split needs the CSV, and every function here degrades to an empty frame
+# when it is absent rather than silently substituting the wrong axis.
+NGQA_CSV = Path(__file__).resolve().parents[1] / "dataset" / "NGQA" / "NGQA.csv"
+# Tags that count against a food. Note ``low_protein``: NGQA's graph uses it as an
+# OFFENDING tag (it contradicts a high-protein, weight-gain or opioid-misuse
+# profile), while ``NGQA.py``'s ``_build_gold`` classifies it as favourable via
+# ``t.startswith('low_')`` and cites it as a reason a food is suitable. The two
+# readings disagree on 65% of the conflict-free samples. This list follows the
+# graph, because the graph is what ``has_conflict`` is computed from.
+NGQA_UNFAVOURABLE_TAGS = frozenset({
+    "high_sodium", "high_calorie", "high_cholesterol", "high_sugar",
+    "high_saturated_fat", "high_carb", "high_fat",
+    "low_protein", "low_fiber", "low_calorie"})
+NGQA_GROUPS = ("A_no_conflict", "B_conflict_consistent", "C_conflict_mixed")
+
+
+def ngqa_relevant_tags(path=NGQA_CSV):
+    """``{id: {tag, ...}}`` — the tags NGQA itself says decide each question.
+
+    Read from the CSV's ``answer_medium`` column, which is the gold answer to
+    NGQA's medium task ("which nutrient tags determine whether this food is
+    healthy for the user"). ``process_csv`` keys samples on the CSV row index
+    after skipping rows with an empty required field, so the same skip has to be
+    replayed here or every id shifts.
+
+    Returns an empty dict if the CSV is not present; callers treat that as "this
+    axis is unavailable" rather than as an error.
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+    required = ["question_hard", "answer_hard", "node_list", "edge_list", "difficulty"]
+    out = {}
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        for i, row in enumerate(csv.DictReader(f)):
+            if any(not (row.get(c) or "").strip() for c in required):
+                continue
+            out[f"ngqa_{i}"] = {t.strip() for t in
+                                (row.get("answer_medium") or "").split(",") if t.strip()}
+    return out
+
+
+def ngqa_conflict_groups(df, tags=None):
+    """Label every NGQA row ``A_no_conflict`` / ``B_conflict_consistent`` /
+    ``C_conflict_mixed``; a Series aligned to ``df.index``, NaN off NGQA.
+
+    The three groups separate the two things NGQA's ``difficulty`` label conflates:
+
+    * A vs B is conflict PRESENCE at a matched number of relevant tags. This is
+      the contrast that matters, and it is large.
+    * C vs B is evidence MIXING at a matched number of conflicts — the food has
+      favourable and unfavourable properties at once and the verdict has to weigh
+      them. NGQA's "hard" tier is 94% this case.
+
+    Deliberately not a three-tier "difficulty" ordering. Reporting easy/medium/hard
+    straight makes hard look EASIEST (accuracy 0.69 vs 0.47 on medium), because
+    every hard question carries a conflict while easy/medium are 50/50 and the
+    model's verdict is negative on ~95% of rows either way. That is a label-balance
+    artifact meeting a response bias, not a difficulty effect, so the grouping
+    holds conflict fixed instead.
+    """
+    if "source_dataset" not in df:
+        return pd.Series(np.nan, index=df.index, dtype="object")
+    tags = ngqa_relevant_tags() if tags is None else tags
+    is_ngqa = df["source_dataset"].astype(str).eq("ngqa")
+    conflict = df.get("dataset_metadata.has_conflict")
+    if not len(tags) or conflict is None:
+        return pd.Series(np.nan, index=df.index, dtype="object")
+
+    def label(idx):
+        if not is_ngqa.loc[idx]:
+            return np.nan
+        if not bool(conflict.loc[idx]):
+            return NGQA_GROUPS[0]
+        t = tags.get(str(df.at[idx, "id"]))
+        if t is None:
+            return np.nan
+        bad, good = t & NGQA_UNFAVOURABLE_TAGS, t - NGQA_UNFAVOURABLE_TAGS
+        return NGQA_GROUPS[2] if (bad and good) else NGQA_GROUPS[1]
+
+    return pd.Series([label(i) for i in df.index], index=df.index, dtype="object")
+
+
+def ngqa_conflict_contrast(df, groups=None, metrics=sorted(REFERENCE_METRICS)):
+    """Reference-metric means per NGQA group, with the B-A and C-B contrasts.
+    One row per metric, pooled over the pipeline variants.
+
+    Pooling is at QUESTION level — the three variants of a question are averaged
+    first, then tested at n = questions. Stacking the variant rows instead
+    triples every question and reports a C-B p of 0.02 where the question-level
+    test says 0.28; the means are identical either way, only the significance is
+    fabricated.
+
+    Mann-Whitney because the groups are not shifted normals:
+    ``ragas_answer_accuracy`` is a five-level judge grid and group A piles up on 0.
+    """
+    from scipy.stats import mannwhitneyu
+
+    groups = ngqa_conflict_groups(df) if groups is None else groups
+    sub = df[groups.notna()].copy()
+    if not len(sub):
+        return pd.DataFrame()
+    sub["_group"] = groups[groups.notna()]
+    cols = [m for m in metrics if m in sub]
+    sub = sub.groupby(["id", "_group"], observed=True)[cols].mean().reset_index()
+
+    rows = []
+    for m in cols:
+        g = {k: pd.to_numeric(sub.loc[sub["_group"] == k, m],
+                              errors="coerce").dropna() for k in NGQA_GROUPS}
+        rec = {"metric": m.split(".")[-1]}
+        for short, key in zip("ABC", NGQA_GROUPS):
+            rec[f"n_{short}"] = len(g[key])
+        for short, key in zip("ABC", NGQA_GROUPS):
+            rec[short] = g[key].mean() if len(g[key]) else np.nan
+        for lo, hi, name in (("A", "B", "B_minus_A"), ("B", "C", "C_minus_B")):
+            a, b = g[NGQA_GROUPS["ABC".index(hi)]], g[NGQA_GROUPS["ABC".index(lo)]]
+            rec[name] = a.mean() - b.mean() if len(a) and len(b) else np.nan
+            rec[f"p_{name}"] = np.nan
+            if len(a) >= 3 and len(b) >= 3 and pd.concat([a, b]).nunique() > 1:
+                rec[f"p_{name}"] = mannwhitneyu(a, b, alternative="two-sided")[1]
         rows.append(rec)
     return pd.DataFrame(rows)
 
@@ -3633,6 +3773,45 @@ if __name__ == "__main__":
                       f"— abstaining there is the behaviour under test, not a missing answer. "
                       f"These two metrics therefore have a different cohort rule per dataset: "
                       f"read them per dataset, not pooled.")
+
+        ngqa_groups = ngqa_conflict_groups(d)
+        if ngqa_groups.notna().any():
+            print("\n\n=== NGQA: conflict structure ===")
+            counts = (d.loc[ngqa_groups.notna()]
+                      .assign(_g=ngqa_groups[ngqa_groups.notna()])
+                      .drop_duplicates("id")["_g"].value_counts().reindex(NGQA_GROUPS))
+            print("questions per group:")
+            print(counts.to_string())
+            print("\nA = no contradict edge, so the reference reads 'appears suitable'.\n"
+                  "B = conflict, and the relevant tags all point the same way.\n"
+                  "C = conflict, and the food is favourable AND unfavourable at once —\n"
+                  "    NGQA's 'hard' tier is 94% this case.\n"
+                  "Read this INSTEAD of NGQA's easy/medium/hard label. Reporting the tiers\n"
+                  "straight makes hard look easiest, because every hard question carries a\n"
+                  "conflict while easy/medium are 50/50 and the model returns a negative\n"
+                  "verdict either way — label balance meeting a response bias, not difficulty.")
+
+            contrast = ngqa_conflict_contrast(d, ngqa_groups)
+            if len(contrast):
+                print("\n--- reference metrics by group (pooled over variants, "
+                      "question level) ---")
+                print(contrast.round(3).to_string(index=False))
+                contrast.to_csv(paths.table(eval_path, "ngqa_conflict_contrast"),
+                                index=False)
+                print("\nB-A is conflict presence at a matched tag count, and it is the "
+                      "large effect. C-B is evidence mixing at a matched conflict count, "
+                      "and it is small: the model does not weigh a trade-off and lose, it "
+                      "omits the unfavourable tag from a list that reads as favourable.\n"
+                      "Two caveats belong with any NGQA number quoted from this run. "
+                      "First, `is_healthy_agrees_with_csv_answer` is False on half of "
+                      "group C: there the graph-derived reference says 'not recommended' "
+                      "while NGQA's own answer_hard says 'Yes', and it is the graph one "
+                      "that is scored — a system reproducing NGQA's published answer is "
+                      "marked wrong. Second, `low_protein` is the offending tag on a large "
+                      "share of the conflicts, and the rule behind most of them "
+                      "(opioid_misuse) appears nowhere in the knowledge base, so no "
+                      "retriever can recover it. Both are properties of the reference, "
+                      "not of the pipeline.")
 
         # (2a) metric distribution / discriminativeness -----------------------------
         print("\n=== per-metric distribution (is the metric discriminative?) ===")
