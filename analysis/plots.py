@@ -2190,6 +2190,175 @@ def metric_agreement_dots(ag, stats=("spearman", "pearson")):
     return fig
 
 
+# --- The cross-lingual cell --------------------------------------------------
+
+# The two languages, in the order every cross-lingual table and figure reads them
+# (German first, so a "de − en" difference has the same sign everywhere). Their
+# fills come from the categorical slots by ENTITY, like the variant colours: German
+# keeps slot 0 and English slot 1 across both figures below, so a reader who has
+# learnt the routing chart's legend can carry it to the contrast chart.
+LANG_LABELS = {"de": "German", "en": "English"}
+LANG_COLORS = {"de": CATEGORICAL[0], "en": CATEGORICAL[1]}
+
+
+def language_label(name):
+    """The name a language goes by on an axis (``de`` -> ``German``)."""
+    return LANG_LABELS.get(str(name), str(name))
+
+
+def language_routing_bars(routing):
+    """Does the retriever answer a German question from German documents?
+
+    One bar per question language x variant, split by the language of the chunks
+    the retriever returned. The dashed rule on each bar is that language's share of
+    the CORPUS — what the bar would look like if retrieval ignored language
+    entirely — and the whole figure is the distance between the two.
+
+    The reference line is the point. German is 4.7% of the corpus, so a German bar
+    reaching 84% is an 18-fold enrichment, while an English bar at 94% is barely
+    above its own 95% base rate; drawn without the rules, the two would read as
+    "both arms retrieve in their own language" and the asymmetry — that only one
+    of them is being routed, because only one of them has anywhere else to go —
+    would be invisible. The enrichment factor is printed on each bar for the same
+    reason, since it is the number the prose quotes.
+    """
+    apply_style()
+    if not len(routing):
+        raise ValueError("empty routing table")
+
+    tbl = routing.copy()
+    tbl["_row"] = [f"{language_label(l)}\n{variant_label(v)}"
+                   for l, v in zip(tbl["lang"], tbl["variant"])]
+    y = np.arange(len(tbl))[::-1]  # first row at the top
+
+    fig, ax = plt.subplots(figsize=(7.6, 0.62 * len(tbl) + 2.0))
+    for yi, (_, r) in zip(y, tbl.iterrows()):
+        lang = str(r["lang"])
+        other = "en" if lang == "de" else "de"
+        match = float(r["frac_match"])
+        ax.barh(yi, match, color=LANG_COLORS.get(lang, CATEGORICAL[0]),
+                height=0.62, zorder=2)
+        ax.barh(yi, 1 - match, left=match, height=0.62, zorder=2,
+                color=LANG_COLORS.get(other, CATEGORICAL[1]), alpha=0.35)
+        # The base rate, per bar rather than as one figure-wide line: the two
+        # language arms are measured against different corpus shares, and a single
+        # rule would be wrong for one of them.
+        share = float(r["corpus_share"])
+        if np.isfinite(share):
+            ax.plot([share, share], [yi - 0.36, yi + 0.36], color=INK, lw=1.4,
+                    ls=(0, (3, 2)), zorder=4)
+        # Inside the LEFT end of the bar rather than at the split. At 100% the
+        # split coincides with the corpus rule and the two collide; the left end
+        # is always clear, and it puts every bar's number in the same place.
+        ax.annotate(f"{match:.0%}", (0, yi), xytext=(8, 0),
+                    textcoords="offset points", ha="left", va="center",
+                    fontsize=8.5, color=_ink_on(LANG_COLORS.get(lang)), zorder=5)
+        enr = float(r["enrichment"])
+        if np.isfinite(enr):
+            ax.annotate(f"{enr:.1f}x base rate   n={int(r['n_rows'])}",
+                        (1.0, yi), xycoords=("axes fraction", "data"),
+                        xytext=(6, 0), textcoords="offset points",
+                        ha="left", va="center", fontsize=7.5, color=INK_MUTED,
+                        annotation_clip=False)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(tbl["_row"])
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("share of retrieved chunks, by language")
+    ax.grid(axis="y", visible=False)
+    ax.set_title("Retrieval routes by question language", pad=26)
+    # Colour is the CHUNK's language, so that is what the legend names. The fade on
+    # the second segment is de-emphasis, not a fourth category — the segment in the
+    # question's own language always leads the bar, and carries the percentage.
+    handles = [
+        Line2D([], [], color=LANG_COLORS["de"], lw=8, label="German chunks"),
+        Line2D([], [], color=LANG_COLORS["en"], lw=8, label="English chunks"),
+        Line2D([], [], color=INK, lw=1.4, ls=(0, (3, 2)),
+               label="that language's share of the corpus"),
+    ]
+    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.005), ncol=3)
+    fig.tight_layout(rect=(0, 0, 0.86, 1))
+    return fig
+
+
+def language_contrast_forest(contrast, alpha=0.05):
+    """The German-minus-English difference per metric, with its bootstrap CI.
+
+    Built like ``variant_effect_forest`` and read the same way — dot is the mean
+    difference, bar is the 95% CI, colour is the SIGN and gray means the CI spans
+    zero — with one addition this cell needs: an open triangle marks the
+    STRATIFIED difference, computed within context and pooled. Read the two marks
+    together. Where they sit on top of each other, the gap is not the styling
+    profile or the life-stage band (each context runs one of each), and the
+    difference is about language; where they separate, it is the framing.
+
+    Takes the output of ``eval_analysis.language_contrast`` at either level. The
+    question-level table (one row per metric) is the one to print — the
+    variant-level table draws three marks per metric and is for reading, not for
+    the chapter.
+
+    Metrics whose two arms are identical to the last decimal are still drawn: a
+    faithfulness metric welded to 1.0 in both languages is a fact about the metric,
+    and dropping the row would leave the reader to infer it from an absence.
+    """
+    apply_style()
+    if not len(contrast):
+        raise ValueError("empty contrast table")
+
+    tbl = contrast.copy()
+    by_variant = tbl["variant"].nunique() > 1
+    tbl["_row"] = [f"{metric_label(m)}\n{variant_label(v)}" if by_variant
+                   else metric_label(m)
+                   for m, v in zip(tbl["metric"], tbl["variant"])]
+    y = np.arange(len(tbl))[::-1]
+
+    fig, ax = plt.subplots(figsize=(7.4, 0.52 * len(tbl) + 2.4))
+    ax.axvline(0, color=AXIS, lw=1)
+    ax.grid(axis="y", visible=False)
+    for yi, (_, r) in zip(y, tbl.iterrows()):
+        lo, hi, diff = r["ci_low"], r["ci_high"], r["delta"]
+        spans_zero = not (np.isfinite(lo) and np.isfinite(hi)) or lo <= 0 <= hi
+        color = NEUTRAL if spans_zero else (POS if diff > 0 else NEG)
+        if np.isfinite(lo) and np.isfinite(hi):
+            ax.plot([lo, hi], [yi, yi], color=color, lw=2,
+                    solid_capstyle="butt", zorder=2)
+        ax.plot([diff], [yi], marker="o", ms=8, zorder=4,
+                color=SURFACE if spans_zero else color,
+                markeredgecolor=color, markeredgewidth=2)
+        strat = r.get("delta_strat", np.nan)
+        if np.isfinite(strat):
+            ax.plot([strat], [yi], marker="^", ms=7, zorder=3, color="none",
+                    markeredgecolor=INK_SECONDARY, markeredgewidth=1.2)
+        ax.annotate(f"n={int(r['n_de'])}/{int(r['n_en'])}",
+                    (1.0, yi), xycoords=("axes fraction", "data"),
+                    xytext=(6, 0), textcoords="offset points",
+                    ha="left", va="center", fontsize=7.5, color=INK_MUTED,
+                    annotation_clip=False)
+
+    ax.set_ylim(-0.6, len(tbl) - 0.4)
+    ax.set_yticks(y)
+    ax.set_yticklabels(tbl["_row"])
+    ax.set_xlabel("mean difference, German − English  (95% CI)")
+    # The legend below wraps four entries onto two rows, so the title needs
+    # clearance for both — at the 26 the other figures use it lands on top of them.
+    ax.set_title("German against English on the same five contexts", pad=46)
+    handles = [
+        Line2D([], [], color=POS, lw=2, marker="o", ms=7,
+               label="German scores higher"),
+        Line2D([], [], color=NEG, lw=2, marker="o", ms=7,
+               label="English scores higher"),
+        Line2D([], [], color=NEUTRAL, lw=2, marker="o", ms=7,
+               markerfacecolor=SURFACE, markeredgewidth=2,
+               label="CI spans zero"),
+        Line2D([], [], color="none", marker="^", ms=7,
+               markeredgecolor=INK_SECONDARY, markeredgewidth=1.2,
+               label="stratified by context"),
+    ]
+    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.005), ncol=2)
+    fig.tight_layout(rect=(0, 0, 0.88, 1))
+    return fig
+
+
 # --- Rendering ---------------------------------------------------------------
 
 # PNG to look at, PDF to \includegraphics — LaTeX wants vector, and a 200-dpi

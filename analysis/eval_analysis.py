@@ -47,6 +47,23 @@ It answers six things, in the order __main__ runs them:
      those rows drop out of RAGAS aggregates while their independent DeepEval
      scores survive.
 
+  1b. Dataset-specific audits, each asking whether some property of the QUESTIONS
+     rather than of the pipeline is driving the numbers above: the NGQA conflict
+     structure, the LLMDRS answer leakage, and the cross-lingual cell.
+
+     The cross-lingual block is the one language analysis in the run.
+     ``crosslingual_frame`` narrows to the synthetic reference contexts — the only
+     cell generated in both German and English — and from there
+     ``retrieval_language_routing`` asks whether the retriever answers a German
+     question from German documents, ``gold_recall_by_language`` what that routing
+     costs the ID-based retrieval metrics, ``answer_language_audit`` whether the
+     answer came back in the language it was asked in, ``language_contrast`` how
+     the two arms score (unpaired, stratified by context), ``language_variant_effects``
+     whether retrieval buys the same thing in both, and ``scorer_direction_conflict``
+     whether the scorers of one construct even agree on which language scored
+     higher. Read that last one first: where they do not, no language claim in
+     that family can be made without naming its scorer.
+
   2. Metric validation, in two parts.
 
      (a) Is each metric discriminative on its own? ``metric_distribution`` gives
@@ -106,6 +123,7 @@ paired with; see ``analysis.paths``. The figures themselves live in
 """
 
 import csv
+import json
 import math
 import re
 from typing import NamedTuple
@@ -1666,6 +1684,1282 @@ def ngqa_conflict_contrast(df, groups=None, metrics=sorted(REFERENCE_METRICS)):
                 rec[f"p_{name}"] = mannwhitneyu(a, b, alternative="two-sided")[1]
         rows.append(rec)
     return pd.DataFrame(rows)
+
+
+# --- Cross-lingual cell: German vs English reference questions ---------------
+# The one place in the run where QUESTION LANGUAGE is a manipulated factor.
+#
+# `dataset/synthetic` generates two context sets, and only one of them exists in
+# both languages (see its README, "Hybrid design"):
+#
+#   cell         n Q   question   system prompt   gold answer   gold chunks
+#   enQ_condC     30      en           en             en         3x en
+#   enQ_refC      17      en           en             en         1x de + 2x en
+#   deQ_refC      21      DE           DE             DE         1x de + 2x en
+#
+# There is no `deQ_condC`: the condition contexts are English clinical-guideline
+# prose bound to an English persona, and no German counterpart was generated.
+# So question language is crossed with CONTEXT TYPE, not with context language,
+# and the only language-comparable cell is the reference one — same five
+# contexts, same life-stage bands, same styling profiles, same gold content, two
+# question languages. Everything here is therefore restricted to
+# ``context_type == "reference"``. Pooling the condition rows in would compare
+# German reference-table questions against English clinical-condition questions
+# and report a dataset difference as a language effect.
+#
+# Two properties of that cell decide every test below:
+#
+#   - The two language arms are NOT paired. Each language got its own generation
+#     pass over the same context, so `..._de_000` and `..._en_000` ask about
+#     different nutrients. Every contrast is therefore unpaired (Mann-Whitney),
+#     never a signed-rank test over matched ids.
+#   - `context_id` is the stratum. It pins the life-stage band AND the styling
+#     profile (each context runs one profile), so a language difference that is
+#     really a "technical vs lay framing" difference shows up as a discrepancy
+#     between the raw and the stratified delta.
+CROSSLINGUAL_DATASET = "synthetic_guidelines"
+CROSSLINGUAL_CONTEXT_TYPE = "reference"
+CROSSLINGUAL_STRATUM = "dataset_metadata.context_id"
+# German first everywhere, and every contrast below is oriented de - en, so the
+# sign of a delta reads the same way in every table and figure.
+CROSSLINGUAL_LANGS = ("de", "en")
+
+# The retriever's corpus. `retrieval/hybrid.py` attaches the FAISS position as
+# `chunk_id` (see its comment at the `_metadatas` lookup), and that position IS
+# the index into this file, which is what lets a retrieved id be resolved back to
+# the language of the chunk it names. Read lazily and cached: it is 2548 records
+# of guideline text, and only two fields of each are ever wanted.
+CHUNKS_PATH = Path(__file__).resolve().parents[1] / "richtlinien" / "all_chunks.json"
+_chunk_lang_cache = {}
+
+# The two reference-value tables the synthetic reference contexts are built from,
+# matched on a substring of the source filename. They are the content-equivalent
+# pair — same nutrients, age bands aligned from the oldest end — that makes a
+# controlled routing measure possible. (The IOM filename's misspelling is the
+# corpus's, not a typo here.)
+REFERENCE_TABLE_MARKERS = ("DGE-Referenzwerte", "US_intstitute_of_Medicine")
+
+# How a daily reference value is written in each source, and how an answer that
+# followed that source tends to write it. DGE prints "4,0 µg/Tag", IOM prints
+# "2.4 µg/d" — so the decimal separator and the per-day denominator are a
+# PROVENANCE signal as much as a localisation one, and an answer that mixes them
+# ("1,7 mg/d") is showing which table it read and which language it was asked in
+# at the same time. Both patterns are searched in every answer regardless of its
+# language, since the interesting rows are exactly the ones that use the other
+# language's convention.
+_DEC_COMMA = re.compile(r"\d,\d")
+_DEC_POINT = re.compile(r"\d\.\d")
+_PER_DAY_DE = re.compile(r"/\s*Tag\b|pro\s+Tag\b|täglich", re.IGNORECASE)
+_PER_DAY_EN = re.compile(r"/\s*d\b|/\s*day\b|per\s+day\b|daily\b", re.IGNORECASE)
+
+# A dosed quantity: a number with a nutrition unit attached. It must carry a unit,
+# so ages ("65 Jahre") and bare prose numbers are never compared against a table.
+#
+# The unit list and the two optional groups are all driven by what the two source
+# documents actually print — verified by scanning every token following a number
+# in the 121 DGE and 130 IOM chunks:
+#
+#   DGE   mg/Tag (526)  µg/Tag (198)  % der Energie (184)  kcal/Tag (65)
+#         g/kg KG/Tag (28)  µg-RAE/Tag (28)  ml/Tag (28)  g/Tag (12)
+#   IOM   mg/d (850)  µg/d (548)  g/d (212)  L/d (22)  g/kg/d (20)
+#
+# Three consequences, each a group below:
+#
+#   - ``/kg`` MUST be captured, because without it "1,4 g/kg KG/Tag" reads as
+#     "1.4 g" and would match a g/Tag value in the other table. Protein per
+#     kilogram of body weight and protein per day are different measurements, and
+#     silently conflating them manufactures grounding that is not there. It is
+#     kept as part of the unit key, so the two can never match each other.
+#   - RANGES are DGE-only and common (54 of them: "20-40 µg/Tag", "45-50 % der
+#     Energie"). Both endpoints are emitted as separate quantities, so an answer
+#     quoting either end of a published range counts as grounded in it.
+#   - The QUALIFIER ("-RAE", "-NÄ") is matched and discarded. DGE writes Vitamin A
+#     as "µg-RAE/Tag" where IOM writes plain "µg/d" for the same retinol-activity
+#     quantity, so keeping the qualifier in the key would make the two tables look
+#     as though they never agree on vitamin A.
+#
+# Units are normalised only WITHIN a dimension and only where the two documents
+# genuinely differ in scale (litres to millilitres). Milligrams are deliberately
+# NOT converted to micrograms: both documents already use the same mass
+# conventions, so a conversion would buy nothing and would risk matching 1 g
+# against a 1000 mg that names a different nutrient.
+_QUANTITY = re.compile(
+    r"(\d{1,4}(?:[.,]\d{1,3})?)"                        # value / range start
+    r"(?:\s*[-–]\s*(\d{1,4}(?:[.,]\d{1,3})?))?"         # optional range end
+    r"\s*(µg|μg|mcg|mg|kcal|kJ|ml|mL|g|l|L|%)"          # unit (mg before g)
+    r"(?:\s*-\s*[A-Za-zÄÖÜäöüαβ]{1,4})?"                # optional -RAE / -NÄ
+    r"(\s*/\s*kg)?",                                     # per-kilogram basis
+    re.IGNORECASE)
+
+# Which nutrient a number is about. Built from the label vocabulary of the two
+# tables themselves — every string before the colon on a "- <Nutrient> (<age,
+# sex>): <value> <unit>" line, 47 distinct labels in DGE and 39 in IOM — plus the
+# surface forms the ANSWERS use for the same nutrients, which the tables do not
+# contain: German compounds ("Selenzufuhr", "Eisenzufuhr"), the bare vitamin
+# numbers ("B12-Referenzwert"), and the chemical names a lay answer reaches for
+# ("Cobalamin", "Retinol").
+#
+# The canonical key is what makes the two tables comparable at all: DGE says
+# "Eisen" and IOM says "Iron" for the same row of the same nutrient, and without
+# a shared key no cross-language provenance test can be written. DGE's qualified
+# variants collapse onto the base nutrient — "Zink bei hoher Phytatzufuhr" and
+# "Energie bei PAL 1,4" are zinc and energy — since the qualifier selects a row,
+# not a different substance.
+NUTRIENT_ALIASES = {
+    "vitamin_a": ("vitamin a", "retinol"),
+    "vitamin_b6": ("vitamin b6", "b6", "pyridoxin"),
+    "vitamin_b12": ("vitamin b12", "b12", "cobalamin"),
+    "vitamin_c": ("vitamin c", "ascorbin"),
+    "vitamin_d": ("vitamin d", "calciferol"),
+    "vitamin_e": ("vitamin e", "tocopherol"),
+    "vitamin_k": ("vitamin k", "phyllochinon"),
+    "thiamin": ("thiamin",),
+    "riboflavin": ("riboflavin",),
+    "niacin": ("niacin",),
+    "folate": ("folat",),
+    "biotin": ("biotin",),
+    "pantothenic_acid": ("pantothensäure", "pantothenic"),
+    "choline": ("cholin",),
+    "calcium": ("calcium", "kalzium"),
+    "phosphorus": ("phosphor",),
+    "magnesium": ("magnesium",),
+    "iron": ("eisen", "iron"),
+    "zinc": ("zink", "zinc"),
+    "iodine": ("jod", "iodine"),
+    "selenium": ("selen",),
+    "copper": ("kupfer", "copper"),
+    "manganese": ("mangan",),
+    "chromium": ("chrom",),
+    "molybdenum": ("molybdän", "molybdenum"),
+    "fluoride": ("fluorid", "fluoride"),
+    "sodium": ("natrium", "sodium"),
+    "potassium": ("kalium", "potassium"),
+    "chloride": ("chlorid", "chloride"),
+    "boron": ("boron",),
+    "nickel": ("nickel",),
+    "vanadium": ("vanadium",),
+    "protein": ("protein", "eiweiß"),
+    "water": ("wasser", "water"),
+    "fiber": ("ballaststoff", "fiber", "fibre"),
+    "carbohydrate": ("kohlenhydrat", "carbohydrate"),
+    "fat": ("gesamtfett", "fat"),
+    # The three fatty-acid classes are DGE-only rows (IOM has no MUFA/PUFA/SFA
+    # line), and they are the reason this list is checked against the tables
+    # rather than written from memory: without them a "> 10 % der Energie" on a
+    # MUFA line has no nutrient of its own and inherits the previous bullet's,
+    # which silently filed a fat percentage under iron.
+    # "gesättigte" is a substring of "ungesättigte"; the leading \b on every alias
+    # is what keeps the saturated pattern from firing inside the unsaturated one.
+    "mufa": ("einfach ungesättigte", "monounsaturated"),
+    "pufa": ("mehrfach ungesättigte", "polyunsaturated"),
+    "saturated_fat": ("gesättigte fettsäuren", "saturated"),
+    "linoleic_acid": ("linolsäure", "linoleic"),
+    "alpha_linolenic_acid": ("linolensäure", "linolenic"),
+    "energy": ("energie", "energy", "kalorien"),
+    "alcohol": ("alkohol", "alcohol"),
+    "epa_dha": ("epa", "dha"),
+}
+# Longest surface form first, so "vitamin b12" claims the span before the bare
+# "b12" alias can, and "linolensäure" before "linolsäure".
+_NUTRIENT_SURFACE = [
+    (re.compile(r"\b" + re.escape(s)), s, k)
+    for s, k in sorted(((s, k) for k, ss in NUTRIENT_ALIASES.items() for s in ss),
+                       key=lambda t: -len(t[0]))
+]
+
+# Where a quantity's nutrient is looked for: one table line, or one sentence.
+_SEGMENT = re.compile(r"[\n;]+|(?<=[.!?])\s+")
+_HYPHEN = re.compile(r"[-–—]")
+# "45-50 % der Energie" names Energie next to the number; blanked before mentions
+# are located, or every macronutrient percentage is tagged as energy.
+_ENERGY_BASIS = re.compile(r"%\s*(?:der\s+energie|of\s+energy|energy)")
+
+# Function words that decide the language of a generated answer. Deliberately
+# tiny and hand-checked for cross-language collisions rather than imported from a
+# language-id package: this run has exactly two languages, the texts are
+# paragraph-length, and adding a dependency to answer a binary question would put
+# a model nobody has validated between the results and the thesis.
+#
+# Every word that exists in BOTH languages is excluded, which is why some obvious
+# ones are missing: "was" (de: what), "will" (de: wants), "in", "so", "man", "am"
+# and "all" are English stopwords that are also German, and each would score for
+# the wrong side on the language it does not belong to.
+_DE_MARKERS = frozenset("""
+der die das den dem des ein eine einen einer eines und oder aber nicht ist sind
+war waren wird werden wurde kann koennen können soll sollte sollten muss müssen
+für von mit zum zur auf aus nach über unter durch bei seit gegen ohne als wie
+auch noch schon nur sehr mehr weniger etwa täglich pro ich sie er es wir ihre
+ihnen sein seine haben hat hatte dass diese dieser dieses jeder alle liegt
+beträgt empfohlene empfohlenen zufuhr
+""".split())
+_EN_MARKERS = frozenset("""
+the and but not is are were will would can could should must for from with about
+after over under through since against without how also still only very more
+less daily per you he she it we they their his her have has had that this these
+those each of to at on by recommended intake allowance
+""".split())
+# Umlauts and eszett are decisive on their own: no English word carries one, and
+# a German answer of any length carries several.
+_DE_CHARS = "äöüß"
+
+
+def chunk_corpus(path=CHUNKS_PATH):
+    """``{chunk_id: {"lang", "source", "text"}}`` for the retriever's corpus.
+
+    Read once and cached. Everything the cross-lingual block needs from the
+    corpus goes through here: the language of a retrieved chunk (routing), the
+    document it came from (which reference table), and its text (whether a number
+    in the answer actually appears in the evidence).
+
+    Returns an empty dict if the corpus file is absent, so a checkout without
+    ``richtlinien/`` degrades to "no routing table" instead of raising half way
+    through the report.
+    """
+    key = str(path)
+    if key not in _chunk_lang_cache:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                chunks = json.load(f)
+        except (OSError, ValueError):
+            _chunk_lang_cache[key] = {}
+            return _chunk_lang_cache[key]
+        _chunk_lang_cache[key] = {
+            i: {"lang": (c.get("metadata") or {}).get("lang"),
+                "source": (c.get("metadata") or {}).get("source", ""),
+                "text": c.get("text", "")}
+            for i, c in enumerate(chunks)
+        }
+    return _chunk_lang_cache[key]
+
+
+def chunk_languages(path=CHUNKS_PATH):
+    """``({chunk_id: lang}, corpus language mix)``.
+
+    The mix is a Series of shares over the whole corpus, and it is not a
+    footnote: German is 121 of 2548 chunks (4.7%), so "the retriever returned
+    German context" means something entirely different for a German query than
+    the same sentence would in a balanced corpus.
+
+    Read the caveat on ``retrieval_language_routing`` before quoting a number
+    against this base rate, though: the whole-corpus mix is the wrong denominator
+    for a question whose relevant documents are not a random sample of the corpus.
+    ``reference_table_routing`` is the controlled version.
+    """
+    corpus = chunk_corpus(path)
+    langs = {i: c["lang"] for i, c in corpus.items()}
+    mix = (pd.Series(list(langs.values())).value_counts(normalize=True)
+           if langs else pd.Series(dtype=float))
+    return langs, mix
+
+
+def reference_table_pool(path=CHUNKS_PATH):
+    """``({chunk_id: lang}, German share of the pool)`` over the TWO aligned
+    reference-value tables, and nothing else.
+
+    This is the control the naive routing number needs. ``dataset/synthetic``
+    builds every reference context from one German DGE slice plus the English IOM
+    tables for the SAME life-stage band, chosen to maximise shared nutrients (see
+    its README) — so within this pool the two languages are near-duplicates by
+    construction: same nutrients, same age bands, different authority and
+    different language.
+
+    That makes the pool's German share the right denominator for "did the
+    retriever choose by language?". It is close to a coin flip (121 DGE chunks
+    against 130 IOM, 48%), whereas the whole corpus is 4.7% German — and the gap
+    between those two denominators is exactly the confound: reference-table
+    questions retrieve reference tables because reference tables are relevant,
+    which inflates the German share for a German question no matter how
+    language-blind the retriever is. Measured inside the pool, topical relevance
+    is held and only the choice of authority is left.
+    """
+    corpus = chunk_corpus(path)
+    pool = {i: c["lang"] for i, c in corpus.items()
+            if any(m in c["source"] for m in REFERENCE_TABLE_MARKERS)}
+    if not pool:
+        return {}, _NAN
+    share = sum(1 for v in pool.values() if v == "de") / len(pool)
+    return pool, share
+
+
+def _text_language(text):
+    """``"de"`` / ``"en"`` / ``"unknown"`` for one generated answer.
+
+    Marker-word counts plus umlauts, which is enough for a two-language decision
+    over paragraph-length text and reports ``unknown`` rather than guessing when
+    the evidence is thin (under five words) or tied. The report prints the
+    ``unknown`` count, so a detector that starts failing announces itself instead
+    of quietly relabelling rows.
+    """
+    words = re.findall(r"[a-zA-ZäöüÄÖÜß]+", str(text).lower())
+    if len(words) < 5:
+        return "unknown"
+    de = sum(w in _DE_MARKERS for w in words)
+    de += sum(any(ch in w for ch in _DE_CHARS) for w in words)
+    en = sum(w in _EN_MARKERS for w in words)
+    if de == en:
+        return "unknown"
+    return "de" if de > en else "en"
+
+
+def crosslingual_frame(df):
+    """The reference-context rows of the synthetic set, with the language columns
+    every table below reads. Empty frame when the cell is absent or single-language.
+
+    Derived per row, all named without a dot so they never collide with a
+    ``dataset_metadata.*`` field:
+
+      ``ctx_frac_de`` / ``ctx_frac_match``  share of the RETRIEVED chunks that are
+          German, and that are in the question's own language. The second is the
+          routing measure; the first is what it is measured against.
+      ``ctx_major_lang``                    the language of the majority of the
+          retrieved chunks, and ``ctx_lang_match`` whether that is the question's.
+      ``gold_recall_de`` / ``_en`` / ``_all``  share of the row's GOLD chunks that
+          were retrieved, split by the gold chunk's own language. Each reference
+          gold set is one German DGE slice plus two English IOM tables, so a
+          retriever that stays in one language cannot exceed 1/3 or 2/3 on
+          ``gold_recall_all`` however good its ranking is — the split columns are
+          what separate "missed the evidence" from "could not cross the language".
+      ``answer_lang`` / ``answer_lang_match``  did the answer come back in the
+          language it was asked in.
+      ``answer_chars``                      answer length, because a length
+          difference between the arms is a confound for every judge-scored metric
+          and has to be visible next to them.
+
+    Abstentions keep their ``answer_lang`` (the canonical rejection string is
+    itself translated), which is the point: an abstention in the wrong language
+    is still a language failure.
+    """
+    need = {"source_dataset", "lang", "variant"}
+    if not need <= set(df) or "dataset_metadata.context_type" not in df:
+        return pd.DataFrame()
+    out = df[(df["source_dataset"].astype(str) == CROSSLINGUAL_DATASET)
+             & (df["dataset_metadata.context_type"].astype(str)
+                == CROSSLINGUAL_CONTEXT_TYPE)].copy()
+    if not len(out) or out["lang"].nunique() < 2:
+        return pd.DataFrame()
+
+    langs, _ = chunk_languages()
+
+    def _retrieved(ids):
+        return [int(i) for i in (ids if isinstance(ids, (list, tuple)) else [])]
+
+    got = out.get("retrieved_context_ids", pd.Series(index=out.index, dtype=object))
+    got = got.apply(_retrieved)
+    out["ctx_frac_de"] = [np.mean([langs.get(i) == "de" for i in ids]) if ids else _NAN
+                          for ids in got]
+    out["ctx_frac_match"] = [
+        np.mean([langs.get(i) == q for i in ids]) if ids else _NAN
+        for ids, q in zip(got, out["lang"].astype(str))
+    ]
+    out["ctx_major_lang"] = np.where(out["ctx_frac_de"].isna(), None,
+                                     np.where(out["ctx_frac_de"] > 0.5, "de", "en"))
+    out["ctx_lang_match"] = out["ctx_major_lang"] == out["lang"].astype(str)
+
+    gold = out.get("dataset_metadata.context_chunks",
+                   pd.Series(index=out.index, dtype=object))
+    for lg in (*CROSSLINGUAL_LANGS, None):
+        col = f"gold_recall_{lg or 'all'}"
+        vals = []
+        for chunks, ids in zip(gold, got):
+            g = [int(c["chunk_id"]) for c in (chunks or [])
+                 if lg is None or c.get("lang") == lg]
+            vals.append(len(set(g) & set(ids)) / len(g) if g else _NAN)
+        out[col] = vals
+
+    out["answer_lang"] = out.get("answer", "").apply(_text_language)
+    out["answer_lang_match"] = out["answer_lang"] == out["lang"].astype(str)
+    out["answer_chars"] = out.get("answer", "").astype(str).str.len()
+    return out
+
+
+def crosslingual_cohort(frame):
+    """``context_id`` x ``styling_profile`` x language counts, at QUESTION level.
+
+    The table to read before any contrast below, for two reasons. It shows that
+    every context carries both languages — so no stratum drops out of the
+    stratified test — and it shows that styling profile is a property of the
+    CONTEXT (each runs one profile), which is why ``context_id`` is the stratum
+    and ``styling_profile`` is not a second one.
+    """
+    if not len(frame):
+        return pd.DataFrame()
+    q = frame.drop_duplicates("id")
+    keys = [k for k in (CROSSLINGUAL_STRATUM, "dataset_metadata.styling_profile")
+            if k in q]
+    if not keys:
+        return pd.DataFrame()
+    idx = [q[k].astype(str).rename(k.split(".")[-1]) for k in keys]
+    return pd.crosstab(idx, q["lang"].astype(str), margins=True, margins_name="All")
+
+
+def retrieval_language_routing(frame, variants=("rag", "rag_sc")):
+    """Does the retriever answer a German question from German documents?
+
+    One row per question language x variant, over the rows that retrieved at all:
+
+      ``frac_de_ctx``     share of retrieved chunks that are German;
+      ``frac_match``      share in the QUESTION's language — the routing measure;
+      ``corpus_share``    that language's share of the whole corpus;
+      ``enrichment``      ``frac_match / corpus_share``. The number that makes the
+                          effect legible: retrieval indifferent to language sits
+                          at 1.0 by construction, whatever the corpus mix is, so a
+                          German arm at 18x and an English arm at 1.0 say that only
+                          one of them is being routed.
+      ``frac_major_match``  share of ROWS (not chunks) whose retrieved context is
+                          majority the question's language.
+
+    Read ``enrichment`` and ``corpus_share`` together and the asymmetry stops
+    being surprising: English is 95% of the corpus, so an English query cannot be
+    enriched by more than 1.05x however hard it is routed, and the English row is
+    a floor check rather than a comparison. It is the German row that carries the
+    finding.
+    """
+    if not len(frame):
+        return pd.DataFrame()
+    _, mix = chunk_languages()
+    sub = frame[frame["variant"].astype(str).isin(variants)]
+    sub = sub[sub["ctx_frac_de"].notna()]
+    if not len(sub):
+        return pd.DataFrame()
+    rows = []
+    for (lg, var), g in sub.groupby([sub["lang"].astype(str),
+                                     sub["variant"].astype(str)], observed=True):
+        share = float(mix.get(lg, _NAN))
+        match = g["ctx_frac_match"].mean()
+        rows.append({
+            "lang": lg, "variant": var, "n_rows": len(g),
+            "frac_de_ctx": g["ctx_frac_de"].mean(),
+            "frac_match": match,
+            "corpus_share": share,
+            "enrichment": match / share if share else _NAN,
+            "frac_major_match": g["ctx_lang_match"].mean(),
+        })
+    return pd.DataFrame(rows).sort_values(["lang", "variant"])
+
+
+def gold_recall_by_language(frame, variants=("rag", "rag_sc")):
+    """Gold-chunk recall per question language x variant, split by the language of
+    the gold chunk.
+
+    The consequence of the routing table for the ID-based retrieval metrics. Every
+    reference gold set is language-mixed (one German chunk, two English), so a
+    language-locked retriever is capped: ``gold_recall_all`` cannot pass 1/3 for a
+    German-only context and 2/3 for an English-only one. Reporting
+    ``ragas_id_context_recall`` across the two arms without this split reads that
+    ceiling as a retrieval quality difference.
+
+    ``n_gold_de`` / ``n_gold_en`` are carried so the ceiling is visible in the
+    table rather than asserted in the prose around it.
+    """
+    if not len(frame):
+        return pd.DataFrame()
+    sub = frame[frame["variant"].astype(str).isin(variants)]
+    cols = [f"gold_recall_{k}" for k in (*CROSSLINGUAL_LANGS, "all")]
+    cols = [c for c in cols if c in sub]
+    if not len(sub) or not cols:
+        return pd.DataFrame()
+    gold = sub.get("dataset_metadata.context_chunks")
+    for lg in CROSSLINGUAL_LANGS:
+        sub = sub.assign(**{f"n_gold_{lg}": [
+            sum(1 for c in (chunks or []) if c.get("lang") == lg) for chunks in gold]})
+    keep = [f"n_gold_{lg}" for lg in CROSSLINGUAL_LANGS] + cols
+    idm = [c for c in sub.columns if "id_context" in c]
+    out = sub.groupby([sub["lang"].astype(str), sub["variant"].astype(str)],
+                      observed=True)[keep + idm].mean()
+    out.index.names = ["lang", "variant"]
+    return out
+
+
+def reference_table_routing(frame, variants=("rag", "rag_sc")):
+    """Routing measured INSIDE the reference-table pool — the confound-controlled
+    twin of ``retrieval_language_routing``.
+
+    The naive measure compares the German share of what was retrieved against
+    German's 4.7% share of the whole corpus, and that comparison is confounded:
+    these questions ask for nutrient reference values, the two reference-value
+    tables are the relevant documents, and one of the two is German. A German
+    share far above 4.7% is therefore the expected result of a perfectly
+    language-blind retriever that is merely good at its job.
+
+    So restrict to the retrieved chunks that came from either table and ask which
+    one was chosen. Inside that pool the two are near-duplicates — same nutrients,
+    aligned age bands, different authority and language — and the pool is 48%
+    German, so a language-blind retriever lands near 0.48 in BOTH arms.
+
+    Columns: ``frac_from_pool`` (how much of the retrieved context came from the
+    two tables at all, i.e. whether the question was on-topic for this control),
+    ``frac_de_in_pool`` (the controlled routing measure), ``pool_share`` (0.48)
+    and ``lift`` against it. The distance between the two arms' ``frac_de_in_pool``
+    is the language effect with topical relevance held.
+    """
+    if not len(frame):
+        return pd.DataFrame()
+    corpus = chunk_corpus()
+    pool, share = reference_table_pool()
+    if not pool:
+        return pd.DataFrame()
+    sub = frame[frame["variant"].astype(str).isin(variants)]
+    if not len(sub):
+        return pd.DataFrame()
+    rows = []
+    for (lg, var), g in sub.groupby([sub["lang"].astype(str),
+                                     sub["variant"].astype(str)], observed=True):
+        ids = [int(i) for lst in g["retrieved_context_ids"] for i in (lst or [])]
+        if not ids:
+            continue
+        in_pool = [i for i in ids if i in pool]
+        n_de = sum(1 for i in in_pool if pool[i] == "de")
+        frac_de = n_de / len(in_pool) if in_pool else _NAN
+        rows.append({
+            "lang": lg, "variant": var, "n_rows": len(g), "n_chunks": len(ids),
+            "frac_from_pool": len(in_pool) / len(ids),
+            "n_in_pool": len(in_pool),
+            "frac_de_in_pool": frac_de,
+            "pool_share": share,
+            "lift": frac_de / share if share else _NAN,
+        })
+    return pd.DataFrame(rows).sort_values(["lang", "variant"])
+
+
+def _dosed_quantities(text):
+    """The set of ``(value, unit)`` pairs a text states, normalised so a German
+    and an English statement of the same quantity compare equal.
+
+    Normalising is the whole point: DGE writes ``4,0 µg/Tag`` and IOM writes
+    ``2.4 µg/d``, so without it a German answer could never be matched against an
+    English table and every cross-language comparison would return "not found"
+    for reasons of punctuation. What is normalised:
+
+      - the decimal separator, comma and point to one value;
+      - microgram across its three spellings (``µg``, ``μg`` — different
+        codepoints — and ``mcg``);
+      - litres to millilitres, the one place the two documents use different
+        scales for the same dimension (IOM ``0.7 L/d``, DGE ``620 ml/Tag``);
+      - the ``-RAE`` / ``-NÄ`` qualifier, dropped, since DGE carries it where IOM
+        does not for the same retinol-activity quantity.
+
+    What is deliberately NOT normalised is the per-kilogram basis: ``g/kg`` stays
+    a distinct unit from ``g``, so a protein-per-body-weight value can never match
+    a protein-per-day one. A range emits both of its endpoints.
+    """
+    return {(v, u) for _, v, u in nutrient_quantities(text)}
+
+
+def _match_values(match):
+    """``(value, unit)`` for each endpoint of one ``_QUANTITY`` match."""
+    lo, hi, unit, per_kg = match.groups()
+    u = unit.lower().replace("μ", "µ").replace("mcg", "µg")
+    scale = 1000.0 if u == "l" else 1.0
+    if u == "l":
+        u = "ml"
+    if per_kg:
+        u += "/kg"
+    out = []
+    for value in (lo, hi):
+        if not value:
+            continue
+        try:
+            out.append((round(float(value.replace(",", ".")) * scale, 3), u))
+        except ValueError:
+            continue
+    return out
+
+
+def _nutrient_mentions(segment):
+    """``[(position, canonical nutrient)]`` for every nutrient named in one
+    already-normalised segment.
+
+    Longest surface form first, and a span already claimed by a longer name is not
+    re-matched — otherwise "Vitamin B12" would also register the bare "b12" alias
+    at an offset two characters to the right, and a quantity sitting between two
+    nutrients could be assigned to the phantom.
+
+    Each alias is anchored with ``\\b`` at its START but deliberately not at its
+    end. That is what makes German compounding work: "Selenzufuhr" and
+    "Eisenzufuhr" name selenium and iron and must match, while "Kreisen" must not
+    match "eisen" — a leading word boundary buys the first without the second.
+    """
+    hits, taken = [], []
+    for pattern, surface, canonical in _NUTRIENT_SURFACE:
+        for m in pattern.finditer(segment):
+            i = m.start()
+            if any(a <= i < b for a, b in taken):
+                continue
+            taken.append((i, i + len(surface)))
+            hits.append((i, canonical))
+    return sorted(hits)
+
+
+def text_nutrients(text):
+    """The canonical nutrients a text names, in order of first mention."""
+    seen = []
+    for _, canonical in _nutrient_mentions(_HYPHEN.sub(" ", str(text).lower())):
+        if canonical not in seen:
+            seen.append(canonical)
+    return seen
+
+
+def nutrient_quantities(text, fallback=None):
+    """``{(nutrient, value, unit)}`` — every quantity the text states, each tagged
+    with the nutrient it is about.
+
+    Value and unit alone are not an identity. Both tables are dense grids of
+    numbers, so "700 µg" occurs in each of them for DIFFERENT nutrients, and a
+    provenance test keyed on the number alone credits a match that never happened.
+    Tagging the nutrient is what makes "this answer quotes the German table's
+    vitamin A figure" a checkable statement rather than a coincidence of digits.
+
+    Each quantity is assigned the nutrient named NEAREST to it within its own
+    segment (lines, and sentences inside a line), which resolves both shapes the
+    data comes in: a table line names one nutrient and one value, and an answer
+    sentence names the nutrient a few words from the number. A segment with a
+    quantity but no nutrient inherits the last one named — the shape of "Die
+    Vitamin-D-Referenzwerte unterscheiden sich nicht; der Schätzwert liegt bei
+    20 µg/Tag", where the nutrient is in the first clause and the number in the
+    second.
+
+    ``fallback`` seeds that carry-over, and the caller passes the QUESTION's
+    nutrient: some answers never name what they are about ("die empfohlene Zufuhr
+    für Männer bei 950 µg-RAE/Tag"), and the question always does. Without it
+    those quantities are untaggable and would silently drop out of the provenance
+    table; with it they are attributed to what was asked. When the question names
+    more than one nutrient the caller passes ``None`` rather than guessing, and
+    the quantity is emitted with a nutrient of ``None`` so it can be counted as
+    unattributed instead of being matched wrongly.
+
+    Two length-preserving normalisations, and both have to preserve length because
+    mentions are located in one string and quantities in the other while positions
+    are compared between them: hyphens become spaces (so "Vitamin-D-Referenzwerte"
+    names vitamin D) and the "% der Energie" / "% of energy" basis is blanked. The
+    second is not cosmetic — that phrase names "Energie" right beside the number,
+    which on a "Gesamtfett ... 45-50 % der Energie" line beats the actual nutrient
+    on proximity and tags a fat value as energy.
+    """
+    out, last = set(), fallback
+    low = str(text).lower()
+    for segment in _SEGMENT.split(low):
+        if not segment.strip():
+            continue
+        normalised = _HYPHEN.sub(" ", segment)
+        normalised = _ENERGY_BASIS.sub(
+            lambda m: "%" + " " * (len(m.group(0)) - 1), normalised)
+        mentions = (_nutrient_mentions(normalised)
+                    if len(normalised) == len(segment) else [])
+        # Quantities come from the UNnormalised segment: hyphen-to-space would
+        # turn the range "20-40 µg/Tag" into two unrelated tokens and lose its
+        # lower endpoint.
+        for m in _QUANTITY.finditer(segment):
+            nutrient = (min(mentions, key=lambda h: abs(h[0] - m.start()))[1]
+                        if mentions else last)
+            for value, unit in _match_values(m):
+                out.add((nutrient, value, unit))
+        if mentions:
+            last = mentions[-1][1]
+    return out
+
+
+def quantity_notation_audit(frame, variants=("rag", "rag_sc")):
+    """Does a German answer use German NOTATION for its numbers?
+
+    Answering in the right language is not the same as localising the values, and
+    for a reference-value system the second is what a user acts on: "5,5 mg/Tag"
+    and "5.5 mg/day" are the same quantity written in two conventions, and only
+    one of them is the convention a German reader parses correctly at a glance.
+    ``answer_language_audit`` cannot see this — the prose can be flawless German
+    around a number written the American way.
+
+    Per language arm, over answered rows that state at least one quantity:
+    the share of answers using a decimal comma / decimal point, and the share
+    using a German ("/Tag", "pro Tag", "täglich") / English ("/d", "/day",
+    "daily") per-day denominator. An answer can count in both denominator columns
+    if it uses both.
+
+    Read the OFF-DIAGONAL cells, not the diagonal. They are not merely
+    localisation slips: DGE and IOM print their values in their own conventions,
+    so a German answer carrying "/d" is usually one that read the English table,
+    and the notation is reporting the answer's provenance. ``quantity_provenance``
+    tests that directly.
+    """
+    if not len(frame):
+        return pd.DataFrame()
+    sub = frame[frame["variant"].astype(str).isin(variants)
+                & ~ra._abstained(frame)]
+    if not len(sub):
+        return pd.DataFrame()
+    rows = []
+    for lg, g in sub.groupby(sub["lang"].astype(str), observed=True):
+        answers = [str(a) for a in g["answer"] if _dosed_quantities(a)]
+        if not answers:
+            continue
+        n = len(answers)
+        rows.append({
+            "lang": lg, "n_answers_with_a_quantity": n,
+            "dec_comma": sum(bool(_DEC_COMMA.search(a)) for a in answers) / n,
+            "dec_point": sum(bool(_DEC_POINT.search(a)) for a in answers) / n,
+            "per_day_de": sum(bool(_PER_DAY_DE.search(a)) for a in answers) / n,
+            "per_day_en": sum(bool(_PER_DAY_EN.search(a)) for a in answers) / n,
+        })
+    return pd.DataFrame(rows)
+
+
+def quantity_provenance(frame, variants=("rag", "rag_sc")):
+    """Where did each number in the answer come from — the German table, the
+    English one, both, or nowhere?
+
+    The question this cell was built to ask. Each reference context pairs a DGE
+    slice with the IOM tables for the same life-stage band, and the two DISAGREE
+    on many nutrients (Vitamin B12 for men 65+: DGE 4.0 µg/Tag, IOM 2.4 µg/d;
+    Vitamin E: 8 against 15 mg). So a question about one nutrient and one age band
+    has two defensible answers, and which one the user gets depends on which table
+    was retrieved — which, per ``reference_table_routing``, depends on the language
+    they asked in.
+
+    One row per answered row that states a quantity, counting its quantities:
+
+    Every comparison is on ``(nutrient, value, unit)`` triples, never on the number
+    alone. Both tables are dense grids, so the same figure recurs across unrelated
+    nutrients — matching on value alone credits "the answer quotes DGE's vitamin A"
+    to an answer that merely happened to say 700 of something else. Tagging the
+    nutrient is what makes each column below a checkable claim; the cost is that a
+    quantity whose nutrient cannot be identified is reported separately rather than
+    guessed at.
+
+    Attribution is against the RETRIEVED context (the ``from_*`` columns), not the
+    gold one. Retrieval reaches the gold chunks on well under a third of rows, so
+    an answer's number usually comes from a reference-table chunk that is not the
+    gold chunk; scored against gold alone those all land in "neither", which tells
+    you nothing about which authority the user was given. The ``gold_*`` columns
+    keep that stricter view alongside.
+
+    These are ATTRIBUTION columns, not correctness ones: they say which document
+    supplied the number, never that the number is right for the age band asked
+    about. Auditing the 90 tagged quantities in the 20260812 run against the
+    life-stage band of the supplying chunk, exactly ONE (a German iron value) came
+    from a different band. The rest of the non-gold matches were the same band:
+    German from further slices of the same DGE age-group page (the page spans
+    several chunks and the gold context carries only one), English entirely from
+    the IOM RDA/AI table where the gold context pairs DGE with the IOM *EAR* table
+    for the same life-stage group — a different statistic, so the figures differ
+    legitimately. Use ``gold_dge_only + gold_iom_only + gold_both`` for the
+    correctness view (29/58 German, 13/32 English) and read the ``from_*`` columns
+    only as routing evidence.
+
+    One row per answered row that states a quantity, counting its quantities:
+
+      ``from_dge`` / ``from_iom``  the nutrient AND its value appear in a retrieved
+          chunk from exactly one of the two reference tables — the authority the
+          answer actually followed.
+      ``from_both``   a value the two tables share, so no authority is being
+          chosen; excluded from ``frac_dge_when_they_differ``.
+      ``from_other``  taken from a retrieved document that is neither table (EFSA,
+          the NIH fact sheets, the national guidelines).
+      ``gold_dge_only`` / ``gold_iom_only``  the same test against the gold
+          context's two tables. These are the quantities on which the two
+          authorities differ, and the count says which one the answer followed.
+      ``gold_both``   the same nutrient carries the same value in BOTH gold tables, so
+          the answer is not choosing between them and the quantity carries no
+          routing signal. Excluded from ``frac_dge_when_they_differ`` for that
+          reason. Usually this is genuine agreement (vitamin D is 20 µg in each),
+          but the match is on nutrient and value and NOT on the life-stage row: a
+          German thiamin value for women 51-65 also lands here if the English
+          table happens to print the same figure for adolescents. So ``both`` is
+          an upper bound on agreement between the authorities. It only decides how
+          many quantities are set aside, never the direction of the fraction.
+      ``gold_neither``  the pair is in neither gold table. Usually the
+          answer is quoting a chunk that was retrieved instead of the gold one,
+          which is what ``in_retrieved`` separates out.
+      ``unattributed``  the quantity could not be tied to a nutrient by the answer
+          or by its question, so it is counted but excluded from every provenance
+          column above. Reported rather than hidden: it is the coverage figure for
+          this whole table, and a high value would mean the provenance columns
+          describe a minority of the numbers.
+      ``in_retrieved`` / ``ungrounded``  found / not found in the context actually
+          RETRIEVED for that row, again nutrient-matched. This is the grounding
+          check, and the one language-neutral faithfulness measure in the analysis:
+          a quantity nobody retrieved is unsupported by definition, no judge and no
+          NLI model is involved, and both arms are held to the same standard. Read
+          it against the faithfulness scorers that disagree about the languages —
+          a hard check saying the arms are equally grounded is evidence about the
+          SCORERS.
+
+    Beware the direction of the grounding check's error: a number can be correct
+    and count as ungrounded (the model knew it without retrieving it), and it can
+    be wrong and count as grounded (the right nutrient copied from the wrong age
+    band — nutrient and value are matched, the life-stage row is not).
+    """
+    if not len(frame):
+        return pd.DataFrame()
+    corpus = chunk_corpus()
+    if not corpus:
+        return pd.DataFrame()
+    sub = frame[frame["variant"].astype(str).isin(variants)
+                & ~ra._abstained(frame)]
+    rows = []
+    for _, r in sub.iterrows():
+        # The question's nutrient seeds the answer's tagging: some answers give a
+        # value without ever naming what it is a value OF, and the question always
+        # names it. Only when the question names exactly one — otherwise there is
+        # nothing to disambiguate with and the quantity stays unattributed.
+        asked = text_nutrients(r.get("query", ""))
+        aq = nutrient_quantities(r.get("answer", ""),
+                                 fallback=asked[0] if len(asked) == 1 else None)
+        if not aq:
+            continue
+        gold_de, gold_en = set(), set()
+        for c in (r.get("dataset_metadata.context_chunks") or []):
+            text = corpus.get(int(c["chunk_id"]), {}).get("text", "")
+            (gold_de if c.get("lang") == "de" else gold_en).update(
+                nutrient_quantities(text))
+        # The RETRIEVED context, split by which document each chunk came from.
+        # This is the attribution that matters: retrieval reaches the gold chunks
+        # on well under a third of rows, so an answer's number usually comes from
+        # a reference-table chunk that is correct but not the gold one, and
+        # attributing only against the gold context files most of them under
+        # "neither" — true, and useless.
+        retr_dge, retr_iom, retr_other = set(), set(), set()
+        for i in (r.get("retrieved_context_ids") or []):
+            chunk = corpus.get(int(i), {})
+            source = chunk.get("source", "")
+            quantities = nutrient_quantities(chunk.get("text", ""))
+            if REFERENCE_TABLE_MARKERS[0] in source:
+                retr_dge |= quantities
+            elif REFERENCE_TABLE_MARKERS[1] in source:
+                retr_iom |= quantities
+            else:
+                retr_other |= quantities
+        retrieved = retr_dge | retr_iom | retr_other
+        # A quantity with no nutrient can be compared against nothing, so it is
+        # held out of every provenance column rather than counted as a miss —
+        # "not found in the German table" and "we could not tell what it is" are
+        # different statements and only one of them is about the system.
+        tagged = {q for q in aq if q[0] is not None}
+        rows.append({
+            "id": r["id"], "lang": str(r["lang"]), "variant": str(r["variant"]),
+            "n_qty": len(aq),
+            "unattributed": len(aq) - len(tagged),
+            # against the RETRIEVED context — the primary attribution
+            "from_dge": len(tagged & retr_dge - retr_iom),
+            "from_iom": len(tagged & retr_iom - retr_dge),
+            "from_both": len(tagged & retr_dge & retr_iom),
+            "from_other": len(tagged & retr_other - retr_dge - retr_iom),
+            "ungrounded": len(tagged - retrieved),
+            "in_retrieved": len(tagged & retrieved),
+            # against the GOLD context — kept as the stricter secondary view
+            "gold_dge_only": len(tagged & gold_de - gold_en),
+            "gold_iom_only": len(tagged & gold_en - gold_de),
+            "gold_both": len(tagged & gold_de & gold_en),
+            "gold_neither": len(tagged - gold_de - gold_en),
+        })
+    return pd.DataFrame(rows)
+
+
+def quantity_provenance_summary(prov):
+    """``quantity_provenance`` totalled per language: which authority's numbers
+    each arm ended up quoting, and how many of its numbers were grounded.
+
+    ``frac_dge_when_they_differ`` is the headline: over the quantities that
+    distinguish the two tables, the share taken from the German one. A retriever
+    and a reader that were both indifferent to language would put the two arms at
+    the same value here; the distance between them is the language effect on WHICH
+    REFERENCE VALUE A USER IS TOLD, which is the practical consequence the score
+    tables cannot express.
+    """
+    if not len(prov):
+        return pd.DataFrame()
+    g = prov.groupby("lang")[["n_qty", "unattributed",
+                              "from_dge", "from_iom", "from_both", "from_other",
+                              "in_retrieved", "ungrounded",
+                              "gold_dge_only", "gold_iom_only", "gold_both",
+                              "gold_neither"]].sum()
+    tagged = g["n_qty"] - g["unattributed"]
+    differ = g["from_dge"] + g["from_iom"]
+    g["n_tagged"] = tagged
+    g["n_distinguishing"] = differ
+    g["frac_dge_when_they_differ"] = np.where(differ > 0, g["from_dge"] / differ,
+                                              _NAN)
+    gold_differ = g["gold_dge_only"] + g["gold_iom_only"]
+    g["frac_dge_gold_basis"] = np.where(gold_differ > 0,
+                                        g["gold_dge_only"] / gold_differ, _NAN)
+    # Over the TAGGED quantities, not all of them: an untaggable number was never
+    # tested for grounding, so counting it as ungrounded would report a limit of
+    # the nutrient tagger as a hallucination by the system.
+    g["frac_ungrounded"] = np.where(tagged > 0, g["ungrounded"] / tagged, _NAN)
+    return g
+
+
+def answer_language_audit(frame):
+    """Did the answer come back in the language it was asked in? Counts per
+    question language x variant x detected answer language.
+
+    A cheap check that is worth its space precisely when it finds nothing: language
+    drift (a German question answered in English because the corpus and the model's
+    training data are English-heavy) is the failure this cell exists to catch, and
+    a results chapter that reports German scores without it cannot say whether a low
+    score is a bad German answer or an English one.
+
+    ``unknown`` is the detector declining rather than a third language; a non-zero
+    count there is a reason to read those rows, not to average them in.
+    """
+    if not len(frame) or "answer_lang" not in frame:
+        return pd.DataFrame()
+    return pd.crosstab([frame["lang"].astype(str), frame["variant"].astype(str)],
+                       frame["answer_lang"], margins=True, margins_name="All")
+
+
+def _stratified_delta(values, is_de, strata):
+    """Stratum-weighted mean difference (de - en), strata with only one language
+    dropped. Weighted by stratum size so a five-question context does not count as
+    much as a ten-question one."""
+    diffs, weights = [], []
+    for s in pd.unique(strata):
+        k = strata == s
+        a, b = values[k & is_de], values[k & ~is_de]
+        if len(a) and len(b):
+            diffs.append(a.mean() - b.mean())
+            weights.append(len(a) + len(b))
+    if not diffs:
+        return _NAN
+    return float(np.average(diffs, weights=weights))
+
+
+def _stratified_perm_p(values, is_de, strata, n_perm=5000, seed=0):
+    """Two-sided p for ``_stratified_delta`` by permuting the language label WITHIN
+    each stratum.
+
+    The right test for this cell. The arms are unpaired but not unstructured: both
+    languages were generated from the same five contexts, and a context fixes the
+    life-stage band and the styling profile. Shuffling language within a context
+    holds both of those and asks only whether the label carries anything — which a
+    Mann-Whitney over the pooled rows cannot do, and which no normal approximation
+    should be trusted for at 21 vs 17.
+
+    The ``+1`` in numerator and denominator is the standard Monte-Carlo correction:
+    the observed assignment is one of the permutations, so a p of exactly 0 is not
+    an outcome the test can produce.
+    """
+    obs = _stratified_delta(values, is_de, strata)
+    if not np.isfinite(obs):
+        return _NAN, obs
+    rng = np.random.default_rng(seed)
+    idx = np.arange(len(values))
+    null = []
+    for _ in range(n_perm):
+        perm = is_de.copy()
+        for s in pd.unique(strata):
+            k = idx[strata == s]
+            perm[k] = rng.permutation(is_de[k])
+        null.append(_stratified_delta(values, perm, strata))
+    null = np.asarray(null, dtype=float)
+    null = null[np.isfinite(null)]
+    if not len(null):
+        return _NAN, obs
+    p = (np.sum(np.abs(null) >= abs(obs) - 1e-12) + 1) / (len(null) + 1)
+    return float(p), obs
+
+
+def language_contrast(frame, metrics=None, level="variant", n_perm=5000):
+    """German questions against English ones, per metric.
+
+    Run on the PREPARED frame, so the contrast is computed over exactly the cells
+    the results chapter reports — evaluator failures dropped, faithfulness and
+    reference metrics already nulled on abstentions.
+
+    Two levels, as in ``answer_leak_contrast`` and for the same reasons:
+
+    ``level="variant"``   one test per metric x variant. Each question contributes
+                          one row to each test, and the variant is held fixed.
+    ``level="question"``  one test per metric, each question entering once as the
+                          mean of its variant scores. Pooling the raw rows instead
+                          would triple n on three correlated observations of the
+                          same question.
+
+    Columns: the two group means and medians, the mean difference ``delta``
+    (de - en) with an unpaired bootstrap CI, a Mann-Whitney rank-biserial and
+    p, and Holm across the rows of the returned table.
+
+    Then the two columns that make this cell interpretable rather than merely
+    tested. ``delta_strat`` is the same difference computed within ``context_id``
+    and pooled, and ``p_perm`` is its within-stratum permutation p. Read
+    ``delta`` against ``delta_strat`` FIRST: if they agree the difference is not
+    the styling profile or the life-stage band (each context runs one profile, so
+    those are what stratification removes), and only then is the unstratified
+    p worth reading at all.
+    """
+    from scipy.stats import mannwhitneyu
+
+    if not len(frame):
+        return pd.DataFrame()
+    if metrics is None:
+        metrics = [m for m in plots.order_metrics(
+            sorted(ANSWER_METRICS | CONTEXT_METRICS))
+            if m in frame and frame[m].notna().any()]
+    strat_col = CROSSLINGUAL_STRATUM if CROSSLINGUAL_STRATUM in frame else None
+
+    rows = []
+    for m in metrics:
+        if m not in frame:
+            continue
+        if level == "question":
+            keys = ["id"] + [k for k in ("lang", strat_col) if k]
+            q = (frame.assign(_v=pd.to_numeric(frame[m], errors="coerce"))
+                 .groupby(keys, observed=True)["_v"].mean().dropna().reset_index())
+            cells = [("pooled", q)]
+        else:
+            keys = [k for k in ("lang", strat_col) if k]
+            cells = []
+            for var in [v for v in ev.VARIANT_ORDER
+                        if (frame["variant"].astype(str) == v).any()]:
+                g = frame[frame["variant"].astype(str) == var]
+                g = g.assign(_v=pd.to_numeric(g[m], errors="coerce"))
+                cells.append((var, g[g["_v"].notna()][keys + ["_v"]]))
+        for var, cell in cells:
+            lang = cell["lang"].astype(str)
+            a = cell.loc[lang == "de", "_v"]
+            b = cell.loc[lang == "en", "_v"]
+            if not len(a) or not len(b):
+                continue
+            lo, hi = _bootstrap_diff_ci(a, b)
+            rec = {"metric": m.split(".")[-1], "variant": var,
+                   "n_de": len(a), "mean_de": a.mean(), "med_de": a.median(),
+                   "n_en": len(b), "mean_en": b.mean(), "med_en": b.median(),
+                   "delta": a.mean() - b.mean(), "ci_low": lo, "ci_high": hi,
+                   "rank_biserial": _NAN, "p": _NAN,
+                   "delta_strat": _NAN, "p_perm": _NAN}
+            if len(a) >= 3 and len(b) >= 3 and (a.nunique() > 1 or b.nunique() > 1):
+                u, p = mannwhitneyu(a, b, alternative="two-sided")
+                rec["rank_biserial"] = 2 * u / (len(a) * len(b)) - 1
+                rec["p"] = float(p)
+                if strat_col:
+                    p_perm, delta_s = _stratified_perm_p(
+                        cell["_v"].to_numpy(dtype=float),
+                        (lang == "de").to_numpy(),
+                        cell[strat_col].astype(str).to_numpy(),
+                        n_perm=n_perm)
+                    rec["delta_strat"], rec["p_perm"] = delta_s, p_perm
+            rows.append(rec)
+    out = pd.DataFrame(rows)
+    if len(out):
+        out["p_holm"] = _holm(out["p"])
+        out["p_perm_holm"] = _holm(out["p_perm"])
+    return out
+
+
+def language_variant_effects(frame, metrics=None,
+                             comparisons=(("rag", "no_rag"), ("rag_sc", "rag"))):
+    """``compare_variants`` run inside each language arm: does retrieval buy the
+    same thing in German as in English?
+
+    The interaction the per-metric contrast cannot show. A language difference in
+    the LEVEL of a metric is confounded with everything that differs between two
+    sets of questions; a language difference in the EFFECT of adding retrieval is
+    paired within each question, so the question itself cancels. That makes this
+    the more defensible half of the language analysis even though it has the
+    smaller headline.
+
+    Read ``n_pairs`` and ``n_nontied`` before the p-values: 21 and 17 questions
+    split three ways leaves cells where an effect of identical size is significant
+    in one arm and not the other purely on n, and reporting that as "retrieval
+    helps German but not English" would be an artifact of the split.
+    """
+    if not len(frame):
+        return pd.DataFrame()
+    if metrics is None:
+        metrics = [m for m in plots.order_metrics(sorted(REFERENCE_METRICS))
+                   if m in frame and frame[m].notna().any()]
+    rows = {}
+    for lg in CROSSLINGUAL_LANGS:
+        arm = frame[frame["lang"].astype(str) == lg]
+        if not len(arm):
+            continue
+        for m in metrics:
+            for a, b in comparisons:
+                cmp = ev.compare_variants(arm, m, a=a, b=b)
+                if "overall" not in cmp.index:
+                    continue
+                rows[(lg, m.split(".")[-1], f"{a}_vs_{b}")] = cmp.loc["overall"]
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).T
+    out.index.names = ["lang", "metric", "comparison"]
+    return out
+
+
+def context_language_mismatch(frame, metrics=None, variants=("rag", "rag_sc")):
+    """The rows whose retrieved context is NOT majority in the question's language,
+    listed one by one rather than averaged.
+
+    Because the retriever routes by language, this cell is tiny and nobody
+    designed it: it is what is left over when routing fails. On this run that is a
+    handful of German questions served English tables, and one English question
+    served a German one — far too few for a cell mean, which is exactly why the
+    function returns the rows instead of a groupby.
+
+    It is worth listing anyway, because it is the only place where the ANSWER and
+    the PREMISE are in different languages, and that is the condition under which
+    an NLI-based faithfulness scorer is being asked to do something it was not
+    built for. A scorer whose score collapses on these rows while the
+    reference-graded metrics on the same rows do not is telling you about itself.
+    Treat it as a case series to read, never as a tested contrast.
+    """
+    if not len(frame) or "ctx_lang_match" not in frame:
+        return pd.DataFrame()
+    sub = frame[frame["variant"].astype(str).isin(variants)
+                & frame["ctx_major_lang"].notna()
+                & ~frame["ctx_lang_match"]]
+    if not len(sub):
+        return pd.DataFrame()
+    if metrics is None:
+        metrics = [m for m in plots.order_metrics(
+            sorted(ANSWER_METRICS | CONTEXT_METRICS)) if m in sub]
+    cols = ["id", "variant", "lang", "ctx_major_lang", "ctx_frac_de",
+            "retrieval_best"] + list(metrics)
+    out = sub[[c for c in cols if c in sub]].copy()
+    out.insert(4, "abstained", ra._abstained(sub).to_numpy())
+    return out.rename(columns={m: m.split(".")[-1] for m in metrics}) \
+              .sort_values(["lang", "id", "variant"])
+
+
+def scorer_direction_conflict(contrast, tol=0.02):
+    """Within each metric family, do the scorers even agree on WHICH language
+    scored higher?
+
+    The measurement-side result, computed rather than left to the reader to spot
+    across eight rows of a contrast table. One row per family (the sets defined at
+    the top of this module — faithfulness, relevancy, reference), listing each
+    member's German-minus-English delta and a verdict:
+
+      ``agree``           two or more members move by more than ``tol`` and all
+                          point the same way;
+      ``CONFLICT``        at least two point in OPPOSITE directions, both by more
+                          than ``tol``. The family has no scorer-independent answer
+                          in this run, and "language X is more faithful" cannot be
+                          written without naming the scorer that says so;
+      ``uncorroborated``  exactly one member moves and the rest are flat. Not a
+                          conflict, but not agreement either — nothing confirms it,
+                          which is worth distinguishing from a family where two
+                          scorers independently found the same thing;
+      ``no effect``       no member moves by more than ``tol``, so there is nothing
+                          for them to agree or disagree about.
+
+    ``tol`` exists so a family is not called into conflict by two scorers sitting
+    either side of zero at 0.003 and -0.001. It is a threshold on the EFFECT, not
+    on significance: a conflict between two large deltas is a finding whether or
+    not either survives a correction at these n, and a conflict between two
+    negligible ones is not a finding whichever way their p-values fall.
+    """
+    if not len(contrast):
+        return pd.DataFrame()
+    families = {
+        "faithfulness": FAITHFULNESS_METRICS,
+        "relevancy": RELEVANCY_METRICS,
+        "reference": REFERENCE_METRICS,
+    }
+    rows = []
+    for name, cols in families.items():
+        short = {c.split(".")[-1] for c in cols}
+        sub = contrast[contrast["metric"].isin(short)]
+        if len(sub) < 2:
+            continue
+        deltas = {m: float(d) for m, d in zip(sub["metric"], sub["delta"])
+                  if np.isfinite(d)}
+        moved = {m: d for m, d in deltas.items() if abs(d) > tol}
+        signs = {np.sign(d) for d in moved.values()}
+        if not moved:
+            verdict = "no effect"
+        elif len(signs) > 1:
+            verdict = "CONFLICT"
+        elif len(moved) == 1:
+            verdict = "uncorroborated"
+        else:
+            verdict = "agree"
+        rows.append({
+            "family": name,
+            "n_scorers": len(deltas),
+            "n_moved": len(moved),
+            "verdict": verdict,
+            "favours": "-" if len(signs) != 1 else ("de" if signs == {1.0} else "en"),
+            "deltas": ", ".join(f"{m} {d:+.3f}" for m, d in deltas.items()),
+        })
+    return pd.DataFrame(rows)
+
+
+def language_contrast_latex(contrast, label="tab:crosslingual-de-en", caption=None,
+                            style="simple"):
+    """``language_contrast`` as a ``booktabs`` table for the results chapter.
+
+    ``style="simple"`` is the one to print: metric, the two group means, the
+    difference, its stratified twin and the permutation p. That is the argument —
+    how big is the gap, does it survive holding the context fixed, and could the
+    labels have produced it by chance. ``style="full"`` adds the bootstrap CI, the
+    rank-biserial, the Mann-Whitney p and both Holm columns, for the version to
+    produce if a number is ever challenged.
+
+    Emitted as a file rather than copied from the console so a table in the thesis
+    is reproducible from the run that produced it.
+    """
+    if not len(contrast):
+        return ""
+    simple = style == "simple"
+    by_variant = contrast["variant"].nunique() > 1
+    n_de = int(contrast["n_de"].max())
+    n_en = int(contrast["n_en"].max())
+    if caption is None:
+        caption = (
+            f"German ($n={n_de}$) against English ($n={n_en}$) questions on the "
+            f"synthetic reference-context cell, the only cell generated in both "
+            f"languages. The two arms are separate generation passes over the same "
+            f"five contexts, so the questions are not matched and every test is "
+            f"unpaired. $\\Delta$ is the difference in means (German $-$ English); "
+            f"$\\Delta_{{\\mathrm{{strat}}}}$ is the same difference computed within "
+            f"context and pooled, which holds the life-stage band and the styling "
+            f"profile fixed; $p_{{\\mathrm{{perm}}}}$ permutes the language label "
+            f"within context. Read $\\Delta$ against "
+            f"$\\Delta_{{\\mathrm{{strat}}}}$: agreement is what licenses reading the "
+            f"gap as a language effect rather than a framing one.")
+    if simple:
+        head = ("Metric & " + ("Variant & " if by_variant else "")
+                + r"$n$ (de/en) & German & English & $\Delta$ & "
+                  r"$\Delta_{\mathrm{strat}}$ & $p_{\mathrm{perm}}$ \\")
+        spec = ("ll" if by_variant else "l") + "crrrrr"
+    else:
+        head = ("Metric & " + ("Variant & " if by_variant else "")
+                + r"$n_{\mathrm{de}}$ & $\bar{x}_{\mathrm{de}}$ & "
+                  r"$n_{\mathrm{en}}$ & $\bar{x}_{\mathrm{en}}$ & "
+                  r"$\Delta$ [95\% CI] & $\Delta_{\mathrm{strat}}$ & "
+                  r"$r_{\mathrm{rb}}$ & $p$ & $p_{\mathrm{Holm}}$ & "
+                  r"$p_{\mathrm{perm}}$ \\")
+        spec = ("ll" if by_variant else "l") + "rrrrlrrrrr"
+    lines = ["% requires \\usepackage{booktabs}",
+             "\\begin{table}[htbp]", "  \\centering",
+             f"  \\caption{{{caption}}}", f"  \\label{{{label}}}",
+             "  \\footnotesize",
+             f"  \\begin{{tabular}}{{{spec}}}", "    \\toprule",
+             f"    {head}", "    \\midrule"]
+    prev = None
+    for _, r in contrast.iterrows():
+        if by_variant and prev is not None and r["metric"] != prev:
+            lines.append("    \\addlinespace")
+        name = plots.metric_label(r["metric"]) if r["metric"] != prev else ""
+        prev = r["metric"]
+        var = f"{plots.variant_label(r['variant'])} & " if by_variant else ""
+        if simple:
+            lines.append(
+                f"    {name} & {var}{int(r['n_de'])}/{int(r['n_en'])} & "
+                f"{_tex_num(r['mean_de'])} & {_tex_num(r['mean_en'])} & "
+                f"{_tex_num(r['delta'], sign=True)} & "
+                f"{_tex_num(r['delta_strat'], sign=True)} & "
+                f"{_tex_p(r['p_perm'])} \\\\")
+            continue
+        delta = (f"{_tex_num(r['delta'], sign=True)} [{_tex_num(r['ci_low'])}, "
+                 f"{_tex_num(r['ci_high'])}]")
+        lines.append(
+            f"    {name} & {var}{int(r['n_de'])} & {_tex_num(r['mean_de'])} & "
+            f"{int(r['n_en'])} & {_tex_num(r['mean_en'])} & {delta} & "
+            f"{_tex_num(r['delta_strat'], sign=True)} & "
+            f"{_tex_num(r['rank_biserial'])} & {_tex_p(r['p'])} & "
+            f"{_tex_p(r['p_holm'])} & {_tex_p(r['p_perm'])} \\\\")
+    lines += ["    \\bottomrule", "  \\end{tabular}", "\\end{table}", ""]
+    return "\n".join(lines)
 
 
 # The DeepEval metrics that persist a per-cell ``{n_verdicts, yes, no, idk}`` tally.
@@ -4171,7 +5465,383 @@ if __name__ == "__main__":
                       "retriever can recover it. Both are properties of the reference, "
                       "not of the pipeline.")
 
-        # (1c) LLMDRS answer leakage ------------------------------------------------
+        # (1c) The cross-lingual cell: German vs English -----------------------------
+        # On the PREPARED frame, for the same reason as the LLMDRS block below: the
+        # question is whether the numbers the results chapter reports differ by
+        # language, so it has to be computed over exactly the cells that chapter
+        # averages.
+        xl = crosslingual_frame(d)
+        if len(xl):
+            # Question counts, not row counts: the cell is three variants deep, and
+            # every n quoted in the prose below is a number of QUESTIONS.
+            xl_q_lang = xl.drop_duplicates("id")["lang"].astype(str)
+            n_de = int(xl_q_lang.eq("de").sum())
+            n_en = int(xl_q_lang.eq("en").sum())
+            print(f"\n\n=== cross-lingual cell: {n_de} German vs {n_en} English "
+                  f"questions on the same five contexts ===")
+            print(f"Question language is a manipulated factor in exactly one place in "
+                  f"this run. The synthetic set has three cells — enQ_condC (English "
+                  f"question, English persona, three English guideline chunks), "
+                  f"enQ_refC and deQ_refC (same five reference contexts, each one "
+                  f"German DGE slice plus the English IOM tables for the same "
+                  f"life-stage band) — and only the REFERENCE pair exists in both "
+                  f"languages. There is no deQ_condC. So question language is crossed "
+                  f"with context TYPE, not with context language, and everything "
+                  f"below is restricted to context_type == "
+                  f"'{CROSSLINGUAL_CONTEXT_TYPE}': pooling the condition rows in "
+                  f"would set German reference-table questions against English "
+                  f"clinical-condition ones and report a dataset difference as a "
+                  f"language effect.")
+            print(f"\nIn the German arm the question, the system prompt AND the gold "
+                  f"answer are German; the retrievable corpus and the gold context "
+                  f"are the same for both arms. Two properties of the cell decide "
+                  f"every test: the arms are NOT paired (each language got its own "
+                  f"generation pass over the same contexts, so ..._de_000 and "
+                  f"..._en_000 ask about different nutrients), and context_id is the "
+                  f"stratum, because it pins the life-stage band and the styling "
+                  f"profile at once.")
+
+            cohort = crosslingual_cohort(xl)
+            if len(cohort):
+                print("\n--- the cell, at question level ---")
+                print(cohort.to_string())
+                cohort.to_csv(paths.table(eval_path, "crosslingual_cohort"))
+                print("Every context carries both languages, so no stratum drops out "
+                      "of the stratified test below. Note that styling_profile is a "
+                      "property of the CONTEXT — each context runs one profile — "
+                      "which is why context_id is the stratum and styling is not a "
+                      "second one.")
+
+            routing = retrieval_language_routing(xl)
+            if len(routing):
+                _, mix = chunk_languages()
+                de_share = float(mix.get("de", float("nan")))
+                print("\n--- does the retriever answer a German question from German "
+                      "documents? ---")
+                print(routing.round(3).to_string(index=False))
+                routing.to_csv(paths.table(eval_path, "crosslingual_routing"),
+                               index=False)
+                print(f"\nRead `enrichment`, not `frac_match`. German is {de_share:.1%} "
+                      f"of the {len(chunk_languages()[0])}-chunk corpus, so a German "
+                      f"arm retrieving in German most of the time is a large "
+                      f"departure from the base rate, while an English arm doing the "
+                      f"same is at 1.0 by construction and can only ever be a floor "
+                      f"check. Retrieval indifferent to language sits at 1.0 for both "
+                      f"whatever the corpus mix is.")
+                print("The consequence is a SCOPE limit, and it cuts the other way "
+                      "from the scores below: a German question is effectively "
+                      "answered out of the German partition of the corpus. For a "
+                      "reference-value question that partition happens to be exactly "
+                      "the right document (DGE-Referenzwerte), which is why the "
+                      "German arm does well here; for any German question the DGE "
+                      "tables do not cover there is almost no corpus to retrieve "
+                      "from, and this cell cannot measure that case because no German "
+                      "condition questions were generated.")
+                print("\nBUT the number above is CONFOUNDED, and should not be quoted "
+                      "on its own. These questions ask for nutrient reference values, "
+                      "the two reference-value tables are the relevant documents, and "
+                      "one of the two is German — so a German share far above 4.7% is "
+                      "also what a perfectly language-blind retriever would produce "
+                      "by being good at its job. The controlled version follows.")
+
+            pool_routing = reference_table_routing(xl)
+            if len(pool_routing):
+                _, pool_share = reference_table_pool()
+                print("\n--- the same question, asked inside the reference-table pool ---")
+                print(pool_routing.round(3).to_string(index=False))
+                pool_routing.to_csv(
+                    paths.table(eval_path, "crosslingual_routing_controlled"),
+                    index=False)
+                print(f"\nRestricted to the retrieved chunks that came from one of the "
+                      f"two aligned reference tables — DGE (German) and IOM (English), "
+                      f"which the synthetic contexts pair on the SAME life-stage band "
+                      f"and the same nutrients. Inside that pool the two are "
+                      f"near-duplicates differing in authority and language, and the "
+                      f"pool is {pool_share:.0%} German, so a language-blind retriever "
+                      f"lands near {pool_share:.2f} in BOTH arms. Topical relevance is "
+                      f"held; only the choice of authority is left.")
+                print("Read `frac_from_pool` first — it says both arms really are "
+                      "asking the two tables, so the control applies — and then the "
+                      "distance between the two arms' `frac_de_in_pool`. That "
+                      "distance is the language effect on retrieval with the "
+                      "confound removed, and it is the number to quote rather than "
+                      "the enrichment above.")
+
+            gold = gold_recall_by_language(xl)
+            if len(gold):
+                print("\n--- gold-chunk recall, split by the gold chunk's own language ---")
+                print(gold.round(3).to_string())
+                gold.to_csv(paths.table(eval_path, "crosslingual_gold_recall"))
+                print("The price of that routing, paid by the ID-based retrieval "
+                      "metrics. Every reference gold set is language-mixed (one "
+                      "German chunk, two English), so a language-locked retriever is "
+                      "CAPPED: 1/3 if it stays German, 2/3 if it stays English, "
+                      "however well it ranks. gold_recall_all reproduces "
+                      "ragas_id_context_recall exactly, which is the check that this "
+                      "split is describing the same quantity the metric reports — so "
+                      "quoting that metric across the two arms without this table "
+                      "reads a ceiling as a retrieval-quality difference.")
+                print("A second caveat belongs with any absolute value here: the gold "
+                      "set names three SPECIFIC chunks, and the corpus holds many "
+                      "near-duplicate reference-table chunks that answer the question "
+                      "equally well. These recalls are therefore a lower bound on "
+                      "retrieval quality, and are only comparable BETWEEN the arms "
+                      "because both are bounded the same way.")
+
+            alang = answer_language_audit(xl)
+            if len(alang):
+                print("\n--- did the answer come back in the language it was asked in? ---")
+                print(alang.to_string())
+                alang.to_csv(paths.table(eval_path, "crosslingual_answer_language"))
+                off = int(xl["answer_lang_match"].eq(False).sum())
+                unk = int(xl["answer_lang"].eq("unknown").sum())
+                print(f"{len(xl) - off} of {len(xl)} rows answered in the question's "
+                      f"language ({off} did not, {unk} undecidable). Worth its space "
+                      f"precisely when it finds nothing: language drift — a German "
+                      f"question answered in English because both the corpus and the "
+                      f"model's training data are English-heavy — is the failure this "
+                      f"cell exists to catch, and without the check a low German "
+                      f"score cannot be told apart from an English answer. Detected "
+                      f"by marker words and umlauts rather than a language-id "
+                      f"package; `unknown` is the detector declining, and those rows "
+                      f"are to be read rather than averaged.")
+
+            notation = quantity_notation_audit(xl)
+            if len(notation):
+                print("\n--- are the NUMBERS written in the right convention? ---")
+                print(notation.round(3).to_string(index=False))
+                notation.to_csv(paths.table(eval_path, "crosslingual_notation"),
+                                index=False)
+                print("Answering in the right language is not the same as localising "
+                      "the values, and for a reference-value system the second is "
+                      "what a user acts on: '5,5 mg/Tag' and '5.5 mg/day' are the "
+                      "same quantity in two conventions, and the language audit above "
+                      "cannot see the difference — the prose can be flawless German "
+                      "around a number written the American way.")
+                print("Read the off-diagonal cells. They are not merely localisation "
+                      "slips: DGE prints '4,0 µg/Tag' and IOM prints '2.4 µg/d', so a "
+                      "German answer carrying '/d' is usually one that read the "
+                      "ENGLISH table, and the notation is reporting where the number "
+                      "came from. The next table tests that directly.")
+
+            prov = quantity_provenance(xl)
+            prov_sum = quantity_provenance_summary(prov)
+            if len(prov_sum):
+                print("\n--- which table's NUMBERS did each arm end up quoting? ---")
+                print(prov_sum.round(3).to_string())
+                prov.to_csv(paths.table(eval_path, "crosslingual_quantity_provenance"),
+                            index=False)
+                prov_sum.to_csv(
+                    paths.table(eval_path, "crosslingual_quantity_provenance_summary"))
+                print("The consequence the score tables cannot express. Each reference "
+                      "context pairs a DGE slice with the IOM tables for the same "
+                      "life-stage band, and the two DISAGREE on many nutrients — "
+                      "Vitamin B12 for men 65+ is 4.0 µg/Tag in DGE and 2.4 µg/d in "
+                      "IOM, Vitamin E is 8 against 15 mg. So one nutrient and one age "
+                      "band have two defensible answers, and "
+                      "`frac_dge_when_they_differ` says which one the user is told. "
+                      "The distance between the two arms on that column is the "
+                      "language effect on the ADVICE, not on a metric.")
+                print("Every comparison is on (nutrient, value, unit), never on the "
+                      "number alone: both tables are dense grids in which the same "
+                      "figure recurs across unrelated nutrients, so a value-only "
+                      "match would credit 'quotes DGE's vitamin A' to an answer that "
+                      "merely said 700 of something else. `unattributed` is the "
+                      "coverage figure — quantities whose nutrient could not be "
+                      "identified from the answer or its question, held out of every "
+                      "column rather than counted as a miss.")
+                print("The `from_*` columns attribute against the RETRIEVED context, "
+                      "not the gold one, and that is the primary view: retrieval "
+                      "reaches the gold chunks on under a third of rows, so an "
+                      "answer's number usually comes from a reference-table chunk "
+                      "that is correct but not the gold one. Attributed against gold "
+                      "those land in `gold_neither`, which is true and uninformative. "
+                      "`from_both` is a value the two tables share, carrying no "
+                      "routing signal and excluded from the fraction; `from_other` is "
+                      "a value taken from a retrieved document that is neither table. "
+                      "The `gold_*` columns keep the stricter view for comparison.")
+                print("`ungrounded` is the count of TAGGED quantities appearing in NO "
+                      "retrieved chunk — a hard check with no judge and no NLI model "
+                      "in it, holding both arms to exactly the same standard. Read it "
+                      "beside the faithfulness scorers that disagree about the two "
+                      "languages: if it says the arms are equally grounded, that is "
+                      "evidence about the SCORERS. Two limits on it, both in the "
+                      "conservative direction. It bounds hallucination from above and "
+                      "does not measure accuracy — a number can be right and "
+                      "unretrieved, or grounded but copied from the wrong age band, "
+                      "since nutrient and value are matched and the life-stage ROW is "
+                      "not. And it over-reports: two DGE iron rows print as "
+                      "'Prämenop ausal 16 Postmeno pausal 14 mg/Tag', a PDF-extraction "
+                      "artifact in which the first value carries no unit of its own, "
+                      "so a correct answer quoting it is scored ungrounded. Those two "
+                      "lines are the only ones in either table with that shape, and "
+                      "they account for every ungrounded quantity in this run.")
+
+            abst = pd.crosstab(xl["lang"].astype(str),
+                               xl["variant"].astype(str), values=ra._abstained(xl),
+                               aggfunc="mean")
+            if len(abst):
+                print("\n--- abstention rate by language x variant ---")
+                print(abst.round(3).to_string())
+                print("Not a result on its own — it is why the n columns below are "
+                      f"not {n_de} and {n_en} on every row. An abstained row carries "
+                      "no faithfulness and no reference score, so each metric is "
+                      "compared over the rows it was actually computed on.")
+                length = xl.groupby([xl["lang"].astype(str),
+                                     xl["variant"].astype(str)],
+                                    observed=True)["answer_chars"].mean()
+                print("\nmean answer length (characters), the standing confound for "
+                      "every judge-scored metric below:")
+                print(length.round(0).to_string())
+
+            xl_q = language_contrast(xl, level="question")
+            if len(xl_q):
+                print("\n--- per metric: German against English, one observation per "
+                      "question ---")
+                print(round_keeping_pvalues(
+                    xl_q, p_cols=("p", "p_holm", "p_perm", "p_perm_holm"))
+                    .to_string(index=False))
+                xl_q.to_csv(paths.table(eval_path, "crosslingual_contrast_question"),
+                            index=False)
+                print("\nRead `delta` against `delta_strat` FIRST, before any p. "
+                      "delta_strat is the same difference computed within context and "
+                      "pooled, so it holds the life-stage band and the styling "
+                      "profile fixed; where the two agree, the gap is not the framing. "
+                      "p_perm permutes the language label within context and is the "
+                      "test this cell can actually support — the arms are unpaired but "
+                      "not unstructured, and no normal approximation should be trusted "
+                      "at these n. Both Holm columns correct across the rows of this "
+                      "table only.")
+                sig = xl_q[xl_q["p_perm_holm"] < 0.05]
+                print(f"{len(xl_q)} metrics tested, {len(sig)} significant after Holm "
+                      f"on the permutation p"
+                      + (f": {', '.join(sig['metric'])}." if len(sig) else ".")
+                      + f" With {n_de} vs {n_en} questions that is the expected "
+                      f"outcome for anything but a large effect, so the effect sizes "
+                      f"and their CIs are the readable part of this table and the "
+                      f"p-values are the guard on them.")
+
+            xl_v = language_contrast(xl, level="variant")
+            if len(xl_v):
+                print("\n--- the same contrast per metric x variant (variant held "
+                      "fixed) ---")
+                print(round_keeping_pvalues(
+                    xl_v, p_cols=("p", "p_holm", "p_perm", "p_perm_holm"))
+                    .to_string(index=False))
+                xl_v.to_csv(paths.table(eval_path, "crosslingual_contrast_variant"),
+                            index=False)
+                print("A separate correction family, so its Holm columns are over "
+                      "these rows only. Rows with a blank p are metrics welded to the "
+                      "same rail in both languages — there is nothing to rank, and "
+                      "the delta of exactly 0 is a fact about the metric rather than "
+                      "about the languages.")
+
+            eff = language_variant_effects(xl)
+            if len(eff):
+                print("\n--- does retrieval buy the same thing in German as in "
+                      "English? (paired within each arm) ---")
+                print(round_keeping_pvalues(eff).to_string())
+                eff.to_csv(paths.table(eval_path, "crosslingual_variant_effects"))
+                print("The more defensible half of this analysis, and the one to "
+                      "quote if only one is quoted. A language difference in the "
+                      "LEVEL of a metric is confounded with everything that differs "
+                      "between two sets of questions; a language difference in the "
+                      "EFFECT of adding retrieval is paired within each question, so "
+                      "the question cancels. Read n_pairs and n_nontied before the "
+                      "p-values: split three ways, these n's leave cells where an "
+                      "effect of the same size is significant in one arm and not the "
+                      "other on n alone, and reporting that as 'retrieval helps "
+                      "German but not English' would be an artifact of the split.")
+
+            conflict = scorer_direction_conflict(xl_q) if len(xl_q) else pd.DataFrame()
+            if len(conflict):
+                print("\n--- within each family, do the scorers agree on WHICH "
+                      "language scored higher? ---")
+                print(conflict.to_string(index=False))
+                conflict.to_csv(paths.table(eval_path, "crosslingual_scorer_conflict"),
+                                index=False)
+                bad = conflict[conflict["verdict"] == "CONFLICT"]
+                if len(bad):
+                    print(f"\n{'1 family has' if len(bad) == 1 else f'{len(bad)} families have'} "
+                          f"no scorer-independent "
+                          f"answer in this run: {', '.join(bad['family'])}. Two "
+                          f"scorers of the SAME construct, on the SAME rows, rank the "
+                          f"two languages in opposite directions by comparable "
+                          f"margins. The conclusion that follows is not 'German is "
+                          f"more/less faithful' — it is that a language claim in this "
+                          f"family cannot be made without naming the scorer behind "
+                          f"it, and that a pooled cross-lingual faithfulness number "
+                          f"is partly reporting a choice of library.")
+                    print("The mechanism to state alongside it: the two disagreeing "
+                          "scorers are not the same kind of instrument. HHEM is a "
+                          "fixed NLI cross-encoder scoring a claim against a premise, "
+                          "so a German claim against a German premise and a German "
+                          "claim against an English one are different tasks for it; "
+                          "the DeepEval and RAGAS judges are the system LLM prompted "
+                          "in English. The mismatch rows listed below are where that "
+                          "shows most directly.")
+                else:
+                    print("\nNo family is in conflict: every scorer of a shared "
+                          "construct points the same way, which is what licenses "
+                          "quoting a single direction per family above.")
+
+            ag_lang = metric_agreement(xl, by="lang")
+            if len(ag_lang):
+                print("\n--- do the scorers agree with each other equally well in "
+                      "both languages? ---")
+                print(ag_lang.round(3).to_string(index=False))
+                ag_lang.to_csv(paths.table(eval_path, "crosslingual_metric_agreement"),
+                               index=False)
+                print("This is the measurement-side question, and on this run it is "
+                      "the one with the clearest answer. Compare each pair's "
+                      "mean_diff between the two language rows: a pair whose gap is "
+                      "small in one language and large in the other is not measuring "
+                      "the same construct in both, and any pooled statement about "
+                      "'faithfulness by language' is then partly reporting which "
+                      "scorer was used. Read it beside the contrast tables above — "
+                      "where two faithfulness scorers put the languages in OPPOSITE "
+                      "orders, the honest conclusion is that this run cannot say "
+                      "which language is more faithful, not that one of them is.")
+
+            mismatch = context_language_mismatch(xl)
+            if len(mismatch):
+                print(f"\n--- the {len(mismatch)} rows served context in the OTHER "
+                      f"language ---")
+                print(mismatch.round(3).to_string(index=False))
+                mismatch.to_csv(paths.table(eval_path, "crosslingual_ctx_mismatch"),
+                                index=False)
+                print("Listed rather than averaged, on purpose: because the retriever "
+                      "routes by language this cell is what is left over when routing "
+                      "fails, nobody designed it, and it is far too small for a mean. "
+                      "It is worth reading because it is the only place where the "
+                      "ANSWER and the PREMISE are in different languages — the "
+                      "condition under which an NLI-based faithfulness scorer is "
+                      "being asked to do something it was not built for. A scorer "
+                      "that collapses on these rows while the reference-graded "
+                      "metrics on the SAME rows do not is telling you about itself, "
+                      "not about the answer.")
+
+            tex = language_contrast_latex(xl_q, style="simple")
+            if tex:
+                tex_path = paths.table(eval_path, "crosslingual_contrast.tex")
+                tex_path.write_text(tex, encoding="utf-8")
+                full_path = paths.table(eval_path, "crosslingual_contrast_full.tex")
+                full_path.write_text(
+                    language_contrast_latex(
+                        xl_v, label="tab:crosslingual-de-en-full", style="full"),
+                    encoding="utf-8")
+                print(f"\nresults-chapter LaTeX (booktabs): the question-level table "
+                      f"is {paths.rel(tex_path)}; the full per-metric x variant "
+                      f"table, with bootstrap CIs, effect sizes and both Holm "
+                      f"columns, is {paths.rel(full_path)}.")
+
+            print("\n=== cross-lingual figures ===")
+            plots.save_all({
+                "fig_language_routing": lambda: plots.language_routing_bars(routing),
+                "fig_language_contrast": lambda: plots.language_contrast_forest(xl_q),
+            }, eval_path)
+
+        # (1d) LLMDRS answer leakage ------------------------------------------------
         # On the PREPARED frame on purpose, unlike the two dataset audits above:
         # those count rows that should never have been scored, so they have to run
         # before any exclusion. This one asks whether the numbers the results
