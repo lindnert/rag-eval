@@ -5045,9 +5045,75 @@ def signal_vs_metric(df, signal, metrics=RETRIEVAL_METRICS, by=None, rows_mask=N
                      ignore_index=True)
 
 
+_RETRY_COL = "sc_metadata.retrieval_retried_count"
+
+# RETRIEVAL_METRICS plus context AP, which it omits. AP is the rank-aware gold
+# metric — the only one here that notices WHERE in the ranking a gold chunk landed
+# — and it carries the largest re-retrieval effect of the three, so leaving it out
+# of the attribution table would drop the sharpest evidence.
+_ATTRIBUTION_METRICS = list(RETRIEVAL_METRICS) + ["ragas_scores.ragas_id_context_ap"]
+
+
+def reretrieval_attribution(linked, metrics=_ATTRIBUTION_METRICS):
+    """Is the SC-RAG retrieval effect caused by the HyDE re-retrieval specifically?
+
+    The paired ``rag_sc vs rag`` comparison measures the whole self-correction
+    stage at once — abstention, HyDE re-retrieval, generation retry — so it cannot
+    say which part moved a metric. This splits it: every rag_sc row that has a rag
+    partner, grouped by whether re-retrieval actually FIRED on it, each group
+    reported as its own paired comparison against the same question under rag.
+
+    The split gives a control for free, and it is the reason this function is worth
+    more than the ``reretrieval_gain`` correlation above it. Where re-retrieval did
+    NOT fire, rag_sc retrieved exactly what rag retrieved — verified on this run:
+    all 61 such rows have byte-identical ``retrieved_context_ids``. So that group's
+    true effect on any retrieval metric is ZERO by construction, and whatever it
+    reports instead is the scorer disagreeing with itself on identical input.
+
+    Read the two groups against each other:
+      - an effect in the fired group and a flat control  -> caused by re-retrieval;
+      - an effect in BOTH                                -> not re-retrieval, or the
+        metric is not measuring retrieval;
+      - movement in the control at all                   -> that metric's noise
+        floor, in the units the results chapter quotes it in.
+
+    Returns one row per (metric, group) with n, n_moved, the paired mean difference
+    and a permutation p. ``n_moved`` matters most in the control group: it is the
+    count of questions the scorer rescored differently having seen the same thing.
+    """
+    if _RETRY_COL not in linked or "variant" not in linked:
+        return pd.DataFrame()
+    var = linked["variant"].astype(str)
+    sc = linked[var.eq("rag_sc")]
+    base = linked[var.eq("rag")]
+    if not len(sc) or not len(base):
+        return pd.DataFrame()
+
+    fired = pd.to_numeric(sc[_RETRY_COL], errors="coerce").fillna(0) > 0
+    out = []
+    for m in metrics:
+        if m not in linked:
+            continue
+        right = base[["id", m]].rename(columns={m: "_b"})
+        for label, mask in (("hyde fired", fired), ("no re-retrieval", ~fired)):
+            left = sc.loc[mask, ["id", m]].rename(columns={m: "_a"})
+            j = left.merge(right, on="id", how="inner").dropna(subset=["_a", "_b"])
+            diffs = (j["_a"] - j["_b"]).to_numpy(dtype=float)
+            out.append({
+                "metric": m.split(".")[-1],
+                "group": label,
+                "n": len(diffs),
+                "n_moved": int((diffs != 0).sum()) if len(diffs) else 0,
+                "mean_diff": float(diffs.mean()) if len(diffs) else _NAN,
+                "mean_abs_diff": float(np.abs(diffs).mean()) if len(diffs) else _NAN,
+                "perm_p": ev._permutation_p(diffs) if len(diffs) else _NAN,
+            })
+    return pd.DataFrame(out)
+
+
 # --- helpers -----------------------------------------------------------------
 
-def round_keeping_pvalues(df, ndigits=3, p_cols=("wilcoxon_p",)):
+def round_keeping_pvalues(df, ndigits=3, p_cols=("perm_p", "wilcoxon_p")):
     """``df.round(n)`` that does not flatten a decisive p-value into ``0.0``.
 
     Rounding the whole frame to 3 dp turns 4e-07 into 0.0, which reads as a
@@ -6193,13 +6259,17 @@ if __name__ == "__main__":
             print(tbl.round(3).to_string())
             tbl.to_csv(paths.table(eval_path, f"means_by_{by}"))
 
-        print("\n=== paired variant comparisons (Wilcoxon signed-rank) ===")
+        print("\n=== paired variant comparisons (sign-flip permutation test) ===")
         print("the results-chapter spine; only meaningful for a metric that the "
               "distribution table above shows actually spreads.")
         print("compare n_pairs down the block before comparing effects: the three "
               "faithfulness metrics are answered-only (their abstained cells were "
               "nulled upstream), while contextual relevance scores RETRIEVAL and is "
               "therefore defined on abstentions too, so it pairs a larger cohort.")
+        print("n_nontied is the pairs on which the two variants scored differently. "
+              "Every statistic here is computed over all n_pairs — it is reported "
+              "because a metric where 26 of 273 questions move is describing itself, "
+              "not because anything was tested on the 26 alone.")
         for metric, pairs in VARIANT_COMPARISONS:
             if metric not in d:
                 continue
@@ -6258,6 +6328,12 @@ if __name__ == "__main__":
             # one table that silently compared different sets of metrics.
             "fig_paired_comparisons": lambda: plots.paired_comparison_plot(
                 d, VARIANT_COMPARISONS),
+            # The magnitude half on its own, for the passage that needs "how much"
+            # without the effect-size axis to explain alongside it. A crop of the
+            # figure above rather than a second figure — same function, same rows,
+            # same colours, so the two cannot disagree.
+            "fig_paired_comparisons_diff": lambda: plots.paired_comparison_plot(
+                d, VARIANT_COMPARISONS, panels=("diff",)),
             "fig_metric_rails": lambda: plots.metric_rail_plot(d),
             # The same figure faceted: the pooled rails say whether a metric can
             # discriminate at all, these say where. They are the `per dataset x
@@ -6375,6 +6451,21 @@ if __name__ == "__main__":
                         print(gv.round(3).to_string(index=False))
                         gv.to_csv(paths.table(both, "eval_reretrieval_gain_vs_metric"),
                                   index=False)
+
+                print("\n=== is the SC-RAG retrieval effect caused by HyDE? ===")
+                print("rag_sc rows paired against the same question under rag, split "
+                      "by whether re-retrieval actually fired. The 'no re-retrieval' "
+                      "group is a CONTROL: those rows retrieved exactly what rag "
+                      "retrieved (identical retrieved_context_ids), so their true "
+                      "effect on a retrieval metric is zero and anything they report "
+                      "is the scorer disagreeing with itself on identical input.")
+                att = reretrieval_attribution(linked)
+                if att.empty:
+                    print("  (no sc_metadata.retrieval_retried_count in the rag file)")
+                else:
+                    print(round_keeping_pvalues(att).to_string(index=False))
+                    att.to_csv(paths.table(both, "eval_reretrieval_attribution"),
+                               index=False)
 
                 # The only figure that actually reads the joined frame, so the only
                 # one named for both files.

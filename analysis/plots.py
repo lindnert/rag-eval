@@ -1049,7 +1049,7 @@ EQUIVALENT_METRICS = [
 # The stats that have to match before two metrics are called one row. Deliberately
 # the whole visible row -- both panels, both counts -- and not just the mean.
 _EQUIV_COLS = ("n_pairs", "n_nontied", "mean_diff", "ci_low", "ci_high",
-               "wilcoxon_p", "rank_biserial")
+               "perm_p", "rank_biserial")
 
 
 def _collapse_equivalent(rows, pairs=EQUIVALENT_METRICS):
@@ -1075,8 +1075,8 @@ def _collapse_equivalent(rows, pairs=EQUIVALENT_METRICS):
             for m, r in rows if m not in merged_away]
 
 
-def paired_comparison_plot(df, comparisons, alpha=0.05):
-    """The ``paired variant comparisons (Wilcoxon signed-rank)`` table, drawn.
+def paired_comparison_plot(df, comparisons, alpha=0.05, panels=("diff", "effect")):
+    """The ``paired variant comparisons`` table, drawn.
 
     One row per (metric, variant pair) in ``comparisons`` — the same
     ``eval_analysis.VARIANT_COMPARISONS`` the table is printed from, so the figure
@@ -1087,18 +1087,23 @@ def paired_comparison_plot(df, comparisons, alpha=0.05):
       - LEFT: the paired mean difference ``a − b`` with its 95% bootstrap CI, in
         the metric's own units. This is what "how much better" means to a reader,
         but it is only comparable down the column for metrics that share a scale.
-      - RIGHT: the rank-biserial correlation, the matched-pairs effect size that
-        belongs to the Wilcoxon test the section is named for. It is scale-free
-        and bounded to [-1, 1], so it IS comparable down the column — a 0.06 mean
-        gain on contextual relevance and a 0.078 one on RAGAS faithfulness are the
-        same size in metric units and very different as effects.
+      - RIGHT: the matched-pairs rank-biserial correlation, ties included. It is
+        scale-free and bounded to [-1, 1], so it IS comparable down the column — a
+        0.066 mean gain on contextual relevance and a 0.078 one on RAGAS
+        faithfulness are the same size in metric units and different as effects.
 
     Each panel is coloured by ITS OWN verdict, which is the honest way to draw two
-    statistics that can disagree: the left panel by whether the bootstrap CI
-    clears zero, the right by whether the Wilcoxon p clears ``alpha``. Where a row
-    is grey on one side and coloured on the other, the mean and the ranks are
-    telling different stories and the row deserves the reader's attention rather
-    than a single merged verdict.
+    statistics that can disagree: the left panel by whether the bootstrap CI clears
+    zero, the right by whether the permutation p clears ``alpha``. Both now speak
+    about the same quantity — the mean difference — so they should mostly agree,
+    and a row that is grey on one side and coloured on the other is sitting on the
+    threshold and deserves saying so rather than a single merged verdict.
+
+    ``panels`` selects which of the two to draw — ``("diff",)`` for the magnitude
+    figure alone, ``("effect",)`` for the effect-size one. Same rows, same order,
+    same colours, so a one-panel cut is a crop of this figure rather than a second
+    figure that could drift from it. The p / n annotation always rides the
+    rightmost panel drawn, since it belongs to the row and not to either statistic.
 
     Rows are grouped by COMPARISON rather than kept in the table's metric-major
     order. Within a group every row is the same question asked of a different
@@ -1107,10 +1112,10 @@ def paired_comparison_plot(df, comparisons, alpha=0.05):
     reading a rag-vs-no_rag effect against a rag_sc-vs-rag one. Metric order
     inside a group follows ``comparisons``.
 
-    Each row is annotated ``n = ranked pairs / all pairs``. The two differ by the
-    ties, which the signed-rank test discards, and on a rail-pinned metric they
-    differ by almost everything — so the second number sizes the pairing and the
-    FIRST one sizes the test.
+    Each row is annotated ``n = pairs that moved / all pairs``. Every statistic is
+    computed over all of them; the first number is there because a metric where 26
+    of 273 questions move is telling you something about the METRIC, and the reader
+    needs it to weigh a row whether or not the test used the ties.
 
     Metric pairs listed in ``EQUIVALENT_METRICS`` share a row when their statistics
     actually coincide — see ``_collapse_equivalent``. The table upstream still
@@ -1124,6 +1129,10 @@ def paired_comparison_plot(df, comparisons, alpha=0.05):
     ends up in one figure and missing from the table.
     """
     apply_style()
+    panels = tuple(panels)
+    if not panels or set(panels) - {"diff", "effect"}:
+        raise ValueError(f"panels must be a non-empty subset of "
+                         f"('diff', 'effect'); got {panels!r}")
 
     # Group the (metric, pair) rows by comparison, keeping the caller's metric
     # order inside each group. dict preserves first-seen order, so the groups come
@@ -1162,58 +1171,88 @@ def paired_comparison_plot(df, comparisons, alpha=0.05):
             slot += 1.0
     bottom = -(slot - 1.0)
 
-    fig, (ax_diff, ax_eff) = plt.subplots(
-        1, 2, sharey=True, figsize=(11.5, 0.42 * slot + 1.6))
+    # One panel is 5.9in of drawing plus the label gutter; two share the gutter.
+    width = 11.5 if len(panels) == 2 else 8.2
+    fig, axes = plt.subplots(1, len(panels), sharey=True, squeeze=False,
+                             figsize=(width, 0.42 * slot + 1.6))
+    axes = {name: ax for name, ax in zip(panels, axes[0])}
+    ax_diff, ax_eff = axes.get("diff"), axes.get("effect")
+    first, last = axes[panels[0]], axes[panels[-1]]
 
-    for ax in (ax_diff, ax_eff):
+    for ax in axes.values():
         ax.axvline(0, color=AXIS, lw=1)
         ax.grid(axis="y", visible=False)
         ax.set_ylim(bottom - 0.6, 0.6)
-    ax_diff.set_yticks([y for y, _, _ in placed])
-    ax_diff.set_yticklabels([label for _, label, _ in placed])
-    ax_eff.set_xlim(-1.05, 1.05)
+    first.set_yticks([y for y, _, _ in placed])
+    first.set_yticklabels([label for _, label, _ in placed])
+    if ax_eff is not None:
+        ax_eff.set_xlim(-1.05, 1.05)
 
     for y, sep_label, draw_rule in headers:
         if draw_rule:
-            for ax in (ax_diff, ax_eff):
+            for ax in axes.values():
                 ax.axhline(-y + GAP / 2, color=GRID, lw=1, zorder=1)
-        ax_diff.annotate(sep_label, (0.0, -y), xycoords=("axes fraction", "data"),
-                         va="center", ha="left", fontsize=10.5, color=INK_SECONDARY)
+        first.annotate(sep_label, (0.0, -y), xycoords=("axes fraction", "data"),
+                       va="center", ha="left", fontsize=10.5, color=INK_SECONDARY)
 
     for y, _, r in placed:
-        spans_zero = r["ci_low"] <= 0 <= r["ci_high"]
-        c = NEUTRAL if spans_zero else (POS if r["mean_diff"] > 0 else NEG)
-        ax_diff.plot([r["ci_low"], r["ci_high"]], [y, y], color=c, lw=2,
-                     solid_capstyle="butt", zorder=2)
-        ax_diff.plot([r["mean_diff"]], [y], marker="o", ms=8, zorder=3,
-                     color=SURFACE if spans_zero else c,
-                     markeredgecolor=c, markeredgewidth=2)
+        if ax_diff is not None:
+            spans_zero = r["ci_low"] <= 0 <= r["ci_high"]
+            c = NEUTRAL if spans_zero else (POS if r["mean_diff"] > 0 else NEG)
+            ax_diff.plot([r["ci_low"], r["ci_high"]], [y, y], color=c, lw=2,
+                         solid_capstyle="butt", zorder=2)
+            ax_diff.plot([r["mean_diff"]], [y], marker="o", ms=8, zorder=3,
+                         color=SURFACE if spans_zero else c,
+                         markeredgecolor=c, markeredgewidth=2)
 
-        p, rb = r["wilcoxon_p"], r["rank_biserial"]
-        sig = np.isfinite(p) and p < alpha
-        ce = NEUTRAL if not sig else (POS if rb > 0 else NEG)
-        # A bar, not a dot: the rank-biserial is a magnitude measured FROM zero, and
-        # the length IS the quantity. Hollow where the test does not reject, so a
-        # large-but-unsupported effect cannot be mistaken for a finding.
-        ax_eff.barh(y, rb, height=0.5, zorder=2, color=ce if sig else SURFACE,
-                    edgecolor=ce, linewidth=1.6)
-        # BOTH counts, because on a rail-pinned metric they are worlds apart and
-        # only the first one is the evidence behind this panel: DeepEval Relevance
-        # pairs 273 questions and the signed-rank test ranks 26 of them. Annotating
-        # n_pairs alone — as this figure first did — invites reading a large
-        # rank-biserial off 26 pairs as if it stood on 273.
-        ax_eff.annotate(f"{_fmt_p(p)}   n={int(r['n_nontied'])}/{int(r['n_pairs'])}",
-                        (1.0, y), xycoords=("axes fraction", "data"),
-                        xytext=(6, 0), textcoords="offset points",
-                        va="center", ha="left", fontsize=7.5, color=INK_MUTED,
-                        annotation_clip=False)
+        p, rb = r["perm_p"], r["rank_biserial"]
+        if ax_eff is not None:
+            sig = np.isfinite(p) and p < alpha
+            ce = NEUTRAL if not sig else (POS if rb > 0 else NEG)
+            # A bar, not a dot: the rank-biserial is a magnitude measured FROM zero,
+            # and the length IS the quantity. Hollow where the test does not reject,
+            # so a large-but-unsupported effect cannot be mistaken for a finding.
+            ax_eff.barh(y, rb, height=0.5, zorder=2, color=ce if sig else SURFACE,
+                        edgecolor=ce, linewidth=1.6)
+        # Always on the RIGHTMOST panel, whichever that is.
+        #
+        # The p is printed only where the effect panel is drawn, because that is the
+        # only mark it governs — the diff panel is coloured by its CI. A p-value
+        # sitting beside markers it does not decide reads as a second verdict the
+        # reader then tries and fails to map onto the picture.
+        #
+        # The counts stay on every variant. They are not recoverable from the CI:
+        # width depends on variance as well as n, so Context AP (68 pairs) and
+        # DeepEval Faithfulness (253) draw near-identical bars, and the rows do not
+        # share a cohort — faithfulness is answered-only, the context metrics are the
+        # 68 synthetic questions. The moved count is not in the interval at all;
+        # 26 of 273 is a fact about the METRIC's resolution, not about the effect.
+        counts = f"n={int(r['n_nontied'])}/{int(r['n_pairs'])}"
+        last.annotate(f"{_fmt_p(p)}   {counts}" if ax_eff is not None else counts,
+                      (1.0, y), xycoords=("axes fraction", "data"),
+                      xytext=(6, 0), textcoords="offset points",
+                      va="center", ha="left", fontsize=7.5, color=INK_MUTED,
+                      annotation_clip=False)
 
     # "first − second", not "a − b": the group headers now name the variants, so the
     # letters no longer appear anywhere on the figure for these to refer back to.
-    ax_diff.set_xlabel("paired mean difference, first − second (95% CI)")
-    ax_eff.set_xlabel("rank-biserial effect size\n"
-                      "(Wilcoxon signed-rank; n = ranked pairs / all pairs)")
+    if ax_diff is not None:
+        ax_diff.set_xlabel("paired mean difference, first − second (95% CI)")
+    if ax_eff is not None:
+        ax_eff.set_xlabel("rank-biserial effect size\n"
+                          "(paired permutation test; n = pairs that moved / all pairs)")
+    elif ax_diff is not None:
+        # The n annotation moved onto this panel and its axis label is the only place
+        # left to say what those two numbers are.
+        ax_diff.set_xlabel("paired mean difference, first − second (95% CI)\n"
+                           "(n = pairs that moved / all pairs)")
 
+    # Name only the criteria actually on this figure: on the diff-only cut the
+    # permutation p decides nothing that is drawn, so quoting it in the legend would
+    # attribute a grey marker to a test the reader cannot see applied.
+    criteria = " / ".join(
+        (["CI spans zero"] if ax_diff is not None else [])
+        + ([f"p ≥ {alpha:g}"] if ax_eff is not None else []))
     handles = [
         Line2D([], [], color=POS, lw=2, marker="o", ms=7,
                label="first named variant wins"),
@@ -1221,16 +1260,17 @@ def paired_comparison_plot(df, comparisons, alpha=0.05):
                label="second named variant wins"),
         Line2D([], [], color=NEUTRAL, lw=2, marker="o", ms=7,
                markerfacecolor=SURFACE, markeredgewidth=2,
-               label=f"no detectable difference (CI spans zero / p ≥ {alpha:g})"),
+               label=f"no detectable difference ({criteria})"),
     ]
     fig.legend(handles=handles, loc="lower center", ncol=3,
                bbox_to_anchor=(0.5, -0.01))
-    # The legend reserve is a fixed 0.75 INCH converted to a fraction, not a fixed
-    # fraction: the figure grows with the metric count, and 7% of a tall figure is a
-    # band of blank paper the same legend did not need when it was short.
-    # Right margin pulled in to 0.9: the p / n annotations hang outside the right
-    # panel's axes, and tight_layout does not measure text it was told not to clip.
-    fig.tight_layout(rect=(0, 0.75 / fig.get_figheight(), 0.9, 1.0), w_pad=1.2)
+    # Both reserves are fixed INCHES converted to fractions, not fixed fractions: the
+    # figure grows with the metric count and shrinks when a panel is dropped, and a
+    # constant fraction is a band of blank paper at one size and a clipped annotation
+    # at another. 0.75in below for the legend; 1.3in on the right for the p / n
+    # annotations, which hang outside the axes where tight_layout cannot measure them.
+    fig.tight_layout(rect=(0, 0.75 / fig.get_figheight(),
+                           1 - 1.3 / fig.get_figwidth(), 1.0), w_pad=1.2)
     return fig
 
 

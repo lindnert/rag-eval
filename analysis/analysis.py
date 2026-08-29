@@ -46,10 +46,8 @@ import json
 import numpy as np
 import pandas as pd
 
-try:
-    from scipy.stats import wilcoxon
-except ImportError:  # scipy is optional; only compare_variants needs it
-    wilcoxon = None
+# scipy is no longer needed here: the paired test is a sign-flip permutation over
+# numpy, which is why compare_variants has no optional-dependency branch any more.
 
 VARIANT_ORDER = ["no_rag", "rag", "rag_sc"]
 
@@ -281,8 +279,13 @@ def metric_summary_by(df, by, metrics=None):
 
 # --- Paired 'A beats B' variant comparison -----------------------------------
 
-def _bootstrap_ci(diffs, n_boot=2000, alpha=0.05, seed=0):
-    """Percentile bootstrap CI for the mean of ``diffs``."""
+def _bootstrap_ci(diffs, n_boot=10000, alpha=0.05, seed=0):
+    """Percentile bootstrap CI for the mean of ``diffs``.
+
+    ``n_boot`` is 10000 rather than the 1000-2000 that would do: the usual rule of
+    thumb wants >=1000 for an interval, the whole set of comparisons takes seconds
+    either way, and 10000 is the number that does not invite the question.
+    """
     diffs = np.asarray(diffs, dtype=float)
     if len(diffs) == 0:
         return float("nan"), float("nan")
@@ -292,7 +295,72 @@ def _bootstrap_ci(diffs, n_boot=2000, alpha=0.05, seed=0):
     return float(lo), float(hi)
 
 
-def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=2000):
+def _permutation_p(diffs, n_perm=10000, seed=0):
+    """Two-sided paired sign-flip permutation p for ``mean(diffs) == 0``.
+
+    Under the null that ``a`` and ``b`` are exchangeable within a question, the sign
+    of each paired difference is arbitrary. So: flip each sign at random, recompute
+    the mean, and ask how often the shuffled mean is at least as far from zero as
+    the observed one. Reported with the +1 correction in both parts, which keeps the
+    p-value strictly positive (a permutation test cannot report p=0 honestly -- it
+    only ever establishes p < 1/(n_perm+1)).
+
+    This replaced the Wilcoxon signed-rank test, for one reason: Wilcoxon DISCARDS
+    tied pairs, and on rail-pinned metrics almost every pair is a tie. DeepEval
+    Relevance pairs 273 questions and the signed-rank test ranked 26 of them, so it
+    answered a question about 26 questions while appearing to speak for 273. A tie
+    survives sign-flipping unchanged, so here it stays in the sample and correctly
+    dilutes the evidence instead of being deleted from it.
+
+    It also tests the statistic the figure actually plots -- the MEAN difference,
+    the same quantity the bootstrap interval covers -- so the test and the interval
+    can no longer disagree about what is being claimed.
+    """
+    diffs = np.asarray(diffs, dtype=float)
+    n = len(diffs)
+    if n == 0 or not np.any(diffs != 0):
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    signs = rng.choice([-1.0, 1.0], size=(n_perm, n))
+    null_means = (signs * diffs).mean(axis=1)
+    observed = abs(diffs.mean())
+    return float((np.sum(np.abs(null_means) >= observed) + 1) / (n_perm + 1))
+
+
+def _rank_biserial(diffs):
+    """Matched-pairs rank-biserial correlation over ALL pairs, ties included.
+
+    Ranks ``|d_i|`` across every pair, sums the ranks of the positive and of the
+    negative differences, and divides by the TOTAL rank mass:
+
+        r = (T+ - T-) / sum(rank(|d_i|))
+
+    The classic Wilcoxon-based formula divides by ``T+ + T-`` instead, i.e. by the
+    rank mass of the non-tied pairs alone. That is what let DeepEval Relevance
+    report -0.362 off 26 moved questions out of 273: the 247 that did not move were
+    removed from the denominator, so a lopsided split among a handful of questions
+    scored as a large effect.
+
+    Keeping the ties in the denominator makes them do what they mean -- they are
+    questions on which the two variants did the same thing, which is evidence
+    AGAINST an effect, not absence of evidence. Ties rank lowest and contribute
+    nothing to the numerator, so they shrink the effect rather than voting.
+
+    Still in [-1, 1], still +1 only when every pair moved in favour of ``a``, and
+    identical to the classic formula whenever nothing is tied.
+    """
+    diffs = np.asarray(diffs, dtype=float)
+    if len(diffs) == 0:
+        return float("nan")
+    ranks = pd.Series(np.abs(diffs)).rank().to_numpy()
+    total = ranks.sum()
+    if not total:
+        return 0.0
+    return float((ranks[diffs > 0].sum() - ranks[diffs < 0].sum()) / total)
+
+
+def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=10000,
+                     n_perm=10000):
     """Paired 'does variant ``a`` beat variant ``b``' on one metric, matched per id.
 
     The core results-chapter test. Pairs each question's ``a`` and ``b`` score
@@ -301,25 +369,31 @@ def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=2000):
       - ``n_pairs`` (and ``n_unpaired`` dropped for lacking a partner);
       - ``mean_a`` / ``mean_b`` / ``mean_diff`` / ``median_diff``;
       - ``frac_a_gt_b``: share of questions where a strictly beat b;
-      - ``n_nontied``: pairs the signed-rank test actually ranks, i.e. ``n_pairs``
-        minus the ties. Read it next to ``n_pairs`` before reading the effect
-        size: on a metric welded to a rail these diverge hard — DeepEval Relevance
-        pairs 273 questions and ranks 26 of them — and it is ``n_nontied`` that
-        says how much evidence ``wilcoxon_p`` and ``rank_biserial`` rest on;
-      - ``wilcoxon_p``: two-sided Wilcoxon signed-rank p-value (non-parametric,
-        the right test for these bounded, non-normal scores);
-      - ``rank_biserial``: matched-pairs effect size in [-1, 1] (magnitude, since a
-        p-value alone doesn't say *how much*); positive favours ``a``;
+      - ``n_nontied``: pairs on which the two variants actually scored differently.
+        Reported for transparency, NOT because anything is computed on it alone:
+        on a metric welded to a rail it diverges hard from ``n_pairs`` (DeepEval
+        Relevance pairs 273 questions and only 26 of them move), and a reader has
+        to see that to weigh the row;
+      - ``perm_p``: two-sided paired sign-flip permutation p-value on the mean
+        difference (``_permutation_p``);
+      - ``rank_biserial``: matched-pairs effect size in [-1, 1], ties included
+        (``_rank_biserial``); positive favours ``a``. A p-value says an effect
+        exists, this says how consistent it is, and the CI below says how big;
       - ``ci_low`` / ``ci_high``: bootstrap 95% CI on the mean difference.
 
     ``by="source_dataset"`` adds one row per dataset beneath the ``overall`` row —
-    the per-dataset twin that often carries the interesting finding. Ties (zero
-    differences) are dropped from the signed-rank test per Wilcoxon convention;
-    an all-tie or empty pairing yields NaN stats rather than raising.
+    the per-dataset twin that often carries the interesting finding. An empty
+    pairing, or one where every pair is tied, yields NaN stats rather than raising.
+
+    Every statistic here is computed over ALL ``n_pairs`` differences. That is the
+    substantive change from the Wilcoxon signed-rank version this replaced, which
+    deleted tied pairs before testing and before sizing the effect — see
+    ``_permutation_p`` and ``_rank_biserial`` for why that flattered rail-pinned
+    metrics.
 
     Read it after ``eval_analysis.metric_distribution``: a significant difference
-    on a metric that ranks nothing is not a finding. ``plots.variant_effect_forest``
-    draws a panel of these.
+    on a metric that ranks nothing is not a finding.
+    ``plots.paired_comparison_plot`` draws the whole set.
     """
     def _one(sub):
         wide = sub.pivot_table(index="id", columns="variant", values=metric,
@@ -342,16 +416,8 @@ def compare_variants(df, metric, a="rag", b="no_rag", by=None, n_boot=2000):
             "frac_a_gt_b": float((diffs > 0).mean()) if n else float("nan"),
             "n_nontied": int(len(nonzero)),
         }
-        if wilcoxon is None or len(nonzero) == 0:
-            row["wilcoxon_p"] = float("nan")
-            row["rank_biserial"] = 0.0 if len(nonzero) == 0 else float("nan")
-        else:
-            row["wilcoxon_p"] = float(wilcoxon(nonzero)[1])
-            ranks = pd.Series(np.abs(nonzero)).rank().to_numpy()
-            t_plus = ranks[nonzero > 0].sum()
-            t_minus = ranks[nonzero < 0].sum()
-            total = t_plus + t_minus
-            row["rank_biserial"] = float((t_plus - t_minus) / total) if total else 0.0
+        row["perm_p"] = _permutation_p(diffs, n_perm=n_perm)
+        row["rank_biserial"] = _rank_biserial(diffs)
         lo, hi = _bootstrap_ci(diffs, n_boot=n_boot)
         row["ci_low"], row["ci_high"] = lo, hi
         return pd.Series(row)
